@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Sylva Frontend (Chrome)",
+            "type": "pwa-chrome",
+            "request": "launch",
+            "url": "http://localhost:5173",
+            "webRoot": "${workspaceFolder}/Frontend"
+        },
+        {
+            "name": "Sylva Backend (Node)",
+            "type": "pwa-node",
+            "request": "launch",
+            "program": "${workspaceFolder}/Backend/server.js",
+            "cwd": "${workspaceFolder}/Backend",
+            "skipFiles": ["<node_internals>/**"]
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Sylva Full Stack",
+            "configurations": [
+                "Sylva Backend (Node)",
+                "Sylva Frontend (Chrome)"
+            ],
+            "stopAll": true
+        }
+    ]
+}
