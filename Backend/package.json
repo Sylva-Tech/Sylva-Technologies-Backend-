@@ -7,6 +7,7 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "seed": "node scripts/seed.js",
+    "restore:sample": "node scripts/restoreSampleProducts.js",
     "seed:admin": "node scripts/seedAdmin.js",
     "test": "echo \"No tests configured yet\""
   },

@@ -71,6 +71,11 @@ const productSchema = new mongoose.Schema(
       enum: ['New', 'Refurbished', 'Used'],
       default: 'New',
     },
+    warranty: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     specifications: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
@@ -82,6 +87,27 @@ const productSchema = new mongoose.Schema(
     isNew: {
       type: Boolean,
       default: false,
+    },
+    flashSale: {
+      type: Boolean,
+      default: false,
+    },
+    offer: {
+      type: Boolean,
+      default: false,
+    },
+    offerMessage: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    offerStartDate: {
+      type: Date,
+      default: null,
+    },
+    offerEndDate: {
+      type: Date,
+      default: null,
     },
     isActive: {
       type: Boolean,

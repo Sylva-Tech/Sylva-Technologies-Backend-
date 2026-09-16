@@ -15,7 +15,7 @@ const buildSlug = (value) => value
 
 router.get('/', async (req, res) => {
   try {
-    const { category, brand, search, featured, inStock, sort, page = 1, limit = 12 } = req.query;
+    const { category, brand, search, featured, flashSale, offer, inStock, sort, page = 1, limit = 12 } = req.query;
 
     const filter = { isActive: true };
 
@@ -40,6 +40,22 @@ router.get('/', async (req, res) => {
 
     if (featured === 'true') {
       filter.featured = true;
+    }
+
+    if (flashSale === 'true') {
+      filter.flashSale = true;
+    }
+
+    if (offer === 'true') {
+      filter.offer = true;
+    }
+
+    if (flashSale === 'true' || offer === 'true') {
+      const now = new Date();
+      filter.$and = [
+        { $or: [{ offerStartDate: null }, { offerStartDate: { $lte: now } }] },
+        { $or: [{ offerEndDate: null }, { offerEndDate: { $gt: now } }] },
+      ];
     }
 
     if (inStock === 'true') {
@@ -115,7 +131,7 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', protect, adminOnly, async (req, res) => {
   try {
-    const { name, brand, category, sku, price, oldPrice, stock, description, shortDescription, specifications, featured, isNew, isActive, condition } = req.body;
+    const { name, brand, category, sku, price, oldPrice, stock, description, shortDescription, specifications, featured, flashSale, offer, offerMessage, offerStartDate, offerEndDate, isNew, isActive, condition, warranty } = req.body;
 
     if (!name || !brand || !category || !sku || !price) {
       return res.status(400).json({ message: 'Required product fields are missing.' });
@@ -128,12 +144,19 @@ router.post('/', protect, adminOnly, async (req, res) => {
       return res.status(400).json({ message: 'Product with the same slug or SKU already exists.' });
     }
 
+    const categoryRecord = await Category.findOne(
+      mongoose.Types.ObjectId.isValid(category) ? { _id: category } : { $or: [{ name: category }, { slug: buildSlug(category) }] }
+    ).select('_id');
+    if (!categoryRecord) {
+      return res.status(400).json({ message: 'The selected category does not exist.' });
+    }
+
     const product = await Product.create({
       name,
       slug: productSlug,
       sku,
       brand,
-      category,
+      category: categoryRecord._id,
       description,
       shortDescription,
       price,
@@ -142,9 +165,15 @@ router.post('/', protect, adminOnly, async (req, res) => {
       stock: stock || 0,
       specifications: specifications || {},
       featured: Boolean(featured),
+      flashSale: Boolean(flashSale),
+      offer: Boolean(offer),
+      offerMessage: offerMessage || '',
+      offerStartDate: offerStartDate || null,
+      offerEndDate: offerEndDate || null,
       isNew: Boolean(isNew),
       isActive: isActive !== false,
       condition: condition || 'New',
+      warranty: warranty || '',
       images: req.body.images || [],
     });
 

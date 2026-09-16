@@ -49,29 +49,45 @@ router.get('/:id', protect, async (req, res) => {
 
 router.post('/', protect, async (req, res) => {
   try {
-    const { items, customerDetails, paymentMethod, notes } = req.body;
+    const { items, customerDetails, paymentMethod, paymentReference, notes } = req.body;
 
     if (!items || items.length === 0) {
       return res.status(400).json({ message: 'Order must contain at least one item.' });
+    }
+
+    if (!['Cash on Delivery', 'M-Pesa', 'PayPal', 'WhatsApp Order'].includes(paymentMethod)) {
+      return res.status(400).json({ message: 'Please select a valid payment method.' });
+    }
+
+    if (['M-Pesa', 'PayPal'].includes(paymentMethod) && !paymentReference?.trim()) {
+      return res.status(400).json({ message: 'Please provide your payment reference.' });
     }
 
     let subtotal = 0;
     const preparedItems = [];
 
     for (const item of items) {
+      const quantity = Number(item.quantity);
+      if (!item.product || !Number.isInteger(quantity) || quantity < 1) {
+        return res.status(400).json({ message: 'Each order item must have a valid quantity.' });
+      }
       const product = await Product.findById(item.product);
       if (!product) {
         return res.status(404).json({ message: `Product not found: ${item.product}` });
       }
 
-      const itemSubtotal = product.price * item.quantity;
+      if (!product.isActive || product.stock < quantity) {
+        return res.status(400).json({ message: `${product.name} is no longer available in the requested quantity.` });
+      }
+
+      const itemSubtotal = product.price * quantity;
       subtotal += itemSubtotal;
 
       preparedItems.push({
         product: product._id,
         name: product.name,
         price: product.price,
-        quantity: item.quantity,
+        quantity,
         subtotal: itemSubtotal,
       });
     }
@@ -89,6 +105,7 @@ router.post('/', protect, async (req, res) => {
       total,
       customerDetails,
       paymentMethod,
+      paymentReference,
       notes,
     });
 
