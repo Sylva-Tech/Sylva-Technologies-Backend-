@@ -22,6 +22,11 @@ export const fetchCategories = async () => {
   return response.data;
 };
 
+export const fetchAdvertisements = async () => {
+  const response = await api.get('/advertisements');
+  return response.data;
+};
+
 export const healthCheck = async () => {
   const response = await api.get('/health');
   return response.data;

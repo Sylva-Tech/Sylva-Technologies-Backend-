@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -10,6 +11,8 @@ function AuthPage({ mode = 'login' }) {
     email: '',
     phone: '',
     password: '',
+    confirmPassword: '',
+    consentAccepted: false,
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -23,6 +26,20 @@ function AuthPage({ mode = 'login' }) {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
+    if (!isLogin) {
+      if (form.password.length < 6) {
+        setError('Password must be at least 6 characters.');
+        return;
+      }
+      if (form.password !== form.confirmPassword) {
+        setError('Passwords do not match.');
+        return;
+      }
+      if (!form.consentAccepted) {
+        setError('You must agree to the Privacy Policy and Terms & Conditions before creating an account.');
+        return;
+      }
+    }
     setLoading(true);
 
     try {
@@ -54,14 +71,14 @@ function AuthPage({ mode = 'login' }) {
           )}
 
           <div className="form-group">
-            <label>Email</label>
+            <label>Email Address</label>
             <input type="email" name="email" value={form.email} onChange={handleChange} required />
           </div>
 
           {!isLogin && (
             <div className="form-group">
               <label>Phone</label>
-              <input type="text" name="phone" value={form.phone} onChange={handleChange} />
+              <input type="tel" name="phone" value={form.phone} onChange={handleChange} />
             </div>
           )}
 
@@ -70,12 +87,24 @@ function AuthPage({ mode = 'login' }) {
             <input type="password" name="password" value={form.password} onChange={handleChange} required />
           </div>
 
+          {!isLogin && <>
+            <div className="form-group">
+              <label>Confirm Password</label>
+              <input type="password" name="confirmPassword" value={form.confirmPassword} onChange={handleChange} required />
+            </div>
+            <label className="consent-row">
+              <input type="checkbox" name="consentAccepted" checked={form.consentAccepted} onChange={(event) => setForm({ ...form, consentAccepted: event.target.checked })} />
+              <span>I agree to the <Link to="/privacy">Privacy Policy</Link> and <Link to="/terms">Terms &amp; Conditions</Link>.</span>
+            </label>
+          </>}
+
           {error && <p className="auth-error">{error}</p>}
 
           <button className="primary-btn full-btn" type="submit" disabled={loading}>
-            {loading ? 'Please wait...' : isLogin ? 'Login' : 'Register'}
+            {loading ? 'Please wait...' : isLogin ? 'Login' : 'Create Account'}
           </button>
         </form>
+        <p className="auth-switch">{isLogin ? "Don't have an account?" : 'Already have an account?'} <Link to={isLogin ? '/register' : '/login'}>{isLogin ? 'Create Account' : 'Login'}</Link></p>
       </div>
     </section>
   );

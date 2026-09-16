@@ -16,6 +16,7 @@ function CheckoutPage() {
     deliveryLocation: '',
     address: '',
     paymentMethod: 'Cash on Delivery',
+    paymentReference: '',
     notes: '',
   });
   const [error, setError] = useState('');
@@ -103,9 +104,13 @@ function CheckoutPage() {
             <select name="paymentMethod" value={form.paymentMethod} onChange={handleChange}>
               <option>Cash on Delivery</option>
               <option>M-Pesa</option>
+              <option>PayPal</option>
               <option>WhatsApp Order</option>
             </select>
           </div>
+          {form.paymentMethod === 'M-Pesa' && <div className="payment-instructions"><strong>Pay via M-Pesa Till Number</strong><span>{import.meta.env.VITE_MPESA_TILL_NUMBER || 'Till number available from customer support'}</span><small>Enter your M-Pesa transaction code after payment.</small></div>}
+          {form.paymentMethod === 'PayPal' && <div className="payment-instructions"><strong>PayPal payment</strong><span>{import.meta.env.VITE_PAYPAL_EMAIL || 'PayPal details available from customer support'}</span><small>Complete payment, then add the transaction reference below.</small></div>}
+          {(form.paymentMethod === 'M-Pesa' || form.paymentMethod === 'PayPal') && <div className="form-group"><label>Payment reference</label><input name="paymentReference" value={form.paymentReference} onChange={handleChange} placeholder="Transaction code or PayPal reference" required /></div>}
           <div className="form-group">
             <label>Order notes</label>
             <textarea name="notes" value={form.notes} onChange={handleChange} rows="3" />

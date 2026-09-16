@@ -1,40 +1,50 @@
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  :root {
-    font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
-    color: #16271f;
-    background: #f3f7f4;
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
+  font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+  color: #16271f;
+  background: #dfe9d8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+html {
+  background: #dfe9d8;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #dfe9d8;
+  color: #16271f;
+}
+
 #root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
+  width: 100%;
   min-height: 100svh;
   display: flex;
   flex-direction: column;
-  box-sizing: border-box;
 }
-    min-width: 320px;
-    background: #f3f7f4;
 
+p,
 h1,
-h2 {
-    width: 100%;
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-    --accent: #c084fc;
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+img {
+  max-width: 100%;
+}

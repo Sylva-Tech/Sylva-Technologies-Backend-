@@ -1,0 +1,26 @@
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import api from '../services/api';
+
+const blank = { title: '', message: '', image: '', link: '/shop', active: true, startsAt: '', endsAt: '' };
+
+function AdminAdsPage() {
+  const [ads, setAds] = useState([]);
+  const [form, setForm] = useState(blank);
+  const [message, setMessage] = useState('');
+  const token = localStorage.getItem('sylva-token');
+  const config = { headers: { Authorization: `Bearer ${token}` } };
+
+  const load = () => api.get('/advertisements').then(({ data }) => setAds(data)).catch(() => setMessage('Unable to load live ads.'));
+  useEffect(() => { load(); }, []);
+  const update = (event) => setForm({ ...form, [event.target.name]: event.target.type === 'checkbox' ? event.target.checked : event.target.value });
+  const save = async (event) => {
+    event.preventDefault();
+    try { await api.post('/advertisements', form, config); setForm(blank); setMessage('Live ad created.'); load(); } catch (error) { setMessage(error.response?.data?.message || 'Unable to save live ad.'); }
+  };
+  const remove = async (id) => { if (!window.confirm('Delete this live ad?')) return; await api.delete(`/advertisements/${id}`, config); load(); };
+
+  return <section className="container section-block admin-page"><div className="admin-page-head"><div><p className="eyebrow">Homepage control</p><h1>Live Ads</h1></div><Link to="/admin" className="secondary-btn">Back to dashboard</Link></div><div className="admin-ads-layout"><form className="admin-product-form" onSubmit={save}><fieldset><legend>Create live ad</legend><label>Title<input name="title" value={form.title} onChange={update} required /></label><label>Message<textarea name="message" value={form.message} onChange={update} rows="3" required /></label><label>Image URL<input name="image" value={form.image} onChange={update} /></label><label>Link<input name="link" value={form.link} onChange={update} /></label><label><input type="checkbox" name="active" checked={form.active} onChange={update} /> Active</label><button className="primary-btn" type="submit">Create live ad</button></fieldset></form><div><h2>Active ads</h2>{message && <p className="results-note">{message}</p>}{ads.map((ad) => <article className="admin-ad-row" key={ad._id}><strong>{ad.title}</strong><span>{ad.message}</span><button className="table-delete" type="button" onClick={() => remove(ad._id)}>Delete</button></article>)}{!ads.length && <div className="empty-state">No active live ads.</div>}</div></div></section>;
+}
+
+export default AdminAdsPage;

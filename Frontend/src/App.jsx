@@ -10,11 +10,16 @@ import ProductDetailPage from './pages/ProductDetailPage';
 import AuthPage from './pages/AuthPage';
 import AdminLoginPage from './pages/AdminLoginPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
+import AdminProductsPage from './pages/AdminProductsPage';
+import AdminProductFormPage from './pages/AdminProductFormPage';
+import AdminImportPage from './pages/AdminImportPage';
+import AdminAdsPage from './pages/AdminAdsPage';
 import ProfilePage from './pages/ProfilePage';
 import CheckoutPage from './pages/CheckoutPage';
 import InformationPage from './pages/InformationPage';
 import ContactPage from './pages/ContactPage';
 import { CartProvider } from './context/CartContext';
+import ChatWidget from './components/ChatWidget';
 import './App.css';
 
 function App() {
@@ -62,10 +67,16 @@ function App() {
                     </ProtectedRoute>
                   }
                 />
+                <Route path="/admin/products" element={<ProtectedRoute adminOnly><AdminProductsPage /></ProtectedRoute>} />
+                <Route path="/admin/products/new" element={<ProtectedRoute adminOnly><AdminProductFormPage /></ProtectedRoute>} />
+                <Route path="/admin/products/import" element={<ProtectedRoute adminOnly><AdminImportPage /></ProtectedRoute>} />
+                <Route path="/admin/products/:id/edit" element={<ProtectedRoute adminOnly><AdminProductFormPage /></ProtectedRoute>} />
+                <Route path="/admin/ads" element={<ProtectedRoute adminOnly><AdminAdsPage /></ProtectedRoute>} />
                 <Route path="*" element={<HomePage />} />
               </Routes>
             </main>
             <Footer />
+            <ChatWidget />
           </div>
         </Router>
       </CartProvider>
