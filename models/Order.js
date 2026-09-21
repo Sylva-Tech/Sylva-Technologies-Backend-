@@ -11,15 +11,19 @@ const orderItemSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    price: {
-      type: Number,
-      required: true,
-      min: 0,
+    image: {
+      type: String,
+      default: '',
     },
     quantity: {
       type: Number,
       required: true,
       min: 1,
+    },
+    unitPrice: {
+      type: Number,
+      required: true,
+      min: 0,
     },
     subtotal: {
       type: Number,
@@ -36,11 +40,25 @@ const orderSchema = new mongoose.Schema(
       type: String,
       required: true,
       unique: true,
+      index: true,
     },
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+      index: true,
+    },
+    customerName: {
+      type: String,
+      default: '',
+    },
+    customerEmail: {
+      type: String,
+      default: '',
+    },
+    customerPhone: {
+      type: String,
+      default: '',
     },
     items: [orderItemSchema],
     subtotal: {
@@ -77,9 +95,14 @@ const orderSchema = new mongoose.Schema(
       trim: true,
       default: '',
     },
+    paymentStatus: {
+      type: String,
+      enum: ['Pending', 'Paid', 'Failed', 'Refunded'],
+      default: 'Pending',
+    },
     status: {
       type: String,
-      enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Completed', 'Cancelled'],
+      enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered', 'Cancelled'],
       default: 'Pending',
     },
     notes: {
@@ -91,5 +114,9 @@ const orderSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+orderSchema.index({ customer: 1, createdAt: -1 });
+orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ paymentStatus: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Order', orderSchema);

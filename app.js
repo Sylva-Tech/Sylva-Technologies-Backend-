@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
 
 const authRoutes = require('./routes/authRoutes');
@@ -13,7 +15,7 @@ const advertisementRoutes = require('./routes/advertisementRoutes');
 const app = express();
 
 const allowedOrigins = [
-  process.env.CLIENT_URL,
+  ...(process.env.CLIENT_URL || '').split(',').map((origin) => origin.trim()),
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
@@ -23,6 +25,10 @@ const allowedOrigins = [
   'http://127.0.0.1:5175',
   'http://127.0.0.1:4173',
 ].filter(Boolean);
+
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+}));
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -35,6 +41,25 @@ app.use(cors({
   },
   credentials: true,
 }));
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests. Please try again later.' },
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many authentication attempts. Please slow down and try again later.' },
+});
+
+app.use('/api', apiLimiter);
+app.use('/api/auth', authLimiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -54,11 +79,21 @@ app.use('/api/users', userRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/advertisements', advertisementRoutes);
 
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'The requested endpoint was not found.',
+  });
+});
+
 app.use((error, req, res, next) => {
   console.error('Unhandled API error:', error.message);
   if (res.headersSent) return next(error);
   const status = error.status || (error.type === 'entity.parse.failed' ? 400 : 500);
-  res.status(status).json({ message: status === 400 ? 'Please check the information you sent.' : 'Something went wrong. Please try again.' });
+  res.status(status).json({
+    success: false,
+    message: status === 400 ? 'Please check the information you sent.' : 'Something went wrong. Please try again.',
+  });
 });
 
 module.exports = app;

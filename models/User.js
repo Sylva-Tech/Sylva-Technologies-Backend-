@@ -14,10 +14,12 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       trim: true,
+      index: true,
     },
     phone: {
       type: String,
       trim: true,
+      index: true,
     },
     password: {
       type: String,
@@ -38,11 +40,38 @@ const userSchema = new mongoose.Schema(
       termsAndConditions: { type: Boolean, default: false },
       acceptedAt: { type: Date, default: null },
     },
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+    verificationMethod: {
+      type: String,
+      enum: ['email', 'sms'],
+      default: 'email',
+    },
+    lastOtpRequestedAt: {
+      type: Date,
+      default: null,
+    },
+    otpCooldownUntil: {
+      type: Date,
+      default: null,
+    },
+    loginAttempts: {
+      type: Number,
+      default: 0,
+    },
+    lockUntil: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
   }
 );
+
+userSchema.index({ email: 1, phone: 1 });
 
 userSchema.pre('save', async function () {
   if (!this.isModified('password')) {
@@ -55,6 +84,10 @@ userSchema.pre('save', async function () {
 
 userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
+};
+
+userSchema.methods.isLocked = function () {
+  return !!this.lockUntil && this.lockUntil > Date.now();
 };
 
 module.exports = mongoose.model('User', userSchema);
