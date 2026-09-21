@@ -15,7 +15,8 @@ const advertisementRoutes = require('./routes/advertisementRoutes');
 const app = express();
 
 const allowedOrigins = [
-  ...(process.env.CLIENT_URL || '').split(',').map((origin) => origin.trim()),
+  ...(process.env.CLIENT_URL || '').split(',').map((origin) => origin.trim().replace(/\/$/, '')),
+  'https://sylva-technologies-frontend.vercel.app',
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
