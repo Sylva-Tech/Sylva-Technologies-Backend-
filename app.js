@@ -28,13 +28,9 @@ const allowedOrigins = [
   'http://127.0.0.1:4173',
 ].filter(Boolean);
 
-app.use(helmet({
-  crossOriginResourcePolicy: false,
-}));
-
-app.use(cors({
+const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || /^http:\/\/localhost:(5173|5174|5175|4173)$/.test(origin) || /^http:\/\/127\.0\.0\.1:(5173|5174|5175|4173)$/.test(origin)) {
+    if (!origin || allowedOrigins.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1):(3000|5173|5174|5175|4173)$/.test(origin)) {
       callback(null, true);
       return;
     }
@@ -42,7 +38,16 @@ app.use(cors({
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
+};
+
+app.use(helmet({
+  crossOriginResourcePolicy: false,
 }));
+
+app.use(cors(corsOptions));
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
