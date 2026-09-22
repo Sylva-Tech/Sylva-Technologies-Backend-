@@ -11,6 +11,7 @@ const orderRoutes = require('./routes/orderRoutes');
 const userRoutes = require('./routes/userRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const advertisementRoutes = require('./routes/advertisementRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
 const app = express();
 
@@ -92,6 +93,7 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/advertisements', advertisementRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
