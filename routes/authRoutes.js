@@ -4,7 +4,7 @@ const VerificationToken = require('../models/VerificationToken');
 const { protect } = require('../middleware/authMiddleware');
 const generateToken = require('../utils/generateToken');
 const { generateOtp, hashOtp, compareOtp } = require('../utils/otp');
-const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/emailService');
+const { sendVerificationEmail, sendPasswordResetEmail, sendVerificationLinkEmail, sendPasswordResetLinkEmail } = require('../services/emailService');
 const { sendOtpSms } = require('../services/smsService');
 
 const router = express.Router();
@@ -39,60 +39,27 @@ const getUserByEmailOrPhone = async (value) => {
   return User.findOne(query);
 };
 
-const sendOtpToUser = async (user, purpose) => {
-  const otp = generateOtp();
-  const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
-  const tokenHash = hashOtp(otp);
+const crypto = require('crypto');
 
-  await VerificationToken.deleteMany({
-    user: user._id,
-    purpose,
-    usedAt: null,
-  });
+const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
+
+const createSecureTokenRecord = async ({ user, purpose, expiresMinutes = 60 * 24, method = 'email' }) => {
+  // remove previous used tokens for same purpose
+  await VerificationToken.deleteMany({ user: user._id, purpose, usedAt: { $ne: null } });
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = hashToken(token);
+  const expiresAt = new Date(Date.now() + expiresMinutes * 60 * 1000);
 
   await VerificationToken.create({
     user: user._id,
     purpose,
     tokenHash,
     expiresAt,
-    method: user.verificationMethod || 'email',
+    method,
   });
 
-  if (purpose === 'verification') {
-    if (user.verificationMethod === 'sms' && user.phone) {
-      const smsResult = await sendOtpSms({ to: user.phone, otp, purpose: 'verification' });
-      if (!smsResult.success) {
-        console.warn('Verification SMS failed:', smsResult.message);
-      }
-      return { otp, sentVia: 'sms', smsResult };
-    }
-
-    const emailResult = await sendVerificationEmail({
-      to: user.email,
-      name: user.name,
-      otp,
-      expiresInMinutes: OTP_EXPIRY_MINUTES,
-    });
-
-    return { otp, sentVia: 'email', emailResult };
-  }
-
-  if (user.verificationMethod === 'sms' && user.phone) {
-    const smsResult = await sendOtpSms({ to: user.phone, otp, purpose: 'password-reset' });
-    if (!smsResult.success) {
-      console.warn('Password reset SMS failed:', smsResult.message);
-    }
-    return { otp, sentVia: 'sms', smsResult };
-  }
-
-  const emailResult = await sendPasswordResetEmail({
-    to: user.email,
-    name: user.name,
-    otp,
-    expiresInMinutes: OTP_EXPIRY_MINUTES,
-  });
-
-  return { otp, sentVia: 'email', emailResult };
+  return token;
 };
 
 router.post('/register', async (req, res) => {
@@ -154,15 +121,19 @@ router.post('/register', async (req, res) => {
       isVerified: false,
     });
 
-    const { otp } = await sendOtpToUser(user, 'verification');
+    // create secure verification token and send link/email
+    const verificationToken = await createSecureTokenRecord({ user, purpose: 'verification', expiresMinutes: 60 * 24 });
+    const frontendUrl = process.env.FRONTEND_URL || process.env.VITE_API_BASE_URL || '';
+    const verifyLink = `${frontendUrl.replace(/\/$/, '')}/verify-email?token=${verificationToken}`;
+    await sendVerificationLinkEmail({ to: user.email, name: user.name, verifyLink, expiresInMinutes: 60 * 24 });
 
     const token = generateToken(user._id);
     return res.status(201).json({
       success: true,
-      message: 'Registration successful. Verification code sent.',
+      message: 'Registration successful. Verification email sent.',
       data: {
         user: sanitizeUser(user),
-        otp,
+        verificationPending: true,
         token,
       },
     });
@@ -190,27 +161,23 @@ router.post('/verify', async (req, res) => {
       return res.status(200).json({ success: true, message: 'Account already verified.' });
     }
 
+    // allow verification via token in query or body
+    const tokenValue = otp || req.body.token || req.query.token;
+    if (!tokenValue) {
+      return res.status(400).json({ success: false, message: 'Verification token or code is required.' });
+    }
+
+    const tokenHash = hashToken(tokenValue);
     const record = await VerificationToken.findOne({
       user: user._id,
       purpose: 'verification',
+      tokenHash,
       usedAt: null,
       expiresAt: { $gt: new Date() },
     }).sort({ expiresAt: -1 });
 
     if (!record) {
-      return res.status(400).json({ success: false, message: 'Verification code expired or not found.' });
-    }
-
-    if (record.attempts >= MAX_OTP_ATTEMPTS) {
-      await VerificationToken.deleteMany({ user: user._id, purpose: 'verification' });
-      return res.status(429).json({ success: false, message: 'Too many invalid attempts. Please request a new code.' });
-    }
-
-    const valid = compareOtp({ providedOtp: otp, storedHash: record.tokenHash });
-    if (!valid) {
-      record.attempts += 1;
-      await record.save();
-      return res.status(400).json({ success: false, message: 'Invalid verification code.' });
+      return res.status(400).json({ success: false, message: 'Verification token expired or invalid.' });
     }
 
     user.isVerified = true;
@@ -223,7 +190,7 @@ router.post('/verify', async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Verification successful. Your account is now active.',
+      message: 'Verification successful. Your account is now verified.',
       data: { user: sanitizeUser(user) },
     });
   } catch (error) {
@@ -271,11 +238,14 @@ router.post('/resend-verification', async (req, res) => {
     user.otpCooldownUntil = new Date(Date.now() + RESEND_COOLDOWN_MINUTES * 60 * 1000);
     await user.save();
 
-    const { otp } = await sendOtpToUser(user, 'verification');
+    const verificationToken = await createSecureTokenRecord({ user, purpose: 'verification', expiresMinutes: 60 * 24 });
+    const frontendUrl = process.env.FRONTEND_URL || process.env.VITE_API_BASE_URL || '';
+    const verifyLink = `${frontendUrl.replace(/\/$/, '')}/verify-email?token=${verificationToken}`;
+    await sendVerificationLinkEmail({ to: user.email, name: user.name, verifyLink, expiresInMinutes: 60 * 24 });
+
     return res.status(200).json({
       success: true,
-      message: 'Verification code resent successfully.',
-      data: { otp },
+      message: 'Verification email resent successfully. Please check your inbox.',
     });
   } catch (error) {
     console.error('Resend verification error:', error.message);
@@ -316,22 +286,34 @@ router.post('/login', async (req, res) => {
     user.lockUntil = null;
     await user.save();
 
-    if (!user.isVerified) {
-      return res.status(403).json({
-        success: false,
-        message: 'Verification required. Please verify your account before logging in.',
-      });
-    }
-
     const token = generateToken(user._id);
-    return res.json({
+
+    // always allow login even if not verified; include flag
+    const responsePayload = {
       success: true,
       message: 'Login successful.',
       data: {
         user: sanitizeUser(user),
         token,
+        emailVerified: !!user.isVerified,
       },
-    });
+    };
+
+    // If not verified, ensure frontend can resend verification
+    if (!user.isVerified) {
+      // create a short lived verification token if none exists
+      const existing = await VerificationToken.findOne({ user: user._id, purpose: 'verification', usedAt: null, expiresAt: { $gt: new Date() } }).sort({ expiresAt: -1 });
+      if (!existing) {
+        const verificationToken = await createSecureTokenRecord({ user, purpose: 'verification', expiresMinutes: 60 * 24 });
+        const frontendUrl = process.env.FRONTEND_URL || process.env.VITE_API_BASE_URL || '';
+        const verifyLink = `${frontendUrl.replace(/\/$/, '')}/verify-email?token=${verificationToken}`;
+        // send verification link but do not expose token in response
+        await sendVerificationLinkEmail({ to: user.email, name: user.name, verifyLink, expiresInMinutes: 60 * 24 });
+      }
+      responsePayload.message = 'Login successful. Email verification is pending.';
+    }
+
+    return res.json(responsePayload);
   } catch (error) {
     console.error('Login error:', error.message);
     return res.status(500).json({ success: false, message: 'Login failed.' });
@@ -348,16 +330,17 @@ router.post('/forgot-password', async (req, res) => {
     }
 
     const user = await getUserByEmailOrPhone(identifier);
+    // Always return generic response to avoid user enumeration
     if (!user) {
-      return res.status(404).json({ success: false, message: 'User account not found.' });
+      return res.status(200).json({ success: true, message: 'If an account exists for this email address, a password reset link has been sent.' });
     }
 
-    const { otp } = await sendOtpToUser(user, 'password-reset');
-    return res.status(200).json({
-      success: true,
-      message: 'Password reset code sent successfully.',
-      data: { otp },
-    });
+    const resetToken = await createSecureTokenRecord({ user, purpose: 'password-reset', expiresMinutes: 60 });
+    const frontendUrl = process.env.FRONTEND_URL || process.env.VITE_API_BASE_URL || '';
+    const resetLink = `${frontendUrl.replace(/\/$/, '')}/reset-password?token=${resetToken}`;
+    await sendPasswordResetLinkEmail({ to: user.email, name: user.name, resetLink, expiresInMinutes: 60 });
+
+    return res.status(200).json({ success: true, message: 'If an account exists for this email address, a password reset link has been sent.' });
   } catch (error) {
     console.error('Forgot password error:', error.message);
     return res.status(500).json({ success: false, message: 'Unable to process reset request right now.' });
@@ -366,11 +349,10 @@ router.post('/forgot-password', async (req, res) => {
 
 router.post('/reset-password', async (req, res) => {
   try {
-    const { email, phone, otp, password, confirmPassword } = req.body;
-    const identifier = email || phone;
+    const { token, password, confirmPassword } = req.body;
 
-    if (!identifier || !otp || !password) {
-      return res.status(400).json({ success: false, message: 'Email/phone, OTP and password are required.' });
+    if (!token || !password) {
+      return res.status(400).json({ success: false, message: 'Token and new password are required.' });
     }
 
     if (password.length < 6) {
@@ -381,31 +363,15 @@ router.post('/reset-password', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Passwords do not match.' });
     }
 
-    const user = await getUserByEmailOrPhone(identifier);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User account not found.' });
-    }
-
-    const record = await VerificationToken.findOne({
-      user: user._id,
-      purpose: 'password-reset',
-      usedAt: null,
-      expiresAt: { $gt: new Date() },
-    }).sort({ expiresAt: -1 });
-
+    const tokenHash = hashToken(token);
+    const record = await VerificationToken.findOne({ purpose: 'password-reset', tokenHash, usedAt: null, expiresAt: { $gt: new Date() } });
     if (!record) {
-      return res.status(400).json({ success: false, message: 'Password reset code expired or invalid.' });
+      return res.status(400).json({ success: false, message: 'Password reset token expired or invalid.' });
     }
 
-    if (record.attempts >= MAX_OTP_ATTEMPTS) {
-      await VerificationToken.deleteMany({ user: user._id, purpose: 'password-reset' });
-      return res.status(429).json({ success: false, message: 'Too many invalid attempts. Please request a new reset code.' });
-    }
-
-    if (!compareOtp({ providedOtp: otp, storedHash: record.tokenHash })) {
-      record.attempts += 1;
-      await record.save();
-      return res.status(400).json({ success: false, message: 'Invalid reset code.' });
+    const user = await User.findById(record.user);
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'Invalid password reset request.' });
     }
 
     user.password = password;
@@ -417,10 +383,7 @@ router.post('/reset-password', async (req, res) => {
     await record.save();
     await VerificationToken.deleteMany({ user: user._id, purpose: 'password-reset', usedAt: { $ne: null } });
 
-    return res.status(200).json({
-      success: true,
-      message: 'Password reset successful.',
-    });
+    return res.status(200).json({ success: true, message: 'Password reset successful.' });
   } catch (error) {
     console.error('Reset password error:', error.message);
     return res.status(500).json({ success: false, message: 'Unable to reset password right now.' });
