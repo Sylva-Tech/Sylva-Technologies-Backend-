@@ -10,7 +10,7 @@ const run = async () => {
 
     await mongoose.connect(process.env.MONGODB_URI);
 
-    const email = process.env.ADMIN_EMAIL || 'admin@sylvatechnologies.co.ke';
+    const email = process.env.ADMIN_EMAIL || 'sylvatechnologies@outlook.com';
     const password = process.env.ADMIN_PASSWORD;
 
     if (!password) {

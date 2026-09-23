@@ -16,13 +16,18 @@ const adminRoutes = require('./routes/adminRoutes');
 const app = express();
 
 const allowedOrigins = [
-  ...(process.env.CLIENT_URL || '').split(',').map((origin) => origin.trim().replace(/\/$/, '')),
+  ...(process.env.CLIENT_URL || '')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/$/, '')),
+
   'https://sylva-technologies-frontend.vercel.app',
   'https://sylva-technologies-frontend-jucbjftlx.vercel.app',
+
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
   'http://localhost:4173',
+
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5174',
   'http://127.0.0.1:5175',
@@ -31,22 +36,38 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1):(3000|5173|5174|5175|4173)$/.test(origin)) {
+    if (
+      !origin ||
+      allowedOrigins.includes(origin) ||
+      /^https?:\/\/(localhost|127\.0\.0\.1):(3000|5173|5174|5175|4173)$/.test(
+        origin
+      )
+    ) {
       callback(null, true);
       return;
     }
 
     callback(new Error('Not allowed by CORS'));
   },
+
   credentials: true,
+
+  // PATCH was added here
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+  ],
+
   optionsSuccessStatus: 204,
 };
 
-app.use(helmet({
-  crossOriginResourcePolicy: false,
-}));
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+  })
+);
 
 app.use(cors(corsOptions));
 
@@ -55,7 +76,10 @@ const apiLimiter = rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: 'Too many requests. Please try again later.' },
+  message: {
+    success: false,
+    message: 'Too many requests. Please try again later.',
+  },
 });
 
 const authLimiter = rateLimit({
@@ -63,12 +87,19 @@ const authLimiter = rateLimit({
   max: 40,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: 'Too many authentication attempts. Please slow down and try again later.' },
+  message: {
+    success: false,
+    message:
+      'Too many authentication attempts. Please slow down and try again later.',
+  },
 });
 
 app.use('/api', apiLimiter);
+
 app.use('/api/auth', authLimiter);
+
 app.use(express.json({ limit: '10mb' }));
+
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
@@ -82,17 +113,27 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'Sylva Technologies API is running',
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    database:
+      mongoose.connection.readyState === 1
+        ? 'connected'
+        : 'disconnected',
   });
 });
 
 app.use('/api/auth', authRoutes);
+
 app.use('/api/products', productRoutes);
+
 app.use('/api/categories', categoryRoutes);
+
 app.use('/api/orders', orderRoutes);
+
 app.use('/api/users', userRoutes);
+
 app.use('/api/contact', contactRoutes);
+
 app.use('/api/advertisements', advertisementRoutes);
+
 app.use('/api/admin', adminRoutes);
 
 app.use((req, res) => {
@@ -104,14 +145,21 @@ app.use((req, res) => {
 
 app.use((error, req, res, next) => {
   console.error('Unhandled API error:', error.message);
+
   if (res.headersSent) return next(error);
-  const status = error.status || (error.type === 'entity.parse.failed' ? 400 : 500);
+
+  const status =
+    error.status ||
+    (error.type === 'entity.parse.failed' ? 400 : 500);
+
   res.status(status).json({
     success: false,
-    message: status === 400 ? 'Please check the information you sent.' : 'Something went wrong. Please try again.',
+    message:
+      status === 400
+        ? 'Please check the information you sent.'
+        : 'Something went wrong. Please try again.',
   });
 });
 
 module.exports = app;
-
 

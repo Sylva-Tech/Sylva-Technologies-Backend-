@@ -3,6 +3,9 @@ const User = require('../models/User');
 const VerificationToken = require('../models/VerificationToken');
 const { protect } = require('../middleware/authMiddleware');
 const generateToken = require('../utils/generateToken');
+const sellerUpload = require('../middleware/sellerUpload');
+const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
+const cloudinary = require('../config/cloudinary');
 const { generateOtp, hashOtp, compareOtp } = require('../utils/otp');
 const { sendVerificationEmail, sendPasswordResetEmail, sendVerificationLinkEmail, sendPasswordResetLinkEmail } = require('../services/emailService');
 const { sendOtpSms } = require('../services/smsService');
@@ -25,6 +28,14 @@ const sanitizeUser = (user) => ({
   isVerified: user.isVerified,
   verificationMethod: user.verificationMethod,
   address: user.address || '',
+  sellerStatus: user.sellerStatus || 'none',
+  sellerProfile: {
+    officialName: user.sellerProfile?.officialName || '',
+    mpesaPhone: user.sellerProfile?.mpesaPhone || '',
+    applicationDate: user.sellerProfile?.applicationDate || null,
+    reviewedAt: user.sellerProfile?.reviewedAt || null,
+    rejectionReason: user.sellerProfile?.rejectionReason || '',
+  },
   createdAt: user.createdAt,
 });
 
@@ -61,6 +72,235 @@ const createSecureTokenRecord = async ({ user, purpose, expiresMinutes = 60 * 24
 
   return token;
 };
+
+router.post(
+  '/seller/register',
+  (req, res, next) => {
+    sellerUpload.fields([
+      { name: 'idFront', maxCount: 1 },
+      { name: 'idBack', maxCount: 1 },
+      { name: 'kraPin', maxCount: 1 },
+    ])(req, res, (error) => {
+      if (error) {
+        return res.status(400).json({
+          success: false,
+          message: error.message || 'Unable to upload seller documents.',
+        });
+      }
+
+      next();
+    });
+  },
+  async (req, res) => {
+    const uploadedFiles = [];
+
+    try {
+      const {
+        officialName,
+        email,
+        mpesaPhone,
+        password,
+        confirmPassword,
+        privacyPolicyAccepted,
+        termsAndConditionsAccepted,
+      } = req.body;
+
+      const files = req.files || {};
+
+      const idFrontFile = files.idFront?.[0];
+      const idBackFile = files.idBack?.[0];
+      const kraPinFile = files.kraPin?.[0];
+
+      if (!officialName || !email || !mpesaPhone || !password) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Official/business name, email, M-Pesa phone and password are required.',
+        });
+      }
+
+      if (officialName.trim().length < 2) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please enter a valid official or business name.',
+        });
+      }
+
+      if (!/^\S+@\S+\.\S+$/.test(email)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please enter a valid email address.',
+        });
+      }
+
+      if (!/^[+\d][\d\s().-]{6,}$/.test(mpesaPhone)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please enter a valid M-Pesa phone number.',
+        });
+      }
+
+      if (password.length < 6) {
+        return res.status(400).json({
+          success: false,
+          message: 'Password must be at least 6 characters.',
+        });
+      }
+
+      if (confirmPassword !== password) {
+        return res.status(400).json({
+          success: false,
+          message: 'Passwords do not match.',
+        });
+      }
+
+      if (privacyPolicyAccepted !== 'true' || termsAndConditionsAccepted !== 'true') {
+        return res.status(400).json({
+          success: false,
+          message:
+            'You must agree to the Privacy Policy and Terms & Conditions before registering as a seller.',
+        });
+      }
+
+      if (!idFrontFile || !idBackFile || !kraPinFile) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'ID front, ID back and KRA PIN documents are all required.',
+        });
+      }
+
+      const normalizedEmail = normalizeEmail(email);
+      const normalizedPhone = mpesaPhone.trim();
+
+      const existingEmail = await User.findOne({
+        email: normalizedEmail,
+      });
+
+      if (existingEmail) {
+        return res.status(409).json({
+          success: false,
+          message:
+            'An account with this email already exists. Please log in to your existing account.',
+        });
+      }
+
+      const existingPhone = await User.findOne({
+        phone: normalizedPhone,
+      });
+
+      if (existingPhone) {
+        return res.status(409).json({
+          success: false,
+          message:
+            'An account with this phone number already exists. Please log in to your existing account.',
+        });
+      }
+
+      // Upload seller verification documents privately to Cloudinary.
+      const idFrontUpload = await uploadBufferToCloudinary(idFrontFile.buffer);
+      uploadedFiles.push(idFrontUpload);
+
+      const idBackUpload = await uploadBufferToCloudinary(idBackFile.buffer);
+      uploadedFiles.push(idBackUpload);
+
+      const kraPinUpload = await uploadBufferToCloudinary(kraPinFile.buffer);
+      uploadedFiles.push(kraPinUpload);
+
+      const user = await User.create({
+        name: officialName.trim(),
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        password,
+        role: 'seller',
+        sellerStatus: 'pending',
+
+        sellerProfile: {
+          officialName: officialName.trim(),
+          mpesaPhone: normalizedPhone,
+
+          // Private Cloudinary asset references.
+          idFrontDocument: idFrontUpload.public_id,
+          idBackDocument: idBackUpload.public_id,
+          kraPinDocument: kraPinUpload.public_id,
+
+          applicationDate: new Date(),
+          reviewedAt: null,
+          rejectionReason: '',
+        },
+
+        consent: {
+          privacyPolicy: true,
+          termsAndConditions: true,
+          acceptedAt: new Date(),
+        },
+
+        isVerified: false,
+        verificationMethod: 'email',
+      });
+
+      const verificationToken = await createSecureTokenRecord({
+        user,
+        purpose: 'verification',
+        expiresMinutes: 60 * 24,
+      });
+
+      const frontendUrl =
+        process.env.FRONTEND_URL ||
+        process.env.VITE_API_BASE_URL ||
+        '';
+
+      const verifyLink = `${frontendUrl.replace(
+        /\/$/,
+        ''
+      )}/verify-email?token=${verificationToken}`;
+
+      await sendVerificationLinkEmail({
+        to: user.email,
+        name: user.name,
+        verifyLink,
+        expiresInMinutes: 60 * 24,
+      });
+
+      const token = generateToken(user._id);
+
+      return res.status(201).json({
+        success: true,
+        message:
+          'Seller registration submitted successfully. Please verify your email. Your seller account is awaiting admin approval.',
+        data: {
+          user: sanitizeUser(user),
+          verificationPending: true,
+          sellerStatus: 'pending',
+          token,
+        },
+      });
+    } catch (error) {
+      console.error('Seller registration error:', error);
+
+      // Remove uploaded documents if database registration fails.
+      for (const uploadedFile of uploadedFiles) {
+        try {
+          await cloudinary.uploader.destroy(uploadedFile.public_id, {
+            type: 'authenticated',
+            resource_type: uploadedFile.resource_type || 'image',
+          });
+        } catch (cleanupError) {
+          console.error(
+            'Cloudinary cleanup error:',
+            cleanupError.message
+          );
+        }
+      }
+
+      return res.status(500).json({
+        success: false,
+        message:
+          'Seller registration failed. Please try again.',
+      });
+    }
+  }
+);
 
 router.post('/register', async (req, res) => {
   try {

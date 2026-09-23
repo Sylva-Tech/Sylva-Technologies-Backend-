@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema(
       required: [true, 'Name is required'],
       trim: true,
     },
+
     email: {
       type: String,
       required: [true, 'Email is required'],
@@ -16,51 +17,130 @@ const userSchema = new mongoose.Schema(
       trim: true,
       index: true,
     },
+
     phone: {
       type: String,
       trim: true,
       index: true,
     },
+
     password: {
       type: String,
       required: [true, 'Password is required'],
       minlength: 6,
     },
+
     role: {
       type: String,
-      enum: ['customer', 'admin'],
+      enum: ['customer', 'admin', 'seller'],
       default: 'customer',
     },
+
     address: {
       type: String,
       default: '',
     },
-    consent: {
-      privacyPolicy: { type: Boolean, default: false },
-      termsAndConditions: { type: Boolean, default: false },
-      acceptedAt: { type: Date, default: null },
+
+    /*
+     * Seller account/application information.
+     * Seller documents are stored as private references and
+     * must never be exposed through public product APIs.
+     */
+    sellerStatus: {
+      type: String,
+      enum: ['none', 'pending', 'approved', 'rejected'],
+      default: 'none',
+      index: true,
     },
+
+    sellerProfile: {
+      officialName: {
+        type: String,
+        default: '',
+        trim: true,
+      },
+
+      mpesaPhone: {
+        type: String,
+        default: '',
+        trim: true,
+      },
+
+      idFrontDocument: {
+        type: String,
+        default: '',
+      },
+
+      idBackDocument: {
+        type: String,
+        default: '',
+      },
+
+      kraPinDocument: {
+        type: String,
+        default: '',
+      },
+
+      applicationDate: {
+        type: Date,
+        default: null,
+      },
+
+      reviewedAt: {
+        type: Date,
+        default: null,
+      },
+
+      rejectionReason: {
+        type: String,
+        default: '',
+        trim: true,
+      },
+    },
+
+    consent: {
+      privacyPolicy: {
+        type: Boolean,
+        default: false,
+      },
+
+      termsAndConditions: {
+        type: Boolean,
+        default: false,
+      },
+
+      acceptedAt: {
+        type: Date,
+        default: null,
+      },
+    },
+
     isVerified: {
       type: Boolean,
       default: false,
     },
+
     verificationMethod: {
       type: String,
       enum: ['email', 'sms'],
       default: 'email',
     },
+
     lastOtpRequestedAt: {
       type: Date,
       default: null,
     },
+
     otpCooldownUntil: {
       type: Date,
       default: null,
     },
+
     loginAttempts: {
       type: Number,
       default: 0,
     },
+
     lockUntil: {
       type: Date,
       default: null,
@@ -71,7 +151,6 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-userSchema.index({ email: 1, phone: 1 });
 
 userSchema.pre('save', async function () {
   if (!this.isModified('password')) {
