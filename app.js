@@ -39,7 +39,7 @@ const corsOptions = {
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 204,
 };
@@ -113,4 +113,5 @@ app.use((error, req, res, next) => {
 });
 
 module.exports = app;
+
 
