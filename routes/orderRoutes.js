@@ -240,6 +240,10 @@ router.post('/', protect, requireVerified, async (req, res) => {
         name: product.name,
         quantity,
         price: Number(product.price || 0),
+
+        // Required by the Order model
+        unitPrice: Number(product.price || 0),
+
         image:
           Array.isArray(product.images) && product.images.length > 0
             ? product.images[0]
@@ -248,6 +252,7 @@ router.post('/', protect, requireVerified, async (req, res) => {
     }
 
     const today = new Date();
+
     const datePart =
       `${today.getFullYear()}` +
       `${String(today.getMonth() + 1).padStart(2, '0')}` +
@@ -255,7 +260,11 @@ router.post('/', protect, requireVerified, async (req, res) => {
 
     const orderCount = await Order.countDocuments({
       createdAt: {
-        $gte: new Date(today.getFullYear(), today.getMonth(), today.getDate()),
+        $gte: new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          today.getDate()
+        ),
         $lt: new Date(
           today.getFullYear(),
           today.getMonth(),
@@ -271,7 +280,8 @@ router.post('/', protect, requireVerified, async (req, res) => {
       orderNumber,
       customer: req.user._id,
       customerName: customerDetails.fullName,
-      customerEmail: customerDetails.email || req.user.email || '',
+      customerEmail:
+        customerDetails.email || req.user.email || '',
       customerPhone: customerDetails.phone,
       items: preparedItems,
       deliveryFee: Number(deliveryFee || 0),
@@ -421,9 +431,19 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
       }
     }
 
-    order.status = status;
-
-    await order.save();
+    /*
+     * Update only the status field.
+     * This avoids validating unrelated legacy order fields
+     * such as items.unitPrice.
+     */
+    await Order.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          status,
+        },
+      }
+    );
 
     const updated = await Order.findById(order._id)
       .populate('customer', 'name email phone')
@@ -479,9 +499,18 @@ router.patch('/:id/payment-status', protect, adminOnly, async (req, res) => {
       });
     }
 
-    order.paymentStatus = paymentStatus;
-
-    await order.save();
+    /*
+     * Update only the paymentStatus field.
+     * This avoids validating unrelated legacy order fields.
+     */
+    await Order.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          paymentStatus,
+        },
+      }
+    );
 
     const updated = await Order.findById(order._id)
       .populate('customer', 'name email phone')
