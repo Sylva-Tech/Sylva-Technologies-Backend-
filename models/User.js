@@ -43,8 +43,10 @@ const userSchema = new mongoose.Schema(
 
     /*
      * Seller account/application information.
-     * Seller documents are stored as private references and
-     * must never be exposed through public product APIs.
+     *
+     * Verification documents are stored as private Cloudinary
+     * references and must never be exposed through public
+     * product APIs.
      */
     sellerStatus: {
       type: String,
@@ -54,7 +56,75 @@ const userSchema = new mongoose.Schema(
     },
 
     sellerProfile: {
+      /*
+       * ================================
+       * PERSONAL INFORMATION
+       * ================================
+       */
+
       officialName: {
+        type: String,
+        default: '',
+        trim: true,
+      },
+
+      idType: {
+        type: String,
+        enum: [
+          'national_id',
+          'passport',
+          'military_id',
+          'other',
+          '',
+        ],
+        default: '',
+      },
+
+      idNumber: {
+        type: String,
+        default: '',
+        trim: true,
+      },
+
+      dateOfBirth: {
+        type: Date,
+        default: null,
+      },
+
+      /*
+       * Private identification documents.
+       * These must NOT be returned by public APIs.
+       */
+      idFrontDocument: {
+        type: String,
+        default: '',
+      },
+
+      idBackDocument: {
+        type: String,
+        default: '',
+      },
+
+      /*
+       * ================================
+       * STORE INFORMATION
+       * ================================
+       */
+
+      storeName: {
+        type: String,
+        default: '',
+        trim: true,
+      },
+
+      storeEmail: {
+        type: String,
+        default: '',
+        lowercase: true,
+        trim: true,
+      },
+
+      storePhone: {
         type: String,
         default: '',
         trim: true,
@@ -66,20 +136,31 @@ const userSchema = new mongoose.Schema(
         trim: true,
       },
 
-      idFrontDocument: {
+      kraPin: {
         type: String,
         default: '',
+        trim: true,
       },
 
-      idBackDocument: {
-        type: String,
-        default: '',
-      },
-
+      /*
+       * Private KRA PIN document.
+       */
       kraPinDocument: {
         type: String,
         default: '',
       },
+
+      storeLocation: {
+        type: String,
+        default: '',
+        trim: true,
+      },
+
+      /*
+       * ================================
+       * SELLER APPLICATION
+       * ================================
+       */
 
       applicationDate: {
         type: Date,
@@ -98,6 +179,9 @@ const userSchema = new mongoose.Schema(
       },
     },
 
+    /*
+     * Seller/customer agreements.
+     */
     consent: {
       privacyPolicy: {
         type: Boolean,
@@ -109,12 +193,40 @@ const userSchema = new mongoose.Schema(
         default: false,
       },
 
+      sellerPolicy: {
+        type: Boolean,
+        default: false,
+      },
+
+      marketplacePolicy: {
+        type: Boolean,
+        default: false,
+      },
+
+      productListingPolicy: {
+        type: Boolean,
+        default: false,
+      },
+
+      returnsPolicy: {
+        type: Boolean,
+        default: false,
+      },
+
+      informationAccuracy: {
+        type: Boolean,
+        default: false,
+      },
+
       acceptedAt: {
         type: Date,
         default: null,
       },
     },
 
+    /*
+     * Email / account verification.
+     */
     isVerified: {
       type: Boolean,
       default: false,
@@ -136,6 +248,9 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
+    /*
+     * Login security.
+     */
     loginAttempts: {
       type: Number,
       default: 0,
@@ -151,7 +266,9 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-
+/*
+ * Password hashing.
+ */
 userSchema.pre('save', async function () {
   if (!this.isModified('password')) {
     return;
@@ -161,10 +278,16 @@ userSchema.pre('save', async function () {
   this.password = await bcrypt.hash(this.password, salt);
 });
 
+/*
+ * Password verification.
+ */
 userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
+/*
+ * Account lock check.
+ */
 userSchema.methods.isLocked = function () {
   return !!this.lockUntil && this.lockUntil > Date.now();
 };
