@@ -15,7 +15,7 @@ const uploadBufferToCloudinary = (buffer) =>
           return reject(error);
         }
 
-        resolve(result);
+        return resolve(result);
       }
     );
 
