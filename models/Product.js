@@ -114,6 +114,13 @@ const productSchema = new mongoose.Schema(
   default: true,
 },
 
+seller: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'User',
+  default: null,
+  index: true,
+},
+
 /*
  * Marketplace seller approval workflow.
  *
