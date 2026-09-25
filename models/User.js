@@ -42,10 +42,14 @@ const userSchema = new mongoose.Schema(
     },
 
     /*
-     * Seller account/application information.
+     * ==========================================
+     * SELLER ACCOUNT / APPLICATION INFORMATION
+     * ==========================================
      *
-     * Verification documents are stored as private Cloudinary
-     * references and must never be exposed through public
+     * Verification documents are stored as
+     * private Cloudinary references.
+     *
+     * They must NEVER be exposed through public
      * product APIs.
      */
     sellerStatus: {
@@ -57,9 +61,9 @@ const userSchema = new mongoose.Schema(
 
     sellerProfile: {
       /*
-       * ================================
+       * ==============================
        * PERSONAL INFORMATION
-       * ================================
+       * ==============================
        */
 
       officialName: {
@@ -93,7 +97,6 @@ const userSchema = new mongoose.Schema(
 
       /*
        * Private identification documents.
-       * These must NOT be returned by public APIs.
        */
       idFrontDocument: {
         type: String,
@@ -106,9 +109,9 @@ const userSchema = new mongoose.Schema(
       },
 
       /*
-       * ================================
+       * ==============================
        * STORE INFORMATION
-       * ================================
+       * ==============================
        */
 
       storeName: {
@@ -157,9 +160,9 @@ const userSchema = new mongoose.Schema(
       },
 
       /*
-       * ================================
+       * ==============================
        * SELLER APPLICATION
-       * ================================
+       * ==============================
        */
 
       applicationDate: {
@@ -180,7 +183,9 @@ const userSchema = new mongoose.Schema(
     },
 
     /*
-     * Seller/customer agreements.
+     * ==========================================
+     * SELLER / CUSTOMER AGREEMENTS
+     * ==========================================
      */
     consent: {
       privacyPolicy: {
@@ -225,8 +230,11 @@ const userSchema = new mongoose.Schema(
     },
 
     /*
-     * Email / account verification.
+     * ==========================================
+     * EMAIL / ACCOUNT VERIFICATION
+     * ==========================================
      */
+
     isVerified: {
       type: Boolean,
       default: false,
@@ -249,8 +257,11 @@ const userSchema = new mongoose.Schema(
     },
 
     /*
-     * Login security.
+     * ==========================================
+     * LOGIN SECURITY
+     * ==========================================
      */
+
     loginAttempts: {
       type: Number,
       default: 0,
@@ -267,7 +278,9 @@ const userSchema = new mongoose.Schema(
 );
 
 /*
- * Password hashing.
+ * ==========================================
+ * PASSWORD HASHING
+ * ==========================================
  */
 userSchema.pre('save', async function () {
   if (!this.isModified('password')) {
@@ -275,21 +288,40 @@ userSchema.pre('save', async function () {
   }
 
   const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
+
+  this.password = await bcrypt.hash(
+    this.password,
+    salt
+  );
 });
 
 /*
- * Password verification.
+ * ==========================================
+ * PASSWORD VERIFICATION
+ * ==========================================
  */
-userSchema.methods.matchPassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
+userSchema.methods.matchPassword = async function (
+  enteredPassword
+) {
+  return bcrypt.compare(
+    enteredPassword,
+    this.password
+  );
 };
 
 /*
- * Account lock check.
+ * ==========================================
+ * ACCOUNT LOCK CHECK
+ * ==========================================
  */
 userSchema.methods.isLocked = function () {
-  return !!this.lockUntil && this.lockUntil > Date.now();
+  return (
+    !!this.lockUntil &&
+    this.lockUntil > Date.now()
+  );
 };
 
-module.exports = mongoose.model('User', userSchema);
+module.exports = mongoose.model(
+  'User',
+  userSchema
+);

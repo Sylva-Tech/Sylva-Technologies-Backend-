@@ -109,10 +109,40 @@ const productSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
+   isActive: {
+  type: Boolean,
+  default: true,
+},
+
+/*
+ * Marketplace seller approval workflow.
+ *
+ * Admin-created products are approved automatically.
+ * Seller-created products start as pending.
+ */
+approvalStatus: {
+  type: String,
+  enum: ['pending', 'approved', 'rejected'],
+  default: 'approved',
+  index: true,
+},
+
+rejectionReason: {
+  type: String,
+  default: '',
+  trim: true,
+},
+
+approvedAt: {
+  type: Date,
+  default: null,
+},
+
+approvedBy: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'User',
+  default: null,
+},
   },
   {
     timestamps: true,
@@ -123,5 +153,11 @@ const productSchema = new mongoose.Schema(
 productSchema.index({ slug: 1, sku: 1 });
 productSchema.index({ category: 1, brand: 1 });
 productSchema.index({ name: 'text', brand: 'text', sku: 'text' });
+
+productSchema.index({
+  approvalStatus: 1,
+  isActive: 1,
+  createdAt: -1,
+});
 
 module.exports = mongoose.model('Product', productSchema);
