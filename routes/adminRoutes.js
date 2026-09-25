@@ -165,7 +165,11 @@ router.get(
 |
 | GET /api/admin/sellers
 |
-| Returns seller accounts in all application states.
+| Optional:
+|
+| GET /api/admin/sellers?status=pending
+| GET /api/admin/sellers?status=approved
+| GET /api/admin/sellers?status=rejected
 |
 */
 
@@ -175,26 +179,91 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
-      const sellers = await User.find({
+      const requestedStatus = String(
+        req.query.status || 'all'
+      )
+        .trim()
+        .toLowerCase();
+
+      const validStatuses = [
+        'pending',
+        'approved',
+        'rejected',
+      ];
+
+      const filter = {
         sellerStatus: {
-          $in: [
-            'pending',
-            'approved',
-            'rejected',
-          ],
+          $in: validStatuses,
         },
-      })
+      };
+
+      /*
+       * Allow the admin frontend to request
+       * one particular application status.
+       */
+      if (
+        validStatuses.includes(
+          requestedStatus
+        )
+      ) {
+        filter.sellerStatus =
+          requestedStatus;
+      }
+
+      const sellers = await User.find(
+        filter
+      )
         .select('-password')
         .sort({
-          sellerStatus: 1,
-          'sellerProfile.applicationDate': -1,
           createdAt: -1,
-        });
+        })
+        .lean();
+
+      const data = sellers.map(
+        (seller) => ({
+          id: seller._id,
+          name: seller.name || '',
+          email: seller.email || '',
+          phone: seller.phone || '',
+          role: seller.role || 'customer',
+
+          sellerStatus:
+            seller.sellerStatus || '',
+
+          storeName:
+            seller.sellerProfile
+              ?.storeName ||
+            `${seller.name || 'Seller'}'s Store`,
+
+          applicationDate:
+            seller.sellerProfile
+              ?.applicationDate ||
+            seller.createdAt ||
+            null,
+
+          createdAt:
+            seller.createdAt || null,
+
+          reviewedAt:
+            seller.sellerProfile
+              ?.reviewedAt ||
+            null,
+
+          rejectionReason:
+            seller.sellerProfile
+              ?.rejectionReason ||
+            '',
+
+          sellerProfile:
+            seller.sellerProfile || {},
+        })
+      );
 
       return res.json({
         success: true,
-        count: sellers.length,
-        data: sellers,
+        status: requestedStatus,
+        count: data.length,
+        data,
       });
     } catch (error) {
       console.error(
@@ -217,6 +286,9 @@ router.get(
 |--------------------------------------------------------------------------
 |
 | GET /api/admin/sellers/pending
+|
+| Kept for compatibility with the existing
+| frontend and existing functionality.
 |
 */
 
@@ -270,16 +342,17 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
-      const seller = await User.findOne({
-        _id: req.params.id,
-        sellerStatus: {
-          $in: [
-            'pending',
-            'approved',
-            'rejected',
-          ],
-        },
-      }).select('-password');
+      const seller =
+        await User.findOne({
+          _id: req.params.id,
+          sellerStatus: {
+            $in: [
+              'pending',
+              'approved',
+              'rejected',
+            ],
+          },
+        }).select('-password');
 
       if (!seller) {
         return res.status(404).json({
@@ -315,12 +388,6 @@ router.get(
 |
 | PUT /api/admin/sellers/:id/approve
 |
-| Approval changes:
-| - role -> seller
-| - sellerStatus -> approved
-| - reviewedAt -> current date
-| - rejectionReason -> empty
-|
 */
 
 router.put(
@@ -353,10 +420,6 @@ router.put(
         });
       }
 
-      /*
-       * Make sure this account actually
-       * submitted a seller application.
-       */
       if (
         seller.sellerStatus !==
           'pending' &&
@@ -368,6 +431,13 @@ router.put(
           message:
             'This account does not have a seller application.',
         });
+      }
+
+      /*
+       * Make sure sellerProfile exists.
+       */
+      if (!seller.sellerProfile) {
+        seller.sellerProfile = {};
       }
 
       seller.role = 'seller';
@@ -485,10 +555,18 @@ router.put(
 
       /*
        * Keep rejected applicants as
-       * customers until they are approved.
+       * normal customers so they can
+       * still log in and resubmit.
        */
       seller.role = 'customer';
       seller.sellerStatus = 'rejected';
+
+      /*
+       * Make sure sellerProfile exists.
+       */
+      if (!seller.sellerProfile) {
+        seller.sellerProfile = {};
+      }
 
       seller.sellerProfile.reviewedAt =
         new Date();
@@ -538,13 +616,6 @@ router.put(
 |--------------------------------------------------------------------------
 |
 | GET /api/admin/vendor-stores
-|
-| Returns approved sellers with:
-| - store name
-| - owner name
-| - email
-| - account creation date/time
-| - number of products
 |
 */
 
@@ -619,9 +690,6 @@ router.get(
 |--------------------------------------------------------------------------
 |
 | GET /api/admin/vendor-stores/:sellerId/products
-|
-| Returns products belonging to one
-| approved seller.
 |
 */
 
