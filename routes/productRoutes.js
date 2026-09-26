@@ -16,6 +16,11 @@ const uploadProductImage = require('../utils/uploadProductImage');
 const router = express.Router();
 
 /*
+ * Maximum number of product images allowed.
+ */
+const MAX_PRODUCT_IMAGES = 4;
+
+/*
  * Build a clean URL-friendly slug.
  */
 const buildSlug = (value) =>
@@ -38,7 +43,7 @@ const toNumber = (value, fallback = 0) => {
 };
 
 /*
- * Calculate discount percentage from old price and current price.
+ * Calculate discount percentage.
  */
 const calculateDiscount = (oldPrice, price) => {
   const oldValue = toNumber(oldPrice);
@@ -58,7 +63,8 @@ const calculateDiscount = (oldPrice, price) => {
 };
 
 /*
- * Parse specifications sent as JSON from multipart/form-data.
+ * Parse specifications sent as JSON
+ * from multipart/form-data.
  */
 const parseSpecifications = (value) => {
   if (!value) {
@@ -74,6 +80,26 @@ const parseSpecifications = (value) => {
   } catch (error) {
     return {};
   }
+};
+
+/*
+ * Parse a list of features.
+ */
+const parseList = (value) => {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item).trim())
+      .filter(Boolean);
+  }
+
+  return String(value)
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean);
 };
 
 /*
@@ -109,10 +135,17 @@ const uploadProductImages = async (files = []) => {
     return [];
   }
 
+  if (files.length > MAX_PRODUCT_IMAGES) {
+    throw new Error(
+      `You can upload a maximum of ${MAX_PRODUCT_IMAGES} product images.`
+    );
+  }
+
   const uploadedImages = [];
 
   for (const file of files) {
-    const result = await uploadProductImage(file.buffer);
+    const result =
+      await uploadProductImage(file.buffer);
 
     if (result?.secure_url) {
       uploadedImages.push(result.secure_url);
@@ -158,13 +191,15 @@ router.get('/', async (req, res) => {
 
     const filter = {
       isActive: true,
+      approvalStatus: 'approved',
     };
 
     /*
      * Category filter.
      */
     if (category) {
-      const categoryRecord = await findCategory(category);
+      const categoryRecord =
+        await findCategory(category);
 
       if (!categoryRecord) {
         return res.json({
@@ -175,7 +210,8 @@ router.get('/', async (req, res) => {
         });
       }
 
-      filter.category = categoryRecord._id;
+      filter.category =
+        categoryRecord._id;
     }
 
     /*
@@ -219,13 +255,21 @@ router.get('/', async (req, res) => {
         {
           $or: [
             { offerStartDate: null },
-            { offerStartDate: { $lte: now } },
+            {
+              offerStartDate: {
+                $lte: now,
+              },
+            },
           ],
         },
         {
           $or: [
             { offerEndDate: null },
-            { offerEndDate: { $gt: now } },
+            {
+              offerEndDate: {
+                $gt: now,
+              },
+            },
           ],
         },
       ];
@@ -296,21 +340,21 @@ router.get('/', async (req, res) => {
         break;
     }
 
-    const total = await Product.countDocuments(
-      filter
-    );
+    const total =
+      await Product.countDocuments(filter);
 
-    const products = await Product.find(filter)
-      .populate('category')
-      .populate(
-        'seller',
-        'name email sellerProfile.storeName'
-      )
-      .sort(sortOption)
-      .skip(
-        (safePage - 1) * safeLimit
-      )
-      .limit(safeLimit);
+    const products =
+      await Product.find(filter)
+        .populate('category')
+        .populate(
+          'seller',
+          'name email sellerProfile.storeName'
+        )
+        .sort(sortOption)
+        .skip(
+          (safePage - 1) * safeLimit
+        )
+        .limit(safeLimit);
 
     res.json({
       products,
@@ -337,49 +381,46 @@ router.get('/', async (req, res) => {
 
 /*
  * GET /api/products/slug/:slug
- *
- * Public product by slug.
  */
-router.get('/slug/:slug', async (req, res) => {
-  try {
-    const product = await Product.findOne({
-      slug: req.params.slug,
-    })
-      .populate('category')
-      .populate(
-        'seller',
-        'name email sellerProfile.storeName'
-      );
+router.get(
+  '/slug/:slug',
+  async (req, res) => {
+    try {
+      const product =
+        await Product.findOne({
+          slug: req.params.slug,
+        })
+          .populate('category')
+          .populate(
+            'seller',
+            'name email sellerProfile.storeName'
+          );
 
-    if (!product) {
-      return res.status(404).json({
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found.',
+        });
+      }
+
+      res.json(product);
+    } catch (error) {
+      res.status(500).json({
         success: false,
-        message: 'Product not found.',
+        message:
+          error.message ||
+          'Unable to fetch product.',
       });
     }
-
-    res.json(product);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message:
-        error.message ||
-        'Unable to fetch product.',
-    });
   }
-});
+);
 
 /* =========================================================
    SELLER PRODUCT ROUTES
-   IMPORTANT:
-   These routes must appear BEFORE /:id.
    ========================================================= */
 
 /*
  * GET /api/products/seller/me
- *
- * Return products owned by the currently
- * authenticated approved seller.
  */
 router.get(
   '/seller/me',
@@ -409,9 +450,6 @@ router.get(
         seller: req.user._id,
       };
 
-      /*
-       * Seller product search.
-       */
       if (search) {
         filter.$or = [
           {
@@ -435,9 +473,6 @@ router.get(
         ];
       }
 
-      /*
-       * Category filter.
-       */
       if (category) {
         const categoryRecord =
           await findCategory(category);
@@ -456,9 +491,6 @@ router.get(
           categoryRecord._id;
       }
 
-      /*
-       * Active/inactive filter.
-       */
       if (status === 'active') {
         filter.isActive = true;
       }
@@ -470,15 +502,16 @@ router.get(
       const total =
         await Product.countDocuments(filter);
 
-      const products = await Product.find(filter)
-        .populate('category')
-        .sort({
-          createdAt: -1,
-        })
-        .skip(
-          (safePage - 1) * safeLimit
-        )
-        .limit(safeLimit);
+      const products =
+        await Product.find(filter)
+          .populate('category')
+          .sort({
+            createdAt: -1,
+          })
+          .skip(
+            (safePage - 1) * safeLimit
+          )
+          .limit(safeLimit);
 
       res.json({
         success: true,
@@ -508,39 +541,51 @@ router.get(
 /*
  * POST /api/products/seller
  *
- * Create a product as an approved seller.
+ * Seller creates a product.
  *
- * Images:
- * - multipart/form-data
- * - field name: images
- * - maximum 8 images
+ * Maximum 4 images.
  */
 router.post(
   '/seller',
   protect,
   approvedSellerOnly,
-  sellerUpload.array('images', 8),
+  sellerUpload.array(
+    'images',
+    MAX_PRODUCT_IMAGES
+  ),
   async (req, res) => {
     try {
       const {
         name,
         brand,
         category,
+        subcategory,
         sku,
         price,
         oldPrice,
         stock,
         description,
         shortDescription,
-        subcategory,
-        specifications,
         condition,
         warranty,
+        warrantyDuration,
+        warrantyTerms,
+        deliveryDuration,
+        deliveryFee,
+        deliveryTerms,
+        deliveryLocations,
+        returnPeriod,
+        returnPolicy,
+        returnConditions,
+        whatsIncluded,
+        keyFeatures,
+        sellerNotes,
+        specifications,
         isNew,
       } = req.body;
 
       /*
-       * Validate required fields.
+       * Required fields.
        */
       if (
         !name ||
@@ -557,6 +602,21 @@ router.post(
         });
       }
 
+      /*
+       * Maximum image check.
+       */
+      if (
+        req.files &&
+        req.files.length >
+          MAX_PRODUCT_IMAGES
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `A maximum of ${MAX_PRODUCT_IMAGES} product images is allowed.`,
+        });
+      }
+
       const numericPrice =
         toNumber(price, -1);
 
@@ -565,6 +625,9 @@ router.post(
 
       const numericStock =
         toNumber(stock, 0);
+
+      const numericDeliveryFee =
+        toNumber(deliveryFee, 0);
 
       if (numericPrice < 0) {
         return res.status(400).json({
@@ -590,6 +653,14 @@ router.post(
         });
       }
 
+      if (numericDeliveryFee < 0) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Delivery fee cannot be negative.',
+        });
+      }
+
       /*
        * Normalize SKU.
        */
@@ -603,6 +674,14 @@ router.post(
        */
       const productSlug =
         buildSlug(name);
+
+      if (!productSlug) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Product name must contain valid characters.',
+        });
+      }
 
       /*
        * Check duplicate SKU or slug.
@@ -642,7 +721,7 @@ router.post(
       }
 
       /*
-       * Upload images.
+       * Upload product images.
        */
       const imageUrls =
         await uploadProductImages(
@@ -650,15 +729,13 @@ router.post(
         );
 
       /*
-       * Create product.
+       * Create seller product.
        *
-       * Seller does NOT control:
-       * - seller ownership
-       * - featured
-       * - flashSale
-       * - offer
-       *
-       * These remain controlled by the platform.
+       * Seller products:
+       * - belong to the logged-in seller
+       * - are inactive
+       * - are pending admin approval
+       * - cannot control featured/offer fields
        */
       const product =
         await Product.create({
@@ -682,9 +759,11 @@ router.post(
           shortDescription:
             shortDescription || '',
 
-          seller: req.user._id,
+          seller:
+            req.user._id,
 
-          price: numericPrice,
+          price:
+            numericPrice,
 
           oldPrice:
             numericOldPrice,
@@ -695,7 +774,8 @@ router.post(
               numericPrice
             ),
 
-          images: imageUrls,
+          images:
+            imageUrls,
 
           stock:
             numericStock,
@@ -706,6 +786,42 @@ router.post(
           warranty:
             warranty || '',
 
+          warrantyDuration:
+            warrantyDuration || '',
+
+          warrantyTerms:
+            warrantyTerms || '',
+
+          deliveryDuration:
+            deliveryDuration || '',
+
+          deliveryFee:
+            numericDeliveryFee,
+
+          deliveryTerms:
+            deliveryTerms || '',
+
+          deliveryLocations:
+            deliveryLocations || '',
+
+          returnPeriod:
+            returnPeriod || '',
+
+          returnPolicy:
+            returnPolicy || '',
+
+          returnConditions:
+            returnConditions || '',
+
+          whatsIncluded:
+            whatsIncluded || '',
+
+          keyFeatures:
+            parseList(keyFeatures),
+
+          sellerNotes:
+            sellerNotes || '',
+
           specifications:
             parseSpecifications(
               specifications
@@ -715,23 +831,23 @@ router.post(
             String(isNew) === 'true',
 
           /*
-           * Seller products are active by default.
+           * Seller products must be approved
+           * before appearing publicly.
            */
+          isActive: false,
+
+          approvalStatus: 'pending',
+
+          rejectionReason: '',
+
+          approvedAt: null,
+
+          approvedBy: null,
+
           /*
- * Seller products must be reviewed by an admin
- * before they become visible in the public store.
- */
-isActive: false,
-
-approvalStatus: 'pending',
-
-rejectionReason: '',
-
-approvedAt: null,
-
-approvedBy: null,
-
-featured: false,
+           * Platform-controlled fields.
+           */
+          featured: false,
 
           flashSale: false,
 
@@ -757,7 +873,7 @@ featured: false,
       res.status(201).json({
         success: true,
         message:
-          'Product created successfully.',
+          'Product submitted successfully. It is now awaiting admin approval.',
         product:
           populatedProduct,
       });
@@ -780,13 +896,18 @@ featured: false,
 /*
  * PUT /api/products/seller/:id
  *
- * Update a product owned by the seller.
+ * Seller updates own product.
+ *
+ * Maximum 4 replacement images.
  */
 router.put(
   '/seller/:id',
   protect,
   approvedSellerOnly,
-  sellerUpload.array('images', 8),
+  sellerUpload.array(
+    'images',
+    MAX_PRODUCT_IMAGES
+  ),
   async (req, res) => {
     try {
       const product =
@@ -803,8 +924,20 @@ router.put(
         });
       }
 
+      if (
+        req.files &&
+        req.files.length >
+          MAX_PRODUCT_IMAGES
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `A maximum of ${MAX_PRODUCT_IMAGES} product images is allowed.`,
+        });
+      }
+
       /*
-       * Update basic fields only.
+       * Product name and slug.
        */
       if (req.body.name) {
         const newName =
@@ -838,12 +971,26 @@ router.put(
         }
       }
 
-      if (req.body.brand !== undefined) {
+      /*
+       * Brand.
+       */
+      if (
+        req.body.brand !==
+        undefined
+      ) {
         product.brand =
-          String(req.body.brand).trim();
+          String(
+            req.body.brand
+          ).trim();
       }
 
-      if (req.body.sku !== undefined) {
+      /*
+       * SKU.
+       */
+      if (
+        req.body.sku !==
+        undefined
+      ) {
         const newSku =
           String(req.body.sku)
             .trim()
@@ -865,7 +1012,8 @@ router.put(
           });
         }
 
-        product.sku = newSku;
+        product.sku =
+          newSku;
       }
 
       /*
@@ -889,6 +1037,9 @@ router.put(
           categoryRecord._id;
       }
 
+      /*
+       * Basic product details.
+       */
       if (
         req.body.subcategory !==
         undefined
@@ -914,7 +1065,7 @@ router.put(
       }
 
       /*
-       * Price and stock.
+       * Price.
        */
       if (
         req.body.price !==
@@ -938,6 +1089,9 @@ router.put(
           numericPrice;
       }
 
+      /*
+       * Old price.
+       */
       if (
         req.body.oldPrice !==
         undefined
@@ -960,12 +1114,18 @@ router.put(
           numericOldPrice;
       }
 
+      /*
+       * Recalculate discount.
+       */
       product.discount =
         calculateDiscount(
           product.oldPrice,
           product.price
         );
 
+      /*
+       * Stock.
+       */
       if (
         req.body.stock !==
         undefined
@@ -989,19 +1149,143 @@ router.put(
       }
 
       /*
-       * Condition and warranty.
+       * Condition.
        */
       if (req.body.condition) {
         product.condition =
           req.body.condition;
       }
 
+      /*
+       * Warranty.
+       */
       if (
         req.body.warranty !==
         undefined
       ) {
         product.warranty =
           req.body.warranty;
+      }
+
+      if (
+        req.body.warrantyDuration !==
+        undefined
+      ) {
+        product.warrantyDuration =
+          req.body.warrantyDuration;
+      }
+
+      if (
+        req.body.warrantyTerms !==
+        undefined
+      ) {
+        product.warrantyTerms =
+          req.body.warrantyTerms;
+      }
+
+      /*
+       * Delivery.
+       */
+      if (
+        req.body.deliveryDuration !==
+        undefined
+      ) {
+        product.deliveryDuration =
+          req.body.deliveryDuration;
+      }
+
+      if (
+        req.body.deliveryFee !==
+        undefined
+      ) {
+        const numericDeliveryFee =
+          toNumber(
+            req.body.deliveryFee,
+            -1
+          );
+
+        if (numericDeliveryFee < 0) {
+          return res.status(400).json({
+            success: false,
+            message:
+              'Delivery fee cannot be negative.',
+          });
+        }
+
+        product.deliveryFee =
+          numericDeliveryFee;
+      }
+
+      if (
+        req.body.deliveryTerms !==
+        undefined
+      ) {
+        product.deliveryTerms =
+          req.body.deliveryTerms;
+      }
+
+      if (
+        req.body.deliveryLocations !==
+        undefined
+      ) {
+        product.deliveryLocations =
+          req.body.deliveryLocations;
+      }
+
+      /*
+       * Returns.
+       */
+      if (
+        req.body.returnPeriod !==
+        undefined
+      ) {
+        product.returnPeriod =
+          req.body.returnPeriod;
+      }
+
+      if (
+        req.body.returnPolicy !==
+        undefined
+      ) {
+        product.returnPolicy =
+          req.body.returnPolicy;
+      }
+
+      if (
+        req.body.returnConditions !==
+        undefined
+      ) {
+        product.returnConditions =
+          req.body.returnConditions;
+      }
+
+      /*
+       * Product contents/features.
+       */
+      if (
+        req.body.whatsIncluded !==
+        undefined
+      ) {
+        product.whatsIncluded =
+          req.body.whatsIncluded;
+      }
+
+      if (
+        req.body.keyFeatures !==
+        undefined
+      ) {
+        product.keyFeatures =
+          parseList(
+            req.body.keyFeatures
+          );
+      }
+
+      if (
+        req.body.sellerNotes !==
+        undefined
+      ) {
+        product.sellerNotes =
+          req.body.sellerNotes;
       }
 
       /*
@@ -1018,22 +1302,21 @@ router.put(
       }
 
       /*
-       * isNew can be controlled by the seller.
+       * isNew.
        */
       if (
         req.body.isNew !==
         undefined
       ) {
         product.isNew =
-          String(req.body.isNew) ===
-          'true';
+          String(
+            req.body.isNew
+          ) === 'true';
       }
 
       /*
-       * Upload replacement/additional images.
-       *
-       * If images are supplied, they replace the
-       * current image list.
+       * Replace images if new images
+       * were supplied.
        */
       if (
         req.files &&
@@ -1049,20 +1332,51 @@ router.put(
       }
 
       /*
-       * Seller cannot modify ownership
-       * or platform-controlled fields.
+       * IMPORTANT:
+       * Any seller edit requires another
+       * admin review.
+       */
+      product.approvalStatus =
+        'pending';
+
+      product.isActive =
+        false;
+
+      product.rejectionReason =
+        '';
+
+      product.approvedAt =
+        null;
+
+      product.approvedBy =
+        null;
+
+      /*
+       * Seller ownership cannot be changed.
        */
       product.seller =
         req.user._id;
 
+      /*
+       * Platform-controlled fields.
+       */
       product.featured =
-        product.featured || false;
+        false;
 
       product.flashSale =
-        product.flashSale || false;
+        false;
 
       product.offer =
-        product.offer || false;
+        false;
+
+      product.offerMessage =
+        '';
+
+      product.offerStartDate =
+        null;
+
+      product.offerEndDate =
+        null;
 
       const updatedProduct =
         await product.save();
@@ -1080,7 +1394,7 @@ router.put(
       res.json({
         success: true,
         message:
-          'Product updated successfully.',
+          'Product updated and resubmitted for admin approval.',
         product:
           populatedProduct,
       });
@@ -1102,8 +1416,6 @@ router.put(
 
 /*
  * DELETE /api/products/seller/:id
- *
- * Delete only the seller's own product.
  */
 router.delete(
   '/seller/:id',
@@ -1152,41 +1464,39 @@ router.delete(
    PUBLIC PRODUCT BY ID
    ========================================================= */
 
-/*
- * GET /api/products/:id
- *
- * IMPORTANT:
- * This comes AFTER /seller/me and /seller/:id.
- */
-router.get('/:id', async (req, res) => {
-  try {
-    const product =
-      await Product.findById(
-        req.params.id
-      )
-        .populate('category')
-        .populate(
-          'seller',
-          'name email sellerProfile.storeName'
-        );
+router.get(
+  '/:id',
+  async (req, res) => {
+    try {
+      const product =
+        await Product.findById(
+          req.params.id
+        )
+          .populate('category')
+          .populate(
+            'seller',
+            'name email sellerProfile.storeName'
+          );
 
-    if (!product) {
-      return res.status(404).json({
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message:
+            'Product not found.',
+        });
+      }
+
+      res.json(product);
+    } catch (error) {
+      res.status(500).json({
         success: false,
-        message: 'Product not found.',
+        message:
+          error.message ||
+          'Unable to fetch product.',
       });
     }
-
-    res.json(product);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message:
-        error.message ||
-        'Unable to fetch product.',
-    });
   }
-});
+);
 
 /* =========================================================
    ADMIN PRODUCT MANAGEMENT
@@ -1195,7 +1505,7 @@ router.get('/:id', async (req, res) => {
 /*
  * POST /api/products
  *
- * Existing admin product creation.
+ * Admin product creation.
  */
 router.post(
   '/',
@@ -1224,6 +1534,18 @@ router.post(
         isActive,
         condition,
         warranty,
+        warrantyDuration,
+        warrantyTerms,
+        deliveryDuration,
+        deliveryFee,
+        deliveryTerms,
+        deliveryLocations,
+        returnPeriod,
+        returnPolicy,
+        returnConditions,
+        whatsIncluded,
+        keyFeatures,
+        sellerNotes,
         images,
         seller,
       } = req.body;
@@ -1243,6 +1565,17 @@ router.post(
         });
       }
 
+      if (
+        Array.isArray(images) &&
+        images.length > MAX_PRODUCT_IMAGES
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `A maximum of ${MAX_PRODUCT_IMAGES} product images is allowed.`,
+        });
+      }
+
       const numericPrice =
         toNumber(price, -1);
 
@@ -1252,11 +1585,38 @@ router.post(
       const numericStock =
         toNumber(stock, 0);
 
+      const numericDeliveryFee =
+        toNumber(deliveryFee, 0);
+
       if (numericPrice < 0) {
         return res.status(400).json({
           success: false,
           message:
             'Product price must be valid.',
+        });
+      }
+
+      if (numericOldPrice < 0) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Old price must be valid.',
+        });
+      }
+
+      if (numericStock < 0) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Stock cannot be negative.',
+        });
+      }
+
+      if (numericDeliveryFee < 0) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Delivery fee cannot be negative.',
         });
       }
 
@@ -1302,9 +1662,15 @@ router.post(
       const product =
         await Product.create({
           name,
-          slug: productSlug,
-          sku: normalizedSku,
+
+          slug:
+            productSlug,
+
+          sku:
+            normalizedSku,
+
           brand,
+
           category:
             categoryRecord._id,
 
@@ -1333,7 +1699,9 @@ router.post(
             numericStock,
 
           specifications:
-            specifications || {},
+            parseSpecifications(
+              specifications
+            ),
 
           featured:
             Boolean(featured),
@@ -1365,15 +1733,50 @@ router.post(
           warranty:
             warranty || '',
 
+          warrantyDuration:
+            warrantyDuration || '',
+
+          warrantyTerms:
+            warrantyTerms || '',
+
+          deliveryDuration:
+            deliveryDuration || '',
+
+          deliveryFee:
+            numericDeliveryFee,
+
+          deliveryTerms:
+            deliveryTerms || '',
+
+          deliveryLocations:
+            deliveryLocations || '',
+
+          returnPeriod:
+            returnPeriod || '',
+
+          returnPolicy:
+            returnPolicy || '',
+
+          returnConditions:
+            returnConditions || '',
+
+          whatsIncluded:
+            whatsIncluded || '',
+
+          keyFeatures:
+            parseList(keyFeatures),
+
+          sellerNotes:
+            sellerNotes || '',
+
           images:
             Array.isArray(images)
-              ? images
+              ? images.slice(
+                  0,
+                  MAX_PRODUCT_IMAGES
+                )
               : [],
 
-          /*
-           * Admin may optionally assign a product
-           * to a seller.
-           */
           seller:
             seller &&
             mongoose.Types.ObjectId.isValid(
@@ -1381,6 +1784,18 @@ router.post(
             )
               ? seller
               : null,
+
+          approvalStatus:
+            'approved',
+
+          rejectionReason:
+            '',
+
+          approvedAt:
+            new Date(),
+
+          approvedBy:
+            req.user._id,
         });
 
       const populatedProduct =
@@ -1419,7 +1834,7 @@ router.post(
 /*
  * PUT /api/products/:id
  *
- * Existing admin product update.
+ * Admin product update.
  */
 router.put(
   '/:id',
@@ -1435,10 +1850,14 @@ router.put(
       if (!product) {
         return res.status(404).json({
           success: false,
-          message: 'Product not found.',
+          message:
+            'Product not found.',
         });
       }
 
+      /*
+       * Regenerate slug when name changes.
+       */
       if (
         req.body.name &&
         req.body.name !== product.name
@@ -1467,8 +1886,22 @@ router.put(
       }
 
       /*
-       * Prevent accidental modification of
-       * protected ownership fields through Object.assign.
+       * Maximum 4 images.
+       */
+      if (
+        Array.isArray(req.body.images) &&
+        req.body.images.length >
+          MAX_PRODUCT_IMAGES
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `A maximum of ${MAX_PRODUCT_IMAGES} product images is allowed.`,
+        });
+      }
+
+      /*
+       * Allowed fields.
        */
       const allowedFields = [
         'name',
@@ -1492,6 +1925,18 @@ router.put(
         'isActive',
         'condition',
         'warranty',
+        'warrantyDuration',
+        'warrantyTerms',
+        'deliveryDuration',
+        'deliveryFee',
+        'deliveryTerms',
+        'deliveryLocations',
+        'returnPeriod',
+        'returnPolicy',
+        'returnConditions',
+        'whatsIncluded',
+        'keyFeatures',
+        'sellerNotes',
         'images',
         'seller',
       ];
@@ -1509,7 +1954,64 @@ router.put(
       }
 
       /*
-       * Validate category if changed.
+       * Normalize list fields.
+       */
+      if (
+        Object.prototype.hasOwnProperty.call(
+          req.body,
+          'keyFeatures'
+        )
+      ) {
+        product.keyFeatures =
+          parseList(
+            req.body.keyFeatures
+          );
+      }
+
+      /*
+       * Normalize specifications.
+       */
+      if (
+        Object.prototype.hasOwnProperty.call(
+          req.body,
+          'specifications'
+        )
+      ) {
+        product.specifications =
+          parseSpecifications(
+            req.body.specifications
+          );
+      }
+
+      /*
+       * Normalize delivery fee.
+       */
+      if (
+        Object.prototype.hasOwnProperty.call(
+          req.body,
+          'deliveryFee'
+        )
+      ) {
+        const deliveryFee =
+          toNumber(
+            req.body.deliveryFee,
+            -1
+          );
+
+        if (deliveryFee < 0) {
+          return res.status(400).json({
+            success: false,
+            message:
+              'Delivery fee cannot be negative.',
+          });
+        }
+
+        product.deliveryFee =
+          deliveryFee;
+      }
+
+      /*
+       * Validate category.
        */
       if (
         req.body.category &&
@@ -1627,7 +2129,8 @@ router.delete(
       if (!product) {
         return res.status(404).json({
           success: false,
-          message: 'Product not found.',
+          message:
+            'Product not found.',
         });
       }
 

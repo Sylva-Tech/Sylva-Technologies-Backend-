@@ -1,6 +1,7 @@
 const multer = require('multer');
 
-const storage = multer.memoryStorage();
+const storage =
+  multer.memoryStorage();
 
 const allowedMimeTypes = [
   'image/jpeg',
@@ -8,8 +9,16 @@ const allowedMimeTypes = [
   'image/webp',
 ];
 
-const fileFilter = (req, file, cb) => {
-  if (!allowedMimeTypes.includes(file.mimetype)) {
+const fileFilter = (
+  req,
+  file,
+  cb
+) => {
+  if (
+    !allowedMimeTypes.includes(
+      file.mimetype
+    )
+  ) {
     return cb(
       new Error(
         'Only JPG, PNG and WEBP images are allowed.'
@@ -24,9 +33,15 @@ const sellerUpload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024,
-    files: 8,
+    fileSize:
+      5 * 1024 * 1024,
+
+    /*
+     * Maximum 4 product images.
+     */
+    files: 4,
   },
 });
 
-module.exports = sellerUpload;
+module.exports =
+  sellerUpload;
