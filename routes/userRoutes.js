@@ -176,6 +176,15 @@ router.put(
   '/seller/application/resubmit',
 
   /*
+   * IMPORTANT:
+   * Authenticate the currently logged-in seller first.
+   *
+   * This populates req.user and allows the route
+   * to safely use req.user._id below.
+   */
+  protect,
+
+  /*
    * Reuse the exact same upload middleware
    * used by seller registration.
    */
@@ -221,6 +230,10 @@ router.put(
     const newlyUploadedFiles = [];
 
     try {
+      /*
+       * protect middleware has already authenticated
+       * the user and populated req.user.
+       */
       const user = await User.findById(
         req.user._id
       );
@@ -252,6 +265,14 @@ router.put(
       }
 
       /*
+       * Make sure sellerProfile exists before
+       * reading existing seller information.
+       */
+      if (!user.sellerProfile) {
+        user.sellerProfile = {};
+      }
+
+      /*
        * Multipart/form-data text fields are
        * available through req.body.
        */
@@ -267,6 +288,20 @@ router.put(
         kraPin,
         storeLocation,
       } = req.body;
+
+      /*
+       * IMPORTANT:
+       *
+       * If Store Name is not supplied by the frontend,
+       * preserve the Store Name originally submitted
+       * during seller registration.
+       */
+      const finalStoreName =
+        storeName !== undefined
+          ? storeName.trim()
+          : (
+              user.sellerProfile.storeName || ''
+            ).trim();
 
       /*
        * Uploaded files are available through
@@ -286,6 +321,7 @@ router.put(
       /*
        * Validate important seller details.
        */
+
       if (
         !officialName ||
         officialName.trim().length < 2
@@ -336,8 +372,8 @@ router.put(
       }
 
       if (
-        !storeName ||
-        storeName.trim().length < 2
+        !finalStoreName ||
+        finalStoreName.length < 2
       ) {
         return res.status(400).json({
           success: false,
@@ -347,29 +383,23 @@ router.put(
       }
 
       /*
-       * Make sure sellerProfile exists.
-       */
-      if (!user.sellerProfile) {
-        user.sellerProfile = {};
-      }
-
-      /*
        * Store the old Cloudinary references.
        *
-       * We delete them only after the database
-       * has been successfully updated.
+       * They will only be deleted if a replacement
+       * document is successfully uploaded and the
+       * database update succeeds.
        */
       const oldIdFrontDocument =
-        user.sellerProfile
-          .idFrontDocument || null;
+        user.sellerProfile.idFrontDocument ||
+        null;
 
       const oldIdBackDocument =
-        user.sellerProfile
-          .idBackDocument || null;
+        user.sellerProfile.idBackDocument ||
+        null;
 
       const oldKraPinDocument =
-        user.sellerProfile
-          .kraPinDocument || null;
+        user.sellerProfile.kraPinDocument ||
+        null;
 
       /*
        * Upload newly selected documents.
@@ -421,6 +451,7 @@ router.put(
       /*
        * Update application information.
        */
+
       user.name =
         officialName.trim();
 
@@ -436,33 +467,53 @@ router.put(
       user.sellerProfile.idNumber =
         idNumber.trim();
 
+      /*
+       * Preserve the existing date of birth
+       * if no new value was submitted.
+       */
       if (dateOfBirth) {
         user.sellerProfile.dateOfBirth =
           dateOfBirth;
       }
 
+      /*
+       * Use the Store Name originally registered
+       * by the seller unless a new Store Name was
+       * supplied.
+       */
       user.sellerProfile.storeName =
-        storeName.trim();
+        finalStoreName;
 
-      user.sellerProfile.storeEmail =
-        storeEmail
-          ? storeEmail
-              .trim()
-              .toLowerCase()
-          : '';
+      /*
+       * Preserve existing store email if the
+       * frontend doesn't send a new value.
+       */
+      if (storeEmail !== undefined) {
+        user.sellerProfile.storeEmail =
+          storeEmail
+            ? storeEmail
+                .trim()
+                .toLowerCase()
+            : '';
+      }
 
-      user.sellerProfile.storePhone =
-        storePhone
-          ? storePhone.trim()
-          : '';
+      /*
+       * Preserve existing store phone if the
+       * frontend doesn't send a new value.
+       */
+      if (storePhone !== undefined) {
+        user.sellerProfile.storePhone =
+          storePhone
+            ? storePhone.trim()
+            : '';
+      }
 
       user.sellerProfile.mpesaPhone =
         mpesaPhone.trim();
 
       /*
-       * Preserve the existing KRA PIN
-       * value unless a new value was
-       * submitted.
+       * Preserve the existing KRA PIN value
+       * unless a new value was submitted.
        */
       if (kraPin !== undefined) {
         user.sellerProfile.kraPin =
@@ -471,31 +522,33 @@ router.put(
             : '';
       }
 
-      user.sellerProfile.storeLocation =
-        storeLocation
-          ? storeLocation.trim()
-          : '';
+      /*
+       * Preserve existing store location if
+       * the frontend does not send a new value.
+       */
+      if (storeLocation !== undefined) {
+        user.sellerProfile.storeLocation =
+          storeLocation
+            ? storeLocation.trim()
+            : '';
+      }
 
       /*
-       * Replace Cloudinary document
-       * references only when a new file
-       * was uploaded.
+       * Replace Cloudinary document references
+       * only when a new file was uploaded.
        */
       if (idFrontUpload) {
-        user.sellerProfile
-          .idFrontDocument =
+        user.sellerProfile.idFrontDocument =
           idFrontUpload.public_id;
       }
 
       if (idBackUpload) {
-        user.sellerProfile
-          .idBackDocument =
+        user.sellerProfile.idBackDocument =
           idBackUpload.public_id;
       }
 
       if (kraPinUpload) {
-        user.sellerProfile
-          .kraPinDocument =
+        user.sellerProfile.kraPinDocument =
           kraPinUpload.public_id;
       }
 
@@ -512,16 +565,18 @@ router.put(
        */
       user.role = 'customer';
 
-      user.sellerProfile
-        .applicationDate =
+      user.sellerProfile.applicationDate =
         new Date();
 
       user.sellerProfile.reviewedAt =
         null;
 
-      user.sellerProfile
-        .rejectionReason = '';
+      user.sellerProfile.rejectionReason =
+        '';
 
+      /*
+       * Save the updated application.
+       */
       await user.save();
 
       /*
@@ -536,38 +591,48 @@ router.put(
         idFrontUpload &&
         oldIdFrontDocument
       ) {
-        oldDocumentsToDelete.push(
-          oldIdFrontDocument
-        );
+        oldDocumentsToDelete.push({
+          publicId: oldIdFrontDocument,
+          resourceType:
+            idFrontUpload.resource_type ||
+            'image',
+        });
       }
 
       if (
         idBackUpload &&
         oldIdBackDocument
       ) {
-        oldDocumentsToDelete.push(
-          oldIdBackDocument
-        );
+        oldDocumentsToDelete.push({
+          publicId: oldIdBackDocument,
+          resourceType:
+            idBackUpload.resource_type ||
+            'image',
+        });
       }
 
       if (
         kraPinUpload &&
         oldKraPinDocument
       ) {
-        oldDocumentsToDelete.push(
-          oldKraPinDocument
-        );
+        oldDocumentsToDelete.push({
+          publicId: oldKraPinDocument,
+          resourceType:
+            kraPinUpload.resource_type ||
+            'image',
+        });
       }
 
       for (
-        const publicId of oldDocumentsToDelete
+        const document of oldDocumentsToDelete
       ) {
         try {
           await cloudinary.uploader.destroy(
-            publicId,
+            document.publicId,
             {
               type: 'authenticated',
-              resource_type: 'image',
+              resource_type:
+                document.resourceType,
             }
           );
         } catch (cleanupError) {
@@ -584,10 +649,17 @@ router.put(
         }
       }
 
+      /*
+       * Return the updated application.
+       *
+       * Private Cloudinary document references
+       * are intentionally NOT returned.
+       */
       return res.status(200).json({
         success: true,
         message:
           'Your seller application has been resubmitted successfully and is now pending admin review.',
+
         data: {
           id: user._id,
           name: user.name,
@@ -596,6 +668,7 @@ router.put(
           role: user.role,
           sellerStatus:
             user.sellerStatus,
+
           sellerProfile: {
             officialName:
               user.sellerProfile
@@ -613,6 +686,11 @@ router.put(
               user.sellerProfile
                 .dateOfBirth,
 
+            /*
+             * This will now contain the
+             * Store Name from registration
+             * unless the seller edited it.
+             */
             storeName:
               user.sellerProfile
                 .storeName,
