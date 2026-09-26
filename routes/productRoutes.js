@@ -1378,6 +1378,19 @@ router.put(
       product.offerEndDate =
         null;
 
+/*
+ * Seller resubmission after rejection.
+ */
+if (
+  product.approvalStatus === 'rejected'
+) {
+  product.approvalStatus = 'pending';
+  product.isActive = false;
+  product.rejectionReason = '';
+  product.approvedAt = null;
+  product.approvedBy = null;
+}
+
       const updatedProduct =
         await product.save();
 
@@ -1455,6 +1468,219 @@ router.delete(
         message:
           error.message ||
           'Unable to delete product.',
+      });
+    }
+  }
+);
+
+/* =========================================================
+   ADMIN PRODUCT APPROVALS
+   ========================================================= */
+
+/*
+ * GET /api/products/admin/product-approvals
+ *
+ * Get all seller products waiting for approval.
+ */
+router.get(
+  '/admin/product-approvals',
+  protect,
+  adminOnly,
+  async (req, res) => {
+    try {
+      const products = await Product.find({
+        seller: {
+          $ne: null,
+        },
+        approvalStatus: 'pending',
+      })
+        .populate(
+          'category',
+          'name'
+        )
+        .populate(
+          'seller',
+          'name email sellerProfile.storeName'
+        )
+        .sort({
+          createdAt: -1,
+        });
+
+      res.json({
+        success: true,
+        products,
+      });
+    } catch (error) {
+      console.error(
+        'Admin product approvals loading error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          error.message ||
+          'Unable to load product approval requests.',
+      });
+    }
+  }
+);
+
+/*
+ * PUT /api/products/admin/product-approvals/:id/approve
+ *
+ * Approve a seller product.
+ */
+router.put(
+  '/admin/product-approvals/:id/approve',
+  protect,
+  adminOnly,
+  async (req, res) => {
+    try {
+      const product =
+        await Product.findById(
+          req.params.id
+        );
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message:
+            'Product not found.',
+        });
+      }
+
+      if (!product.seller) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'This product does not belong to a seller.',
+        });
+      }
+
+      product.approvalStatus =
+        'approved';
+
+      product.isActive = true;
+
+      product.rejectionReason = '';
+
+      product.approvedAt = new Date();
+
+      product.approvedBy =
+        req.user._id;
+
+      const updatedProduct =
+        await product.save();
+
+      const populatedProduct =
+        await Product.findById(
+          updatedProduct._id
+        )
+          .populate(
+            'category',
+            'name'
+          )
+          .populate(
+            'seller',
+            'name email sellerProfile.storeName'
+          );
+
+      res.json({
+        success: true,
+        message:
+          'Product approved successfully.',
+        product:
+          populatedProduct,
+      });
+    } catch (error) {
+      console.error(
+        'Admin product approval error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          error.message ||
+          'Unable to approve product.',
+      });
+    }
+  }
+);
+
+/*
+ * PUT /api/products/admin/product-approvals/:id/reject
+ *
+ * Reject a seller product.
+ */
+router.put(
+  '/admin/product-approvals/:id/reject',
+  protect,
+  adminOnly,
+  async (req, res) => {
+    try {
+      const product =
+        await Product.findById(
+          req.params.id
+        );
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message:
+            'Product not found.',
+        });
+      }
+
+      product.approvalStatus =
+        'rejected';
+
+      product.isActive = false;
+
+      product.rejectionReason =
+        String(
+          req.body?.rejectionReason ||
+            'Product did not meet the approval requirements.'
+        ).trim();
+
+      product.approvedAt = null;
+      product.approvedBy = null;
+
+      const updatedProduct =
+        await product.save();
+
+      const populatedProduct =
+        await Product.findById(
+          updatedProduct._id
+        )
+          .populate(
+            'category',
+            'name'
+          )
+          .populate(
+            'seller',
+            'name email sellerProfile.storeName'
+          );
+
+      res.json({
+        success: true,
+        message:
+          'Product rejected successfully.',
+        product:
+          populatedProduct,
+      });
+    } catch (error) {
+      console.error(
+        'Admin product rejection error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          error.message ||
+          'Unable to reject product.',
       });
     }
   }
