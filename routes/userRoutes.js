@@ -515,12 +515,13 @@ router.put(
        * Preserve the existing KRA PIN value
        * unless a new value was submitted.
        */
-      if (kraPin !== undefined) {
-        user.sellerProfile.kraPin =
-          kraPin
-            ? kraPin.trim()
-            : '';
-      }
+      if (
+  kraPin !== undefined &&
+  typeof kraPin === 'string'
+) {
+  user.sellerProfile.kraPin =
+    kraPin.trim();
+}
 
       /*
        * Preserve existing store location if
