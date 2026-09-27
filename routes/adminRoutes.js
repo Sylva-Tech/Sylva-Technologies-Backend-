@@ -221,41 +221,22 @@ router.get(
 
       const data = sellers.map(
         (seller) => ({
+          _id: seller._id,
           id: seller._id,
           name: seller.name || '',
           email: seller.email || '',
           phone: seller.phone || '',
           role: seller.role || 'customer',
-
-          sellerStatus:
-            seller.sellerStatus || '',
-
-          storeName:
-            seller.sellerProfile
-              ?.storeName ||
-            `${seller.name || 'Seller'}'s Store`,
-
-          applicationDate:
-            seller.sellerProfile
-              ?.applicationDate ||
-            seller.createdAt ||
-            null,
-
-          createdAt:
-            seller.createdAt || null,
-
-          reviewedAt:
-            seller.sellerProfile
-              ?.reviewedAt ||
-            null,
-
-          rejectionReason:
-            seller.sellerProfile
-              ?.rejectionReason ||
-            '',
-
-          sellerProfile:
-            seller.sellerProfile || {},
+          sellerStatus: seller.sellerStatus || '',
+          storeName: seller.sellerProfile?.storeName || 'Not provided',
+          applicationDate: seller.sellerProfile?.applicationDate || seller.createdAt || null,
+          createdAt: seller.createdAt || null,
+          reviewedAt: seller.sellerProfile?.reviewedAt || null,
+          rejectionReason: seller.sellerProfile?.rejectionReason || '',
+          sellerProfile: {
+            ...(seller.sellerProfile || {}),
+            storeName: seller.sellerProfile?.storeName || 'Not provided',
+          },
         })
       );
 
@@ -342,40 +323,93 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
-      const seller =
-        await User.findOne({
-          _id: req.params.id,
-          sellerStatus: {
-            $in: [
-              'pending',
-              'approved',
-              'rejected',
-            ],
-          },
-        }).select('-password');
+      const seller = await User.findOne({
+        _id: req.params.id,
+        sellerStatus: {
+          $in: ['pending', 'approved', 'rejected'],
+        },
+      }).select('-password');
 
       if (!seller) {
         return res.status(404).json({
           success: false,
-          message:
-            'Seller application not found.',
+          message: 'Seller application not found.',
         });
       }
 
+      const normalizedSeller = seller.toObject ? seller.toObject() : seller;
+      normalizedSeller.storeName = normalizedSeller.sellerProfile?.storeName || 'Not provided';
+      normalizedSeller.sellerProfile = {
+        ...(normalizedSeller.sellerProfile || {}),
+        storeName: normalizedSeller.sellerProfile?.storeName || 'Not provided',
+      };
+
       return res.json({
         success: true,
-        data: seller,
+        data: normalizedSeller,
       });
     } catch (error) {
-      console.error(
-        'Load seller application error:',
-        error
-      );
+      console.error('Load seller application error:', error);
 
       return res.status(500).json({
         success: false,
-        message:
-          'Unable to load seller application.',
+        message: 'Unable to load seller application.',
+      });
+    }
+  }
+);
+
+router.patch(
+  '/sellers/:id/store',
+  protect,
+  adminOnly,
+  async (req, res) => {
+    try {
+      const storeName = String(req.body?.storeName || '').trim();
+      if (!storeName || storeName.length < 2 || storeName.length > 100) {
+        return res.status(400).json({
+          success: false,
+          message: 'Store name is required and must be between 2 and 100 characters.',
+        });
+      }
+
+      const seller = await User.findById(req.params.id);
+      if (!seller) {
+        return res.status(404).json({
+          success: false,
+          message: 'Seller not found.',
+        });
+      }
+
+      if (!seller.sellerProfile) {
+        seller.sellerProfile = {};
+      }
+
+      seller.sellerProfile.storeName = storeName;
+      if (seller.role !== 'seller' && seller.sellerStatus === 'approved') {
+        seller.role = 'seller';
+      }
+
+      await seller.save();
+
+      return res.json({
+        success: true,
+        message: 'Store name updated successfully.',
+        data: {
+          _id: seller._id,
+          name: seller.name,
+          email: seller.email,
+          phone: seller.phone,
+          sellerStatus: seller.sellerStatus,
+          storeName: seller.sellerProfile.storeName,
+          sellerProfile: seller.sellerProfile,
+        },
+      });
+    } catch (error) {
+      console.error('Update seller store error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Unable to update seller store information.',
       });
     }
   }
@@ -650,14 +684,9 @@ router.get(
               id: seller._id,
               name: seller.name,
               email: seller.email,
-              storeName:
-                seller.sellerProfile
-                  ?.storeName ||
-                `${seller.name}'s Store`,
-              sellerStatus:
-                seller.sellerStatus,
-              createdAt:
-                seller.createdAt,
+              storeName: seller.sellerProfile?.storeName || 'Not provided',
+              sellerStatus: seller.sellerStatus,
+              createdAt: seller.createdAt,
               productCount,
             };
           }
@@ -736,14 +765,9 @@ router.get(
           id: seller._id,
           name: seller.name,
           email: seller.email,
-          storeName:
-            seller.sellerProfile
-              ?.storeName ||
-            `${seller.name}'s Store`,
-          sellerStatus:
-            seller.sellerStatus,
-          createdAt:
-            seller.createdAt,
+          storeName: seller.sellerProfile?.storeName || 'Not provided',
+          sellerStatus: seller.sellerStatus,
+          createdAt: seller.createdAt,
         },
         data: products,
       });

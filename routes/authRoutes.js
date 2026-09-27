@@ -18,6 +18,9 @@ const MAX_OTP_ATTEMPTS = Number(process.env.MAX_OTP_ATTEMPTS || 5);
 const MAX_OTP_REQUESTS = Number(process.env.MAX_OTP_REQUESTS || 3);
 
 const normalizeEmail = (value) => (value || '').toString().trim().toLowerCase();
+const normalizePhone = (value) => (value || '').toString().trim();
+const KENYAN_PHONE_REGEX = /^\+2547\d{8}$/;
+const isValidKenyanPhone = (value) => KENYAN_PHONE_REGEX.test(normalizePhone(value));
 
 const sanitizeUser = (user) => ({
   _id: user._id,
@@ -29,12 +32,17 @@ const sanitizeUser = (user) => ({
   verificationMethod: user.verificationMethod,
   address: user.address || '',
   sellerStatus: user.sellerStatus || 'none',
+  storeName: user.sellerProfile?.storeName || '',
   sellerProfile: {
     officialName: user.sellerProfile?.officialName || '',
+    storeName: user.sellerProfile?.storeName || '',
+    storeEmail: user.sellerProfile?.storeEmail || '',
+    storePhone: user.sellerProfile?.storePhone || '',
     mpesaPhone: user.sellerProfile?.mpesaPhone || '',
     applicationDate: user.sellerProfile?.applicationDate || null,
     reviewedAt: user.sellerProfile?.reviewedAt || null,
     rejectionReason: user.sellerProfile?.rejectionReason || '',
+    storeLocation: user.sellerProfile?.storeLocation || '',
   },
   createdAt: user.createdAt,
 });
@@ -99,6 +107,7 @@ router.post(
         officialName,
         email,
         mpesaPhone,
+        storeName,
         password,
         confirmPassword,
         privacyPolicyAccepted,
@@ -111,11 +120,11 @@ router.post(
       const idBackFile = files.idBack?.[0];
       const kraPinFile = files.kraPin?.[0];
 
-      if (!officialName || !email || !mpesaPhone || !password) {
+      if (!officialName || !email || !mpesaPhone || !storeName || !password) {
         return res.status(400).json({
           success: false,
           message:
-            'Official/business name, email, M-Pesa phone and password are required.',
+            'Official/business name, email, phone number, store name and password are required.',
         });
       }
 
@@ -126,6 +135,14 @@ router.post(
         });
       }
 
+      const trimmedStoreName = storeName.toString().trim();
+      if (!trimmedStoreName || trimmedStoreName.length < 2 || trimmedStoreName.length > 100) {
+        return res.status(400).json({
+          success: false,
+          message: 'Store name is required.',
+        });
+      }
+
       if (!/^\S+@\S+\.\S+$/.test(email)) {
         return res.status(400).json({
           success: false,
@@ -133,10 +150,11 @@ router.post(
         });
       }
 
-      if (!/^[+\d][\d\s().-]{6,}$/.test(mpesaPhone)) {
+      const normalizedPhone = normalizePhone(mpesaPhone);
+      if (!isValidKenyanPhone(normalizedPhone)) {
         return res.status(400).json({
           success: false,
-          message: 'Please enter a valid M-Pesa phone number.',
+          message: 'Enter a valid Kenyan phone number in the format +2547XXXXXXXX.',
         });
       }
 
@@ -171,7 +189,7 @@ router.post(
       }
 
       const normalizedEmail = normalizeEmail(email);
-      const normalizedPhone = mpesaPhone.trim();
+      const normalizedSellerPhone = normalizePhone(mpesaPhone);
 
       const existingEmail = await User.findOne({
         email: normalizedEmail,
@@ -186,7 +204,7 @@ router.post(
       }
 
       const existingPhone = await User.findOne({
-        phone: normalizedPhone,
+        phone: normalizedSellerPhone,
       });
 
       if (existingPhone) {
@@ -210,14 +228,17 @@ router.post(
       const user = await User.create({
         name: officialName.trim(),
         email: normalizedEmail,
-        phone: normalizedPhone,
+        phone: normalizedSellerPhone,
         password,
         role: 'seller',
         sellerStatus: 'pending',
 
         sellerProfile: {
           officialName: officialName.trim(),
-          mpesaPhone: normalizedPhone,
+          storeName: trimmedStoreName,
+          storeEmail: normalizedEmail,
+          storePhone: normalizedSellerPhone,
+          mpesaPhone: normalizedSellerPhone,
 
           // Private Cloudinary asset references.
           idFrontDocument: idFrontUpload.public_id,
@@ -318,8 +339,8 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
     }
 
-    if (!phone || !/^[+\d][\d\s().-]{6,}$/.test(phone)) {
-      return res.status(400).json({ success: false, message: 'Please enter a valid phone number.' });
+    if (!phone || !isValidKenyanPhone(normalizePhone(phone))) {
+      return res.status(400).json({ success: false, message: 'Enter a valid Kenyan phone number in the format +2547XXXXXXXX.' });
     }
 
     if (password.length < 6) {
@@ -346,7 +367,8 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ success: false, message: 'Email already registered.' });
     }
 
-    const existingPhone = await User.findOne({ phone });
+    const normalizedPhone = normalizePhone(phone);
+    const existingPhone = await User.findOne({ phone: normalizedPhone });
     if (existingPhone) {
       return res.status(409).json({ success: false, message: 'Phone number already registered.' });
     }
@@ -354,7 +376,7 @@ router.post('/register', async (req, res) => {
     const user = await User.create({
       name: name.trim(),
       email: normalizeEmail(email),
-      phone: phone.trim(),
+      phone: normalizedPhone,
       password,
       verificationMethod,
       consent: { privacyPolicy: true, termsAndConditions: true, acceptedAt: new Date() },
