@@ -343,13 +343,25 @@ router.get('/', async (req, res) => {
     const total =
       await Product.countDocuments(filter);
 
-    const products =
-      await Product.find(filter)
-        .populate('category')
-        .populate(
-          'seller',
-          'name email sellerProfile.storeName'
-        )
+  const products = await Product.find({
+  approvalStatus: 'pending',
+})
+  .populate('seller', 'name email phone sellerProfile')
+  .populate('category', 'name slug')
+  .sort({ createdAt: -1 });
+
+// Only return products that actually belong to a seller.
+// We deliberately filter in JavaScript instead of using
+// seller: { $ne: null } because the current Mongoose setup
+// is incorrectly casting the $ne operator as an ObjectId.
+const sellerProducts = products.filter(
+  (product) => product.seller
+);
+
+res.json({
+  success: true,
+  products: sellerProducts,
+})
         .sort(sortOption)
         .skip(
           (safePage - 1) * safeLimit
