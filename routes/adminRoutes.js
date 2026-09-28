@@ -141,8 +141,7 @@ const sanitizeSeller = (
 
   /*
    * Private document references are only
-   * returned to this route when explicitly
-   * requested.
+   * returned when explicitly requested.
    */
   if (includeSensitive) {
     data.sellerProfile.idFrontDocument =
@@ -350,19 +349,43 @@ router.get(
         'rejected',
       ];
 
-      const filter = {
-        sellerStatus: {
-          $in: validStatuses,
-        },
+      /*
+       * Use $or instead of $in for the
+       * "all" seller application query.
+       *
+       * This avoids the CastError currently
+       * occurring with the sellerStatus field.
+       */
+      let filter = {
+        $or: [
+          {
+            sellerStatus:
+              'pending',
+          },
+          {
+            sellerStatus:
+              'approved',
+          },
+          {
+            sellerStatus:
+              'rejected',
+          },
+        ],
       };
 
+      /*
+       * For a specific status, use a
+       * direct string comparison.
+       */
       if (
         validStatuses.includes(
           requestedStatus
         )
       ) {
-        filter.sellerStatus =
-          requestedStatus;
+        filter = {
+          sellerStatus:
+            requestedStatus,
+        };
       }
 
       const sellers =
@@ -490,17 +513,29 @@ router.get(
         });
       }
 
+      /*
+       * Use $or instead of $in here as well
+       * to prevent the same sellerStatus
+       * casting problem.
+       */
       const seller =
         await User.findOne({
           _id: req.params.id,
 
-          sellerStatus: {
-            $in: [
-              'pending',
-              'approved',
-              'rejected',
-            ],
-          },
+          $or: [
+            {
+              sellerStatus:
+                'pending',
+            },
+            {
+              sellerStatus:
+                'approved',
+            },
+            {
+              sellerStatus:
+                'rejected',
+            },
+          ],
         }).select(
           '-password'
         );
@@ -1142,3 +1177,5 @@ router.get(
 );
 
 module.exports = router;
+
+
