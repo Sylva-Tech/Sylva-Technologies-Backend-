@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 
 const Order = require('../models/Order');
 const User = require('../models/User');
@@ -13,7 +14,158 @@ const router = express.Router();
 
 /*
 |--------------------------------------------------------------------------
+| HELPERS
+|--------------------------------------------------------------------------
+*/
+
+const getSellerStoreStatus = (seller) => {
+  return (
+    seller.storeStatus ||
+    (seller.sellerStatus === 'approved'
+      ? 'active'
+      : 'inactive')
+  );
+};
+
+const sanitizeSeller = (
+  seller,
+  {
+    includeSensitive = false,
+  } = {}
+) => {
+  const sellerObject =
+    seller?.toObject
+      ? seller.toObject()
+      : seller;
+
+  const sellerProfile =
+    sellerObject?.sellerProfile || {};
+
+  const data = {
+    _id: sellerObject._id,
+
+    id: sellerObject._id,
+
+    name:
+      sellerObject.name || '',
+
+    email:
+      sellerObject.email || '',
+
+    phone:
+      sellerObject.phone || '',
+
+    role:
+      sellerObject.role || 'customer',
+
+    sellerStatus:
+      sellerObject.sellerStatus ||
+      'none',
+
+    accountStatus:
+      sellerObject.accountStatus ||
+      'active',
+
+    storeStatus:
+      getSellerStoreStatus(
+        sellerObject
+      ),
+
+    suspensionReason:
+      sellerObject.suspensionReason ||
+      '',
+
+    banReason:
+      sellerObject.banReason ||
+      '',
+
+    storeName:
+      sellerProfile.storeName ||
+      'Not provided',
+
+    applicationDate:
+      sellerProfile.applicationDate ||
+      sellerObject.createdAt ||
+      null,
+
+    createdAt:
+      sellerObject.createdAt ||
+      null,
+
+    reviewedAt:
+      sellerProfile.reviewedAt ||
+      null,
+
+    rejectionReason:
+      sellerProfile.rejectionReason ||
+      '',
+
+    sellerProfile: {
+      officialName:
+        sellerProfile.officialName ||
+        '',
+
+      storeName:
+        sellerProfile.storeName ||
+        'Not provided',
+
+      storeEmail:
+        sellerProfile.storeEmail ||
+        '',
+
+      storePhone:
+        sellerProfile.storePhone ||
+        '',
+
+      mpesaPhone:
+        sellerProfile.mpesaPhone ||
+        '',
+
+      applicationDate:
+        sellerProfile.applicationDate ||
+        null,
+
+      reviewedAt:
+        sellerProfile.reviewedAt ||
+        null,
+
+      rejectionReason:
+        sellerProfile.rejectionReason ||
+        '',
+
+      storeLocation:
+        sellerProfile.storeLocation ||
+        '',
+    },
+  };
+
+  /*
+   * Private document references are only
+   * returned to this route when explicitly
+   * requested.
+   */
+  if (includeSensitive) {
+    data.sellerProfile.idFrontDocument =
+      sellerProfile.idFrontDocument ||
+      '';
+
+    data.sellerProfile.idBackDocument =
+      sellerProfile.idBackDocument ||
+      '';
+
+    data.sellerProfile.kraPinDocument =
+      sellerProfile.kraPinDocument ||
+      '';
+  }
+
+  return data;
+};
+
+/*
+|--------------------------------------------------------------------------
 | ADMIN DASHBOARD STATS
+|--------------------------------------------------------------------------
+| GET /api/admin/stats
 |--------------------------------------------------------------------------
 */
 
@@ -58,17 +210,16 @@ router.get(
         await Product.countDocuments({
           stock: {
             $lt: Number(
-              process.env.LOW_STOCK_THRESHOLD || 5
+              process.env
+                .LOW_STOCK_THRESHOLD ||
+                5
             ),
           },
         });
 
-      /*
-       * Total revenue from paid orders,
-       * excluding cancelled orders.
-       */
       const paidFilter = {
         paymentStatus: 'Paid',
+
         status: {
           $ne: 'Cancelled',
         },
@@ -79,9 +230,11 @@ router.get(
           {
             $match: paidFilter,
           },
+
           {
             $group: {
               _id: null,
+
               total: {
                 $sum: '$total',
               },
@@ -92,19 +245,18 @@ router.get(
       const totalRevenue =
         revenueAgg[0]?.total || 0;
 
-      /*
-       * Current month revenue.
-       */
       const now = new Date();
 
-      const monthStart = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        1
-      );
+      const monthStart =
+        new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          1
+        );
 
       const monthFilter = {
         ...paidFilter,
+
         createdAt: {
           $gte: monthStart,
         },
@@ -115,9 +267,11 @@ router.get(
           {
             $match: monthFilter,
           },
+
           {
             $group: {
               _id: null,
+
               total: {
                 $sum: '$total',
               },
@@ -130,16 +284,26 @@ router.get(
 
       return res.json({
         success: true,
+
         data: {
           totalOrders,
+
           pendingOrders,
+
           processingOrders,
+
           completedOrders,
+
           cancelledOrders,
+
           totalCustomers,
+
           totalProducts,
+
           lowStock,
+
           totalRevenue,
+
           monthRevenue,
         },
       });
@@ -162,15 +326,8 @@ router.get(
 |--------------------------------------------------------------------------
 | SELLER APPLICATIONS
 |--------------------------------------------------------------------------
-|
 | GET /api/admin/sellers
-|
-| Optional:
-|
-| GET /api/admin/sellers?status=pending
-| GET /api/admin/sellers?status=approved
-| GET /api/admin/sellers?status=rejected
-|
+|--------------------------------------------------------------------------
 */
 
 router.get(
@@ -179,11 +336,13 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
-      const requestedStatus = String(
-        req.query.status || 'all'
-      )
-        .trim()
-        .toLowerCase();
+      const requestedStatus =
+        String(
+          req.query.status ||
+            'all'
+        )
+          .trim()
+          .toLowerCase();
 
       const validStatuses = [
         'pending',
@@ -197,10 +356,6 @@ router.get(
         },
       };
 
-      /*
-       * Allow the admin frontend to request
-       * one particular application status.
-       */
       if (
         validStatuses.includes(
           requestedStatus
@@ -210,40 +365,30 @@ router.get(
           requestedStatus;
       }
 
-      const sellers = await User.find(
-        filter
-      )
-        .select('-password')
-        .sort({
-          createdAt: -1,
-        })
-        .lean();
+      const sellers =
+        await User.find(filter)
+          .select('-password')
+          .sort({
+            createdAt: -1,
+          })
+          .lean();
 
-      const data = sellers.map(
-        (seller) => ({
-          _id: seller._id,
-          id: seller._id,
-          name: seller.name || '',
-          email: seller.email || '',
-          phone: seller.phone || '',
-          role: seller.role || 'customer',
-          sellerStatus: seller.sellerStatus || '',
-          storeName: seller.sellerProfile?.storeName || 'Not provided',
-          applicationDate: seller.sellerProfile?.applicationDate || seller.createdAt || null,
-          createdAt: seller.createdAt || null,
-          reviewedAt: seller.sellerProfile?.reviewedAt || null,
-          rejectionReason: seller.sellerProfile?.rejectionReason || '',
-          sellerProfile: {
-            ...(seller.sellerProfile || {}),
-            storeName: seller.sellerProfile?.storeName || 'Not provided',
-          },
-        })
-      );
+      const data =
+        sellers.map((seller) =>
+          sanitizeSeller(
+            seller
+          )
+        );
 
       return res.json({
         success: true,
-        status: requestedStatus,
-        count: data.length,
+
+        status:
+          requestedStatus,
+
+        count:
+          data.length,
+
         data,
       });
     } catch (error) {
@@ -265,12 +410,8 @@ router.get(
 |--------------------------------------------------------------------------
 | PENDING SELLER APPLICATIONS
 |--------------------------------------------------------------------------
-|
 | GET /api/admin/sellers/pending
-|
-| Kept for compatibility with the existing
-| frontend and existing functionality.
-|
+|--------------------------------------------------------------------------
 */
 
 router.get(
@@ -279,19 +420,34 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
-      const sellers = await User.find({
-        sellerStatus: 'pending',
-      })
-        .select('-password')
-        .sort({
-          'sellerProfile.applicationDate': -1,
-          createdAt: -1,
-        });
+      const sellers =
+        await User.find({
+          sellerStatus:
+            'pending',
+        })
+          .select('-password')
+          .sort({
+            'sellerProfile.applicationDate':
+              -1,
+
+            createdAt:
+              -1,
+          });
+
+      const data =
+        sellers.map((seller) =>
+          sanitizeSeller(
+            seller
+          )
+        );
 
       return res.json({
         success: true,
-        count: sellers.length,
-        data: sellers,
+
+        count:
+          data.length,
+
+        data,
       });
     } catch (error) {
       console.error(
@@ -312,9 +468,8 @@ router.get(
 |--------------------------------------------------------------------------
 | SINGLE SELLER APPLICATION
 |--------------------------------------------------------------------------
-|
 | GET /api/admin/sellers/:id
-|
+|--------------------------------------------------------------------------
 */
 
 router.get(
@@ -323,41 +478,74 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
-      const seller = await User.findOne({
-        _id: req.params.id,
-        sellerStatus: {
-          $in: ['pending', 'approved', 'rejected'],
-        },
-      }).select('-password');
+      if (
+        !mongoose.isValidObjectId(
+          req.params.id
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid seller ID.',
+        });
+      }
+
+      const seller =
+        await User.findOne({
+          _id: req.params.id,
+
+          sellerStatus: {
+            $in: [
+              'pending',
+              'approved',
+              'rejected',
+            ],
+          },
+        }).select(
+          '-password'
+        );
 
       if (!seller) {
         return res.status(404).json({
           success: false,
-          message: 'Seller application not found.',
+          message:
+            'Seller application not found.',
         });
       }
 
-      const normalizedSeller = seller.toObject ? seller.toObject() : seller;
-      normalizedSeller.storeName = normalizedSeller.sellerProfile?.storeName || 'Not provided';
-      normalizedSeller.sellerProfile = {
-        ...(normalizedSeller.sellerProfile || {}),
-        storeName: normalizedSeller.sellerProfile?.storeName || 'Not provided',
-      };
-
       return res.json({
         success: true,
-        data: normalizedSeller,
+
+        data: sanitizeSeller(
+          seller,
+          {
+            includeSensitive:
+              true,
+          }
+        ),
       });
     } catch (error) {
-      console.error('Load seller application error:', error);
+      console.error(
+        'Load seller application error:',
+        error
+      );
 
       return res.status(500).json({
         success: false,
-        message: 'Unable to load seller application.',
+        message:
+          'Unable to load seller application.',
       });
     }
   }
 );
+
+/*
+|--------------------------------------------------------------------------
+| UPDATE SELLER STORE NAME
+|--------------------------------------------------------------------------
+| PATCH /api/admin/sellers/:id/store
+|--------------------------------------------------------------------------
+*/
 
 router.patch(
   '/sellers/:id/store',
@@ -365,28 +553,65 @@ router.patch(
   adminOnly,
   async (req, res) => {
     try {
-      const storeName = String(req.body?.storeName || '').trim();
-      if (!storeName || storeName.length < 2 || storeName.length > 100) {
+      if (
+        !mongoose.isValidObjectId(
+          req.params.id
+        )
+      ) {
         return res.status(400).json({
           success: false,
-          message: 'Store name is required and must be between 2 and 100 characters.',
+          message:
+            'Invalid seller ID.',
         });
       }
 
-      const seller = await User.findById(req.params.id);
+      const storeName =
+        String(
+          req.body?.storeName ||
+            ''
+        ).trim();
+
+      if (
+        !storeName ||
+        storeName.length < 2 ||
+        storeName.length > 100
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Store name is required and must be between 2 and 100 characters.',
+        });
+      }
+
+      const seller =
+        await User.findById(
+          req.params.id
+        );
+
       if (!seller) {
         return res.status(404).json({
           success: false,
-          message: 'Seller not found.',
+          message:
+            'Seller not found.',
         });
       }
 
-      if (!seller.sellerProfile) {
-        seller.sellerProfile = {};
+      if (
+        !seller.sellerProfile
+      ) {
+        seller.sellerProfile =
+          {};
       }
 
-      seller.sellerProfile.storeName = storeName;
-      if (seller.role !== 'seller' && seller.sellerStatus === 'approved') {
+      seller.sellerProfile.storeName =
+        storeName;
+
+      if (
+        seller.role !==
+          'seller' &&
+        seller.sellerStatus ===
+          'approved'
+      ) {
         seller.role = 'seller';
       }
 
@@ -394,22 +619,25 @@ router.patch(
 
       return res.json({
         success: true,
-        message: 'Store name updated successfully.',
-        data: {
-          _id: seller._id,
-          name: seller.name,
-          email: seller.email,
-          phone: seller.phone,
-          sellerStatus: seller.sellerStatus,
-          storeName: seller.sellerProfile.storeName,
-          sellerProfile: seller.sellerProfile,
-        },
+
+        message:
+          'Store name updated successfully.',
+
+        data:
+          sanitizeSeller(
+            seller
+          ),
       });
     } catch (error) {
-      console.error('Update seller store error:', error);
+      console.error(
+        'Update seller store error:',
+        error
+      );
+
       return res.status(500).json({
         success: false,
-        message: 'Unable to update seller store information.',
+        message:
+          'Unable to update seller store information.',
       });
     }
   }
@@ -419,9 +647,8 @@ router.patch(
 |--------------------------------------------------------------------------
 | APPROVE SELLER
 |--------------------------------------------------------------------------
-|
 | PUT /api/admin/sellers/:id/approve
-|
+|--------------------------------------------------------------------------
 */
 
 router.put(
@@ -430,6 +657,18 @@ router.put(
   adminOnly,
   async (req, res) => {
     try {
+      if (
+        !mongoose.isValidObjectId(
+          req.params.id
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid seller ID.',
+        });
+      }
+
       const seller =
         await User.findById(
           req.params.id
@@ -467,15 +706,36 @@ router.put(
         });
       }
 
-      /*
-       * Make sure sellerProfile exists.
-       */
-      if (!seller.sellerProfile) {
-        seller.sellerProfile = {};
+      if (
+        !seller.sellerProfile
+      ) {
+        seller.sellerProfile =
+          {};
       }
 
       seller.role = 'seller';
-      seller.sellerStatus = 'approved';
+
+      seller.sellerStatus =
+        'approved';
+
+      /*
+       * Approval controls seller
+       * application status.
+       *
+       * It does NOT override a ban/suspension.
+       */
+      if (
+        seller.accountStatus !==
+          'banned' &&
+        seller.accountStatus !==
+          'suspended'
+      ) {
+        seller.accountStatus =
+          'active';
+      }
+
+      seller.storeStatus =
+        'active';
 
       seller.sellerProfile.reviewedAt =
         new Date();
@@ -487,18 +747,14 @@ router.put(
 
       return res.json({
         success: true,
+
         message:
           'Seller account approved successfully.',
-        data: {
-          id: seller._id,
-          name: seller.name,
-          email: seller.email,
-          role: seller.role,
-          sellerStatus:
-            seller.sellerStatus,
-          sellerProfile:
-            seller.sellerProfile,
-        },
+
+        data:
+          sanitizeSeller(
+            seller
+          ),
       });
     } catch (error) {
       console.error(
@@ -519,15 +775,8 @@ router.put(
 |--------------------------------------------------------------------------
 | REJECT SELLER
 |--------------------------------------------------------------------------
-|
 | PUT /api/admin/sellers/:id/reject
-|
-| Expected body:
-|
-| {
-|   "reason": "Reason for rejection"
-| }
-|
+|--------------------------------------------------------------------------
 */
 
 router.put(
@@ -536,11 +785,25 @@ router.put(
   adminOnly,
   async (req, res) => {
     try {
-      const reason = String(
-        req.body?.reason ||
-          req.body?.rejectionReason ||
-          ''
-      ).trim();
+      if (
+        !mongoose.isValidObjectId(
+          req.params.id
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid seller ID.',
+        });
+      }
+
+      const reason =
+        String(
+          req.body?.reason ||
+            req.body
+              ?.rejectionReason ||
+            ''
+        ).trim();
 
       if (!reason) {
         return res.status(400).json({
@@ -587,19 +850,37 @@ router.put(
         });
       }
 
-      /*
-       * Keep rejected applicants as
-       * normal customers so they can
-       * still log in and resubmit.
-       */
-      seller.role = 'customer';
-      seller.sellerStatus = 'rejected';
+      seller.role =
+        'customer';
+
+      seller.sellerStatus =
+        'rejected';
 
       /*
-       * Make sure sellerProfile exists.
+       * Rejection is an application
+       * status, not a suspension or ban.
+       *
+       * The user can still log in and
+       * resubmit the seller application.
        */
-      if (!seller.sellerProfile) {
-        seller.sellerProfile = {};
+      if (
+        seller.accountStatus !==
+          'banned' &&
+        seller.accountStatus !==
+          'suspended'
+      ) {
+        seller.accountStatus =
+          'active';
+      }
+
+      seller.storeStatus =
+        'inactive';
+
+      if (
+        !seller.sellerProfile
+      ) {
+        seller.sellerProfile =
+          {};
       }
 
       seller.sellerProfile.reviewedAt =
@@ -612,22 +893,14 @@ router.put(
 
       return res.json({
         success: true,
+
         message:
           'Seller application rejected.',
-        data: {
-          id: seller._id,
-          name: seller.name,
-          email: seller.email,
-          role: seller.role,
-          sellerStatus:
-            seller.sellerStatus,
-          rejectionReason:
-            seller.sellerProfile
-              .rejectionReason,
-          reviewedAt:
-            seller.sellerProfile
-              .reviewedAt,
-        },
+
+        data:
+          sanitizeSeller(
+            seller
+          ),
       });
     } catch (error) {
       console.error(
@@ -648,9 +921,8 @@ router.put(
 |--------------------------------------------------------------------------
 | VENDOR STORES
 |--------------------------------------------------------------------------
-|
 | GET /api/admin/vendor-stores
-|
+|--------------------------------------------------------------------------
 */
 
 router.get(
@@ -659,43 +931,82 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
-      const sellers = await User.find({
-        role: 'seller',
-        sellerStatus: 'approved',
-      })
-        .select(
-          'name email sellerStatus sellerProfile.storeName createdAt'
-        )
-        .sort({
-          createdAt: -1,
-        });
+      const sellers =
+        await User.find({
+          role: 'seller',
 
-      const stores = await Promise.all(
-        sellers.map(
-          async (seller) => {
-            const productCount =
-              await Product.countDocuments(
-                {
-                  seller: seller._id,
-                }
-              );
+          sellerStatus:
+            'approved',
+        })
+          .select(
+            'name email sellerStatus accountStatus storeStatus suspensionReason banReason sellerProfile.storeName createdAt'
+          )
+          .sort({
+            createdAt: -1,
+          });
 
-            return {
-              id: seller._id,
-              name: seller.name,
-              email: seller.email,
-              storeName: seller.sellerProfile?.storeName || 'Not provided',
-              sellerStatus: seller.sellerStatus,
-              createdAt: seller.createdAt,
-              productCount,
-            };
-          }
-        )
-      );
+      const stores =
+        await Promise.all(
+          sellers.map(
+            async (seller) => {
+              const productCount =
+                await Product.countDocuments(
+                  {
+                    seller:
+                      seller._id,
+                  }
+                );
+
+              return {
+                id: seller._id,
+
+                name:
+                  seller.name,
+
+                email:
+                  seller.email,
+
+                storeName:
+                  seller
+                    .sellerProfile
+                    ?.storeName ||
+                  'Not provided',
+
+                sellerStatus:
+                  seller.sellerStatus,
+
+                accountStatus:
+                  seller.accountStatus ||
+                  'active',
+
+                storeStatus:
+                  getSellerStoreStatus(
+                    seller
+                  ),
+
+                suspensionReason:
+                  seller.suspensionReason ||
+                  '',
+
+                banReason:
+                  seller.banReason ||
+                  '',
+
+                createdAt:
+                  seller.createdAt,
+
+                productCount,
+              };
+            }
+          )
+        );
 
       return res.json({
         success: true,
-        count: stores.length,
+
+        count:
+          stores.length,
+
         data: stores,
       });
     } catch (error) {
@@ -717,9 +1028,8 @@ router.get(
 |--------------------------------------------------------------------------
 | VENDOR PRODUCTS
 |--------------------------------------------------------------------------
-|
 | GET /api/admin/vendor-stores/:sellerId/products
-|
+|--------------------------------------------------------------------------
 */
 
 router.get(
@@ -728,13 +1038,29 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
+      if (
+        !mongoose.isValidObjectId(
+          req.params.sellerId
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid seller ID.',
+        });
+      }
+
       const seller =
         await User.findOne({
-          _id: req.params.sellerId,
+          _id:
+            req.params.sellerId,
+
           role: 'seller',
-          sellerStatus: 'approved',
+
+          sellerStatus:
+            'approved',
         }).select(
-          'name email sellerStatus sellerProfile.storeName createdAt'
+          'name email sellerStatus accountStatus storeStatus suspensionReason banReason sellerProfile.storeName createdAt'
         );
 
       if (!seller) {
@@ -747,12 +1073,15 @@ router.get(
 
       const products =
         await Product.find({
-          seller: seller._id,
+          seller:
+            seller._id,
         })
-          .populate('category')
+          .populate(
+            'category'
+          )
           .populate(
             'seller',
-            'name email sellerProfile.storeName'
+            'name email sellerProfile.storeName sellerStatus accountStatus storeStatus'
           )
           .sort({
             createdAt: -1,
@@ -760,15 +1089,41 @@ router.get(
 
       return res.json({
         success: true,
-        count: products.length,
+
+        count:
+          products.length,
+
         seller: {
           id: seller._id,
-          name: seller.name,
-          email: seller.email,
-          storeName: seller.sellerProfile?.storeName || 'Not provided',
-          sellerStatus: seller.sellerStatus,
-          createdAt: seller.createdAt,
+
+          name:
+            seller.name,
+
+          email:
+            seller.email,
+
+          storeName:
+            seller
+              .sellerProfile
+              ?.storeName ||
+            'Not provided',
+
+          sellerStatus:
+            seller.sellerStatus,
+
+          accountStatus:
+            seller.accountStatus ||
+            'active',
+
+          storeStatus:
+            getSellerStoreStatus(
+              seller
+            ),
+
+          createdAt:
+            seller.createdAt,
         },
+
         data: products,
       });
     } catch (error) {
@@ -785,11 +1140,5 @@ router.get(
     }
   }
 );
-
-/*
-|--------------------------------------------------------------------------
-| EXPORT ROUTER
-|--------------------------------------------------------------------------
-*/
 
 module.exports = router;
