@@ -1480,40 +1480,16 @@ router.delete(
   }
 );
 
-/* =========================================================
-   ADMIN PRODUCT APPROVALS
-   ========================================================= */
-
-/*
- * GET /api/products/admin/product-approvals
- *
- * Get all seller products waiting for approval.
- */
 router.get(
   '/admin/product-approvals',
   protect,
   adminOnly,
   async (req, res) => {
     try {
-      /*
-       * IMPORTANT:
-       * Do not use:
-       *
-       * seller: {
-       *   $ne: null
-       * }
-       *
-       * because the current Mongoose setup is
-       * attempting to cast the $ne object as an
-       * ObjectId.
-       *
-       * $exists safely checks whether the seller
-       * field exists.
-       */
+      // Fetch pending products without filtering on seller.
+      // This avoids the Mongoose ObjectId casting issue
+      // with $ne / $exists on the seller field.
       const products = await Product.find({
-        seller: {
-          $exists: true,
-        },
         approvalStatus: 'pending',
       })
         .populate(
@@ -1522,15 +1498,20 @@ router.get(
         )
         .populate(
           'seller',
-          'name email sellerProfile.storeName'
+          'name email sellerProfile.storeName sellerStatus accountStatus storeStatus'
         )
         .sort({
           createdAt: -1,
         });
 
+      // Keep only products that actually have a seller.
+      const sellerProducts = products.filter(
+        (product) => product.seller
+      );
+
       res.json({
         success: true,
-        products,
+        products: sellerProducts,
       });
     } catch (error) {
       console.error(
@@ -1540,9 +1521,8 @@ router.get(
 
       res.status(500).json({
         success: false,
-        message:
-          error.message ||
-          'Unable to load product approval requests.',
+        message: 'Failed to load product approvals',
+        error: error.message,
       });
     }
   }
