@@ -3,6 +3,10 @@ const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema(
   {
+    /* ==========================================
+     * BASIC USER INFORMATION
+     * ========================================== */
+
     name: {
       type: String,
       required: [true, 'Name is required'],
@@ -39,97 +43,140 @@ const userSchema = new mongoose.Schema(
     address: {
       type: String,
       default: '',
+      trim: true,
     },
 
-    /*
-     * ==========================================
-     * SELLER ACCOUNT / APPLICATION INFORMATION
+    /* ==========================================
+     * SELLER APPLICATION STATUS
      * ==========================================
      *
-     * Verification documents are stored as
-     * private Cloudinary references.
+     * This controls the seller application itself.
      *
-     * They must NEVER be exposed through public
-     * product APIs.
-     */
+     * none     = normal customer / no application
+     * pending  = application submitted and awaiting review
+     * approved = application approved
+     * rejected = application rejected and may be resubmitted
+     *
+     * IMPORTANT:
+     * sellerStatus is intentionally separate from
+     * accountStatus and storeStatus.
+     * ========================================== */
+
     sellerStatus: {
       type: String,
       enum: ['none', 'pending', 'approved', 'rejected'],
       default: 'none',
       index: true,
     },
-    /*
- * ==========================================
- * SELLER OPERATIONAL STATUS
- * ==========================================
- *
- * sellerStatus controls the application:
- * pending / approved / rejected
- *
- * accountStatus controls the approved seller:
- * active / suspended / banned
- *
- * These are intentionally separate.
- */
-accountStatus: {
-  type: String,
-  enum: ['active', 'suspended', 'banned'],
-  default: 'active',
-  index: true,
-},
 
-storeStatus: {
-  type: String,
-  enum: ['inactive', 'active'],
-  default: 'inactive',
-  index: true,
-},
+    /* ==========================================
+     * SELLER OPERATIONAL ACCOUNT STATUS
+     * ==========================================
+     *
+     * This controls whether an approved seller
+     * is allowed to operate.
+     *
+     * active    = seller account operating normally
+     * suspended = temporarily restricted
+     * banned    = permanently/indefinitely restricted
+     *
+     * This does NOT replace sellerStatus.
+     * ========================================== */
 
-suspensionReason: {
-  type: String,
-  default: '',
-  trim: true,
-},
+    accountStatus: {
+      type: String,
+      enum: ['active', 'suspended', 'banned'],
+      default: 'active',
+      index: true,
+    },
 
-suspendedAt: {
-  type: Date,
-  default: null,
-},
+    /* ==========================================
+     * SELLER STORE STATUS
+     * ==========================================
+     *
+     * active   = seller storefront is operational
+     * inactive = storefront is not operational
+     *
+     * A seller should normally only have an active
+     * store when:
+     *
+     * sellerStatus === 'approved'
+     * accountStatus === 'active'
+     * ========================================== */
 
-suspendedBy: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: 'User',
-  default: null,
-},
+    storeStatus: {
+      type: String,
+      enum: ['inactive', 'active'],
+      default: 'inactive',
+      index: true,
+    },
 
-banReason: {
-  type: String,
-  default: '',
-  trim: true,
-},
+    /* ==========================================
+     * SUSPENSION INFORMATION
+     * ========================================== */
 
-bannedAt: {
-  type: Date,
-  default: null,
-},
+    suspensionReason: {
+      type: String,
+      default: '',
+      trim: true,
+    },
 
-bannedBy: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: 'User',
-  default: null,
-},
+    suspendedAt: {
+      type: Date,
+      default: null,
+    },
 
-lastProductAddedAt: {
-  type: Date,
-  default: null,
-},
+    suspendedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+
+    /* ==========================================
+     * BAN INFORMATION
+     * ========================================== */
+
+    banReason: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    bannedAt: {
+      type: Date,
+      default: null,
+    },
+
+    bannedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+
+    /* ==========================================
+     * SELLER PRODUCT ACTIVITY
+     * ========================================== */
+
+    lastProductAddedAt: {
+      type: Date,
+      default: null,
+    },
+
+    /* ==========================================
+     * SELLER PROFILE
+     * ==========================================
+     *
+     * Sensitive seller information and private
+     * verification documents are stored here.
+     *
+     * These fields must NOT be returned by normal
+     * public APIs.
+     * ========================================== */
 
     sellerProfile: {
-      /*
-       * ==============================
+      /* ------------------------------------------
        * PERSONAL INFORMATION
-       * ==============================
-       */
+       * ------------------------------------------ */
 
       officialName: {
         type: String,
@@ -160,9 +207,13 @@ lastProductAddedAt: {
         default: null,
       },
 
-      /*
-       * Private identification documents.
-       */
+      /* ------------------------------------------
+       * PRIVATE IDENTIFICATION DOCUMENTS
+       *
+       * These should contain private Cloudinary
+       * references only.
+       * ------------------------------------------ */
+
       idFrontDocument: {
         type: String,
         default: '',
@@ -173,11 +224,9 @@ lastProductAddedAt: {
         default: '',
       },
 
-      /*
-       * ==============================
+      /* ------------------------------------------
        * STORE INFORMATION
-       * ==============================
-       */
+       * ------------------------------------------ */
 
       storeName: {
         type: String,
@@ -210,9 +259,10 @@ lastProductAddedAt: {
         trim: true,
       },
 
-      /*
-       * Private KRA PIN document.
-       */
+      /* ------------------------------------------
+       * PRIVATE KRA DOCUMENT
+       * ------------------------------------------ */
+
       kraPinDocument: {
         type: String,
         default: '',
@@ -224,11 +274,9 @@ lastProductAddedAt: {
         trim: true,
       },
 
-      /*
-       * ==============================
-       * SELLER APPLICATION
-       * ==============================
-       */
+      /* ------------------------------------------
+       * SELLER APPLICATION INFORMATION
+       * ------------------------------------------ */
 
       applicationDate: {
         type: Date,
@@ -247,11 +295,10 @@ lastProductAddedAt: {
       },
     },
 
-    /*
-     * ==========================================
+    /* ==========================================
      * SELLER / CUSTOMER AGREEMENTS
-     * ==========================================
-     */
+     * ========================================== */
+
     consent: {
       privacyPolicy: {
         type: Boolean,
@@ -294,11 +341,9 @@ lastProductAddedAt: {
       },
     },
 
-    /*
-     * ==========================================
+    /* ==========================================
      * EMAIL / ACCOUNT VERIFICATION
-     * ==========================================
-     */
+     * ========================================== */
 
     isVerified: {
       type: Boolean,
@@ -321,15 +366,14 @@ lastProductAddedAt: {
       default: null,
     },
 
-    /*
-     * ==========================================
+    /* ==========================================
      * LOGIN SECURITY
-     * ==========================================
-     */
+     * ========================================== */
 
     loginAttempts: {
       type: Number,
       default: 0,
+      min: 0,
     },
 
     lockUntil: {
@@ -342,11 +386,10 @@ lastProductAddedAt: {
   }
 );
 
-/*
- * ==========================================
+/* ==========================================
  * PASSWORD HASHING
- * ==========================================
- */
+ * ========================================== */
+
 userSchema.pre('save', async function () {
   if (!this.isModified('password')) {
     return;
@@ -360,11 +403,10 @@ userSchema.pre('save', async function () {
   );
 });
 
-/*
- * ==========================================
+/* ==========================================
  * PASSWORD VERIFICATION
- * ==========================================
- */
+ * ========================================== */
+
 userSchema.methods.matchPassword = async function (
   enteredPassword
 ) {
@@ -374,17 +416,54 @@ userSchema.methods.matchPassword = async function (
   );
 };
 
-/*
- * ==========================================
+/* ==========================================
  * ACCOUNT LOCK CHECK
- * ==========================================
- */
+ * ========================================== */
+
 userSchema.methods.isLocked = function () {
   return (
     !!this.lockUntil &&
     this.lockUntil > Date.now()
   );
 };
+
+/* ==========================================
+ * SELLER OPERATIONAL CHECK
+ * ==========================================
+ *
+ * Returns true only when the seller:
+ *
+ * 1. Has an approved seller application
+ * 2. Has an active account
+ * 3. Has an active store
+ *
+ * This is useful for seller product/order
+ * operations.
+ * ========================================== */
+
+userSchema.methods.isActiveSeller = function () {
+  return (
+    this.role === 'seller' &&
+    this.sellerStatus === 'approved' &&
+    this.accountStatus === 'active' &&
+    this.storeStatus === 'active'
+  );
+};
+
+/* ==========================================
+ * SELLER ACCOUNT RESTRICTION CHECK
+ * ========================================== */
+
+userSchema.methods.isSellerRestricted = function () {
+  return (
+    this.accountStatus === 'suspended' ||
+    this.accountStatus === 'banned'
+  );
+};
+
+/* ==========================================
+ * MODEL EXPORT
+ * ========================================== */
 
 module.exports = mongoose.model(
   'User',
