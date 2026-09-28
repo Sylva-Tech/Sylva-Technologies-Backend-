@@ -58,6 +58,71 @@ const userSchema = new mongoose.Schema(
       default: 'none',
       index: true,
     },
+    /*
+ * ==========================================
+ * SELLER OPERATIONAL STATUS
+ * ==========================================
+ *
+ * sellerStatus controls the application:
+ * pending / approved / rejected
+ *
+ * accountStatus controls the approved seller:
+ * active / suspended / banned
+ *
+ * These are intentionally separate.
+ */
+accountStatus: {
+  type: String,
+  enum: ['active', 'suspended', 'banned'],
+  default: 'active',
+  index: true,
+},
+
+storeStatus: {
+  type: String,
+  enum: ['inactive', 'active'],
+  default: 'inactive',
+  index: true,
+},
+
+suspensionReason: {
+  type: String,
+  default: '',
+  trim: true,
+},
+
+suspendedAt: {
+  type: Date,
+  default: null,
+},
+
+suspendedBy: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'User',
+  default: null,
+},
+
+banReason: {
+  type: String,
+  default: '',
+  trim: true,
+},
+
+bannedAt: {
+  type: Date,
+  default: null,
+},
+
+bannedBy: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'User',
+  default: null,
+},
+
+lastProductAddedAt: {
+  type: Date,
+  default: null,
+},
 
     sellerProfile: {
       /*
