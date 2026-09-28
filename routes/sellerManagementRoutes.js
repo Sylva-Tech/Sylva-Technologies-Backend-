@@ -12,33 +12,42 @@ const {
 
 const router = express.Router();
 
-const VALID_SELLER_ID = (id) =>
+/*
+|--------------------------------------------------------------------------
+| HELPERS
+|--------------------------------------------------------------------------
+*/
+
+const isValidObjectId = (id) =>
   mongoose.Types.ObjectId.isValid(id);
 
 const getStoreName = (seller) =>
   seller?.sellerProfile?.storeName?.trim() || '';
 
 const getEffectiveStatus = (seller) => {
-  if (seller.sellerStatus === 'pending') {
+  const sellerStatus = seller?.sellerStatus || 'none';
+  const accountStatus = seller?.accountStatus || 'active';
+
+  if (sellerStatus === 'pending') {
     return 'pending';
   }
 
-  if (seller.sellerStatus === 'rejected') {
+  if (sellerStatus === 'rejected') {
     return 'rejected';
   }
 
-  if (seller.accountStatus === 'banned') {
+  if (accountStatus === 'banned') {
     return 'banned';
   }
 
-  if (seller.accountStatus === 'suspended') {
+  if (accountStatus === 'suspended') {
     return 'suspended';
   }
 
   if (
-    seller.sellerStatus === 'approved' &&
-    seller.accountStatus !== 'suspended' &&
-    seller.accountStatus !== 'banned'
+    sellerStatus === 'approved' &&
+    accountStatus !== 'suspended' &&
+    accountStatus !== 'banned'
   ) {
     return 'active';
   }
@@ -46,18 +55,32 @@ const getEffectiveStatus = (seller) => {
   return 'pending';
 };
 
-const serializeSeller = (seller) => {
-  const item = seller.toObject
+/*
+ * General seller serializer.
+ *
+ * Sensitive verification information such as ID number and KRA PIN
+ * is only included when explicitly requested by an admin details route.
+ */
+const serializeSeller = (
+  seller,
+  { includeSensitive = false } = {}
+) => {
+  const item = seller?.toObject
     ? seller.toObject()
     : seller;
 
-  return {
+  if (!item) {
+    return null;
+  }
+
+  const result = {
     _id: item._id,
     name: item.name,
     email: item.email,
     phone: item.phone,
 
-    sellerStatus: item.sellerStatus || 'none',
+    sellerStatus:
+      item.sellerStatus || 'none',
 
     accountStatus:
       item.accountStatus || 'active',
@@ -88,21 +111,18 @@ const serializeSeller = (seller) => {
     idType:
       item.sellerProfile?.idType || '',
 
-    idNumber:
-      item.sellerProfile?.idNumber || '',
-
-    kraPin:
-      item.sellerProfile?.kraPin || '',
-
     applicationDate:
       item.sellerProfile?.applicationDate ||
-      item.createdAt,
+      item.createdAt ||
+      null,
 
     reviewedAt:
-      item.sellerProfile?.reviewedAt || null,
+      item.sellerProfile?.reviewedAt ||
+      null,
 
     rejectionReason:
-      item.sellerProfile?.rejectionReason || '',
+      item.sellerProfile?.rejectionReason ||
+      '',
 
     suspensionReason:
       item.suspensionReason || '',
@@ -125,41 +145,75 @@ const serializeSeller = (seller) => {
     lastProductAddedAt:
       item.lastProductAddedAt || null,
 
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
+    createdAt:
+      item.createdAt || null,
+
+    updatedAt:
+      item.updatedAt || null,
   };
+
+  /*
+   * Only admin seller-details requests should receive
+   * these sensitive verification fields.
+   */
+  if (includeSensitive) {
+    result.idNumber =
+      item.sellerProfile?.idNumber || '';
+
+    result.kraPin =
+      item.sellerProfile?.kraPin || '';
+  }
+
+  return result;
 };
+
+const getReason = (value) =>
+  String(value || '').trim();
+
+const getAdminResponse = (body = {}) =>
+  String(
+    body.adminResponse ??
+      body.response ??
+      ''
+  ).trim();
 
 /*
 |--------------------------------------------------------------------------
 | ADMIN — SELLER LIST
 |--------------------------------------------------------------------------
 */
+
 router.get(
   '/admin/sellers',
   protect,
   adminOnly,
   async (req, res) => {
     try {
-      const sellers = await User.find({
-        role: 'seller',
-      })
-        .select('-password')
-        .sort({ createdAt: -1 });
+      const sellers =
+        await User.find({
+          role: 'seller',
+        })
+          .select('-password')
+          .sort({
+            createdAt: -1,
+          });
 
       return res.json({
         success: true,
-        data: sellers.map(serializeSeller),
+        data: sellers.map((seller) =>
+          serializeSeller(seller)
+        ),
       });
     } catch (error) {
       console.error(
-        'Seller management list error:',
+        'Admin seller list error:',
         error
       );
 
       return res.status(500).json({
         success: false,
-        message: 'Unable to load sellers.',
+        message:
+          'Unable to load sellers.',
       });
     }
   }
@@ -170,32 +224,37 @@ router.get(
 | ADMIN — SELLER DETAILS
 |--------------------------------------------------------------------------
 */
+
 router.get(
   '/admin/sellers/:id',
   protect,
   adminOnly,
   async (req, res) => {
     try {
-      if (!VALID_SELLER_ID(req.params.id)) {
+      const sellerId =
+        req.params.id;
+
+      if (!isValidObjectId(sellerId)) {
         return res.status(400).json({
           success: false,
           message: 'Invalid seller ID.',
         });
       }
 
-      const seller = await User.findOne({
-        _id: req.params.id,
-        role: 'seller',
-      })
-        .select('-password')
-        .populate(
-          'suspendedBy',
-          'name email'
-        )
-        .populate(
-          'bannedBy',
-          'name email'
-        );
+      const seller =
+        await User.findOne({
+          _id: sellerId,
+          role: 'seller',
+        })
+          .select('-password')
+          .populate(
+            'suspendedBy',
+            'name email'
+          )
+          .populate(
+            'bannedBy',
+            'name email'
+          );
 
       if (!seller) {
         return res.status(404).json({
@@ -204,37 +263,53 @@ router.get(
         });
       }
 
-      const productCount =
-        await Product.countDocuments({
+      const [
+        productCount,
+        activeProductCount,
+        lastProduct,
+        appealHistory,
+      ] = await Promise.all([
+        Product.countDocuments({
           seller: seller._id,
-        });
+        }),
 
-      const activeProductCount =
-        await Product.countDocuments({
+        Product.countDocuments({
           seller: seller._id,
           isActive: true,
           approvalStatus: 'approved',
-        });
+        }),
 
-      const lastProduct =
-        await Product.findOne({
+        Product.findOne({
           seller: seller._id,
         })
-          .sort({ createdAt: -1 })
-          .select('createdAt');
+          .sort({
+            createdAt: -1,
+          })
+          .select('createdAt')
+          .lean(),
 
-      const appealHistory =
-        await SellerAppeal.find({
+        SellerAppeal.find({
           seller: seller._id,
         })
           .populate(
             'reviewedBy',
             'name email'
           )
-          .sort({ createdAt: -1 });
+          .sort({
+            createdAt: -1,
+          }),
+      ]);
 
-      const result =
-        serializeSeller(seller);
+      /*
+       * Sensitive verification fields are intentionally
+       * included only on this admin-only details endpoint.
+       */
+      const result = serializeSeller(
+        seller,
+        {
+          includeSensitive: true,
+        }
+      );
 
       result.productCount =
         productCount;
@@ -247,22 +322,29 @@ router.get(
         seller.lastProductAddedAt ||
         null;
 
+      /*
+       * Do not expose actual document paths/files.
+       * Only tell the admin whether the documents exist.
+       */
       result.documents = {
         idFront: Boolean(
           seller.sellerProfile
             ?.idFrontDocument
         ),
+
         idBack: Boolean(
           seller.sellerProfile
             ?.idBackDocument
         ),
+
         kraPin: Boolean(
           seller.sellerProfile
             ?.kraPinDocument
         ),
       };
 
-      result.appeals = appealHistory;
+      result.appeals =
+        appealHistory;
 
       return res.json({
         success: true,
@@ -288,13 +370,17 @@ router.get(
 | ADMIN — UPDATE STORE NAME
 |--------------------------------------------------------------------------
 */
+
 router.patch(
   '/admin/sellers/:id/store',
   protect,
   adminOnly,
   async (req, res) => {
     try {
-      if (!VALID_SELLER_ID(req.params.id)) {
+      const sellerId =
+        req.params.id;
+
+      if (!isValidObjectId(sellerId)) {
         return res.status(400).json({
           success: false,
           message: 'Invalid seller ID.',
@@ -302,13 +388,15 @@ router.patch(
       }
 
       const storeName =
-        String(req.body.storeName || '')
-          .trim();
+        String(
+          req.body?.storeName || ''
+        ).trim();
 
       if (!storeName) {
         return res.status(400).json({
           success: false,
-          message: 'Store name is required.',
+          message:
+            'Store name is required.',
         });
       }
 
@@ -331,7 +419,7 @@ router.patch(
       const seller =
         await User.findOneAndUpdate(
           {
-            _id: req.params.id,
+            _id: sellerId,
             role: 'seller',
           },
           {
@@ -357,7 +445,8 @@ router.patch(
         success: true,
         message:
           'Store name updated successfully.',
-        data: serializeSeller(seller),
+        data:
+          serializeSeller(seller),
       });
     } catch (error) {
       console.error(
@@ -379,13 +468,17 @@ router.patch(
 | ADMIN — SUSPEND SELLER
 |--------------------------------------------------------------------------
 */
+
 router.patch(
   '/admin/sellers/:id/suspend',
   protect,
   adminOnly,
   async (req, res) => {
     try {
-      if (!VALID_SELLER_ID(req.params.id)) {
+      const sellerId =
+        req.params.id;
+
+      if (!isValidObjectId(sellerId)) {
         return res.status(400).json({
           success: false,
           message: 'Invalid seller ID.',
@@ -393,8 +486,7 @@ router.patch(
       }
 
       const reason =
-        String(req.body.reason || '')
-          .trim();
+        getReason(req.body?.reason);
 
       if (!reason) {
         return res.status(400).json({
@@ -404,9 +496,25 @@ router.patch(
         });
       }
 
+      if (reason.length < 5) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'The suspension reason must contain at least 5 characters.',
+        });
+      }
+
+      if (reason.length > 1000) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'The suspension reason cannot exceed 1000 characters.',
+        });
+      }
+
       const seller =
         await User.findOne({
-          _id: req.params.id,
+          _id: sellerId,
           role: 'seller',
         });
 
@@ -417,7 +525,10 @@ router.patch(
         });
       }
 
-      if (seller.sellerStatus !== 'approved') {
+      if (
+        seller.sellerStatus !==
+        'approved'
+      ) {
         return res.status(400).json({
           success: false,
           message:
@@ -425,7 +536,21 @@ router.patch(
         });
       }
 
-      if (seller.accountStatus === 'banned') {
+      if (
+        seller.accountStatus ===
+        'suspended'
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'This seller is already suspended.',
+        });
+      }
+
+      if (
+        seller.accountStatus ===
+        'banned'
+      ) {
         return res.status(400).json({
           success: false,
           message:
@@ -433,11 +558,27 @@ router.patch(
         });
       }
 
-      seller.accountStatus = 'suspended';
-      seller.storeStatus = 'inactive';
-      seller.suspensionReason = reason;
-      seller.suspendedAt = new Date();
-      seller.suspendedBy = req.user._id;
+      seller.accountStatus =
+        'suspended';
+
+      seller.storeStatus =
+        'inactive';
+
+      seller.suspensionReason =
+        reason;
+
+      seller.suspendedAt =
+        new Date();
+
+      seller.suspendedBy =
+        req.user._id;
+
+      /*
+       * Clear any stale ban information.
+       */
+      seller.banReason = '';
+      seller.bannedAt = null;
+      seller.bannedBy = null;
 
       await seller.save();
 
@@ -445,7 +586,8 @@ router.patch(
         success: true,
         message:
           'Seller store suspended.',
-        data: serializeSeller(seller),
+        data:
+          serializeSeller(seller),
       });
     } catch (error) {
       console.error(
@@ -467,13 +609,17 @@ router.patch(
 | ADMIN — BAN SELLER
 |--------------------------------------------------------------------------
 */
+
 router.patch(
   '/admin/sellers/:id/ban',
   protect,
   adminOnly,
   async (req, res) => {
     try {
-      if (!VALID_SELLER_ID(req.params.id)) {
+      const sellerId =
+        req.params.id;
+
+      if (!isValidObjectId(sellerId)) {
         return res.status(400).json({
           success: false,
           message: 'Invalid seller ID.',
@@ -481,8 +627,7 @@ router.patch(
       }
 
       const reason =
-        String(req.body.reason || '')
-          .trim();
+        getReason(req.body?.reason);
 
       if (!reason) {
         return res.status(400).json({
@@ -492,9 +637,25 @@ router.patch(
         });
       }
 
+      if (reason.length < 5) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'The ban reason must contain at least 5 characters.',
+        });
+      }
+
+      if (reason.length > 1000) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'The ban reason cannot exceed 1000 characters.',
+        });
+      }
+
       const seller =
         await User.findOne({
-          _id: req.params.id,
+          _id: sellerId,
           role: 'seller',
         });
 
@@ -505,7 +666,10 @@ router.patch(
         });
       }
 
-      if (seller.sellerStatus !== 'approved') {
+      if (
+        seller.sellerStatus !==
+        'approved'
+      ) {
         return res.status(400).json({
           success: false,
           message:
@@ -513,11 +677,38 @@ router.patch(
         });
       }
 
-      seller.accountStatus = 'banned';
-      seller.storeStatus = 'inactive';
-      seller.banReason = reason;
-      seller.bannedAt = new Date();
-      seller.bannedBy = req.user._id;
+      if (
+        seller.accountStatus ===
+        'banned'
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'This seller is already banned.',
+        });
+      }
+
+      seller.accountStatus =
+        'banned';
+
+      seller.storeStatus =
+        'inactive';
+
+      seller.banReason =
+        reason;
+
+      seller.bannedAt =
+        new Date();
+
+      seller.bannedBy =
+        req.user._id;
+
+      /*
+       * Clear any stale suspension information.
+       */
+      seller.suspensionReason = '';
+      seller.suspendedAt = null;
+      seller.suspendedBy = null;
 
       await seller.save();
 
@@ -525,7 +716,8 @@ router.patch(
         success: true,
         message:
           'Seller has been banned.',
-        data: serializeSeller(seller),
+        data:
+          serializeSeller(seller),
       });
     } catch (error) {
       console.error(
@@ -547,13 +739,17 @@ router.patch(
 | ADMIN — REACTIVATE SELLER
 |--------------------------------------------------------------------------
 */
+
 router.patch(
   '/admin/sellers/:id/reactivate',
   protect,
   adminOnly,
   async (req, res) => {
     try {
-      if (!VALID_SELLER_ID(req.params.id)) {
+      const sellerId =
+        req.params.id;
+
+      if (!isValidObjectId(sellerId)) {
         return res.status(400).json({
           success: false,
           message: 'Invalid seller ID.',
@@ -562,7 +758,7 @@ router.patch(
 
       const seller =
         await User.findOne({
-          _id: req.params.id,
+          _id: sellerId,
           role: 'seller',
         });
 
@@ -573,7 +769,10 @@ router.patch(
         });
       }
 
-      if (seller.sellerStatus !== 'approved') {
+      if (
+        seller.sellerStatus !==
+        'approved'
+      ) {
         return res.status(400).json({
           success: false,
           message:
@@ -581,8 +780,39 @@ router.patch(
         });
       }
 
-      seller.accountStatus = 'active';
-      seller.storeStatus = 'active';
+      const accountStatus =
+        seller.accountStatus ||
+        'active';
+
+      if (
+        accountStatus ===
+        'active'
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'This seller is already active.',
+        });
+      }
+
+      if (
+        accountStatus !==
+          'suspended' &&
+        accountStatus !==
+          'banned'
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'This seller cannot be reactivated from the current account state.',
+        });
+      }
+
+      seller.accountStatus =
+        'active';
+
+      seller.storeStatus =
+        'active';
 
       seller.suspensionReason = '';
       seller.suspendedAt = null;
@@ -598,7 +828,8 @@ router.patch(
         success: true,
         message:
           'Seller has been reactivated.',
-        data: serializeSeller(seller),
+        data:
+          serializeSeller(seller),
       });
     } catch (error) {
       console.error(
@@ -620,12 +851,16 @@ router.patch(
 | SELLER — CURRENT STATUS
 |--------------------------------------------------------------------------
 */
+
 router.get(
   '/seller/status',
   protect,
   async (req, res) => {
     try {
-      if (req.user.role !== 'seller') {
+      if (
+        req.user.role !==
+        'seller'
+      ) {
         return res.status(403).json({
           success: false,
           message:
@@ -648,7 +883,8 @@ router.get(
 
       return res.json({
         success: true,
-        data: serializeSeller(seller),
+        data:
+          serializeSeller(seller),
       });
     } catch (error) {
       console.error(
@@ -670,12 +906,16 @@ router.get(
 | SELLER — SUBMIT APPEAL
 |--------------------------------------------------------------------------
 */
+
 router.post(
   '/seller/appeals',
   protect,
   async (req, res) => {
     try {
-      if (req.user.role !== 'seller') {
+      if (
+        req.user.role !==
+        'seller'
+      ) {
         return res.status(403).json({
           success: false,
           message:
@@ -684,19 +924,21 @@ router.post(
       }
 
       const reason =
-        String(req.body.reason || '')
-          .trim();
-
-      const type =
-        req.body.type === 'ban'
-          ? 'ban'
-          : 'suspension';
+        getReason(req.body?.reason);
 
       if (reason.length < 10) {
         return res.status(400).json({
           success: false,
           message:
             'Please provide at least 10 characters explaining your appeal.',
+        });
+      }
+
+      if (reason.length > 2000) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Your appeal cannot exceed 2000 characters.',
         });
       }
 
@@ -710,6 +952,59 @@ router.post(
           success: false,
           message:
             'Seller account not found.',
+        });
+      }
+
+      /*
+       * Accept the frontend's explicit type.
+       *
+       * If no type is supplied, derive it from the
+       * current account status for backward compatibility.
+       */
+      const requestedType =
+        String(
+          req.body?.type || ''
+        )
+          .trim()
+          .toLowerCase();
+
+      let type =
+        requestedType;
+
+      if (!type) {
+        if (
+          currentSeller.accountStatus ===
+          'banned'
+        ) {
+          type = 'ban';
+        } else if (
+          currentSeller.accountStatus ===
+          'suspended'
+        ) {
+          type = 'suspension';
+        }
+      }
+
+      if (
+        !['suspension', 'ban'].includes(
+          type
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Appeal type must be either suspension or ban.',
+        });
+      }
+
+      if (
+        currentSeller.sellerStatus !==
+        'approved'
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Only an approved seller can submit a suspension or ban appeal.',
         });
       }
 
@@ -739,7 +1034,8 @@ router.post(
 
       const existing =
         await SellerAppeal.findOne({
-          seller: currentSeller._id,
+          seller:
+            currentSeller._id,
           type,
           status: 'pending',
         });
@@ -754,7 +1050,8 @@ router.post(
 
       const appeal =
         await SellerAppeal.create({
-          seller: currentSeller._id,
+          seller:
+            currentSeller._id,
           type,
           reason,
         });
@@ -766,6 +1063,20 @@ router.post(
         data: appeal,
       });
     } catch (error) {
+      /*
+       * If a future unique database index is added for
+       * pending appeals, this also handles duplicate-key races.
+       */
+      if (
+        error?.code === 11000
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            'You already have a pending appeal of this type.',
+        });
+      }
+
       console.error(
         'Seller appeal error:',
         error
@@ -785,12 +1096,16 @@ router.post(
 | SELLER — APPEAL HISTORY
 |--------------------------------------------------------------------------
 */
+
 router.get(
   '/seller/appeals',
   protect,
   async (req, res) => {
     try {
-      if (req.user.role !== 'seller') {
+      if (
+        req.user.role !==
+        'seller'
+      ) {
         return res.status(403).json({
           success: false,
           message:
@@ -806,7 +1121,9 @@ router.get(
             'reviewedBy',
             'name email'
           )
-          .sort({ createdAt: -1 });
+          .sort({
+            createdAt: -1,
+          });
 
       return res.json({
         success: true,
@@ -832,6 +1149,7 @@ router.get(
 | ADMIN — APPEALS
 |--------------------------------------------------------------------------
 */
+
 router.get(
   '/admin/appeals',
   protect,
@@ -842,13 +1160,15 @@ router.get(
         await SellerAppeal.find()
           .populate(
             'seller',
-            'name email phone sellerStatus sellerProfile accountStatus storeStatus'
+            'name email phone sellerStatus accountStatus storeStatus sellerProfile.storeName sellerProfile.storeProfile sellerProfile.officialName'
           )
           .populate(
             'reviewedBy',
             'name email'
           )
-          .sort({ createdAt: -1 });
+          .sort({
+            createdAt: -1,
+          });
 
       return res.json({
         success: true,
@@ -874,15 +1194,22 @@ router.get(
 | ADMIN — APPROVE APPEAL
 |--------------------------------------------------------------------------
 */
+
 router.patch(
   '/admin/appeals/:id/approve',
   protect,
   adminOnly,
   async (req, res) => {
+    const session =
+      await mongoose.startSession();
+
     try {
+      const appealId =
+        req.params.id;
+
       if (
-        !VALID_SELLER_ID(
-          req.params.id
+        !isValidObjectId(
+          appealId
         )
       ) {
         return res.status(400).json({
@@ -892,91 +1219,193 @@ router.patch(
         });
       }
 
-      const appeal =
-        await SellerAppeal.findById(
-          req.params.id
+      const adminResponse =
+        getAdminResponse(
+          req.body
         );
 
-      if (!appeal) {
-        return res.status(404).json({
-          success: false,
-          message:
-            'Appeal not found.',
-        });
-      }
-
-      if (appeal.status !== 'pending') {
-        return res.status(400).json({
-          success: false,
-          message:
-            'This appeal has already been reviewed.',
-        });
-      }
-
-      const seller =
-        await User.findOne({
-          _id: appeal.seller,
-          role: 'seller',
-        });
-
-      if (!seller) {
-        return res.status(404).json({
-          success: false,
-          message:
-            'Seller not found.',
-        });
-      }
-
       if (
-        appeal.type === 'suspension' &&
-        seller.accountStatus !== 'suspended'
+        adminResponse.length > 2000
       ) {
         return res.status(400).json({
           success: false,
           message:
-            'This seller is no longer suspended.',
+            'Admin response cannot exceed 2000 characters.',
         });
       }
 
-      if (
-        appeal.type === 'ban' &&
-        seller.accountStatus !== 'banned'
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'This seller is no longer banned.',
-        });
-      }
+      let approvedAppeal = null;
 
-      appeal.status = 'approved';
-      appeal.reviewedAt = new Date();
-      appeal.reviewedBy = req.user._id;
-      appeal.adminResponse =
-        String(
-          req.body.response ||
-            'Appeal approved.'
-        ).trim();
+      await session.withTransaction(
+        async () => {
+          /*
+           * Read the appeal inside the transaction.
+           */
+          const appeal =
+            await SellerAppeal.findById(
+              appealId
+            ).session(session);
 
-      seller.accountStatus = 'active';
-      seller.storeStatus = 'active';
+          if (!appeal) {
+            const error =
+              new Error(
+                'Appeal not found.'
+              );
 
-      seller.suspensionReason = '';
-      seller.suspendedAt = null;
-      seller.suspendedBy = null;
+            error.statusCode = 404;
 
-      seller.banReason = '';
-      seller.bannedAt = null;
-      seller.bannedBy = null;
+            throw error;
+          }
 
-      await seller.save();
-      await appeal.save();
+          if (
+            appeal.status !==
+            'pending'
+          ) {
+            const error =
+              new Error(
+                'This appeal has already been reviewed.'
+              );
+
+            error.statusCode = 400;
+
+            throw error;
+          }
+
+          if (
+            !['suspension', 'ban'].includes(
+              appeal.type
+            )
+          ) {
+            const error =
+              new Error(
+                'Invalid appeal type.'
+              );
+
+            error.statusCode = 400;
+
+            throw error;
+          }
+
+          const seller =
+            await User.findOne({
+              _id: appeal.seller,
+              role: 'seller',
+            }).session(session);
+
+          if (!seller) {
+            const error =
+              new Error(
+                'Seller not found.'
+              );
+
+            error.statusCode = 404;
+
+            throw error;
+          }
+
+          /*
+           * The seller must still be in the state
+           * that the appeal was submitted against.
+           */
+          if (
+            appeal.type ===
+              'suspension' &&
+            seller.accountStatus !==
+              'suspended'
+          ) {
+            const error =
+              new Error(
+                'This seller is no longer suspended.'
+              );
+
+            error.statusCode = 400;
+
+            throw error;
+          }
+
+          if (
+            appeal.type === 'ban' &&
+            seller.accountStatus !==
+              'banned'
+          ) {
+            const error =
+              new Error(
+                'This seller is no longer banned.'
+              );
+
+            error.statusCode = 400;
+
+            throw error;
+          }
+
+          const now =
+            new Date();
+
+          appeal.status =
+            'approved';
+
+          appeal.reviewedAt =
+            now;
+
+          appeal.reviewedBy =
+            req.user._id;
+
+          appeal.adminResponse =
+            adminResponse ||
+            'Appeal approved.';
+
+          /*
+           * Reactivate the seller.
+           */
+          seller.accountStatus =
+            'active';
+
+          seller.storeStatus =
+            'active';
+
+          /*
+           * Clear suspension information.
+           */
+          seller.suspensionReason =
+            '';
+
+          seller.suspendedAt =
+            null;
+
+          seller.suspendedBy =
+            null;
+
+          /*
+           * Clear ban information.
+           */
+          seller.banReason =
+            '';
+
+          seller.bannedAt =
+            null;
+
+          seller.bannedBy =
+            null;
+
+          await seller.save({
+            session,
+          });
+
+          await appeal.save({
+            session,
+          });
+
+          approvedAppeal =
+            appeal;
+        }
+      );
 
       return res.json({
         success: true,
         message:
           'Appeal approved and seller reactivated.',
-        data: appeal,
+        data:
+          approvedAppeal,
       });
     } catch (error) {
       console.error(
@@ -984,11 +1413,37 @@ router.patch(
         error
       );
 
-      return res.status(500).json({
+      /*
+       * Transaction conflicts can occur if two admins
+       * attempt to review the same appeal simultaneously.
+       */
+      if (
+        error?.errorLabels?.includes(
+          'TransientTransactionError'
+        ) ||
+        error?.errorLabels?.includes(
+          'UnknownTransactionCommitResult'
+        )
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            'The appeal was being reviewed at the same time. Please refresh and try again.',
+        });
+      }
+
+      const status =
+        error.statusCode || 500;
+
+      return res.status(status).json({
         success: false,
         message:
-          'Unable to approve appeal.',
+          status >= 500
+            ? 'Unable to approve appeal.'
+            : error.message,
       });
+    } finally {
+      await session.endSession();
     }
   }
 );
@@ -998,15 +1453,19 @@ router.patch(
 | ADMIN — REJECT APPEAL
 |--------------------------------------------------------------------------
 */
+
 router.patch(
   '/admin/appeals/:id/reject',
   protect,
   adminOnly,
   async (req, res) => {
     try {
+      const appealId =
+        req.params.id;
+
       if (
-        !VALID_SELLER_ID(
-          req.params.id
+        !isValidObjectId(
+          appealId
         )
       ) {
         return res.status(400).json({
@@ -1017,9 +1476,9 @@ router.patch(
       }
 
       const response =
-        String(
-          req.body.response || ''
-        ).trim();
+        getAdminResponse(
+          req.body
+        );
 
       if (!response) {
         return res.status(400).json({
@@ -1029,9 +1488,17 @@ router.patch(
         });
       }
 
+      if (response.length > 2000) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Admin response cannot exceed 2000 characters.',
+        });
+      }
+
       const appeal =
         await SellerAppeal.findById(
-          req.params.id
+          appealId
         );
 
       if (!appeal) {
@@ -1042,7 +1509,10 @@ router.patch(
         });
       }
 
-      if (appeal.status !== 'pending') {
+      if (
+        appeal.status !==
+        'pending'
+      ) {
         return res.status(400).json({
           success: false,
           message:
@@ -1050,10 +1520,17 @@ router.patch(
         });
       }
 
-      appeal.status = 'rejected';
-      appeal.reviewedAt = new Date();
-      appeal.reviewedBy = req.user._id;
-      appeal.adminResponse = response;
+      appeal.status =
+        'rejected';
+
+      appeal.reviewedAt =
+        new Date();
+
+      appeal.reviewedBy =
+        req.user._id;
+
+      appeal.adminResponse =
+        response;
 
       await appeal.save();
 
