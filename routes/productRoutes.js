@@ -1378,18 +1378,13 @@ router.put(
       product.offerEndDate =
         null;
 
-/*
- * Seller resubmission after rejection.
- */
-if (
-  product.approvalStatus === 'rejected'
-) {
-  product.approvalStatus = 'pending';
-  product.isActive = false;
-  product.rejectionReason = '';
-  product.approvedAt = null;
-  product.approvedBy = null;
-}
+      /*
+       * Seller resubmission after rejection.
+       *
+       * The product is already set to pending
+       * above, so no separate rejected-state
+       * branch is required here.
+       */
 
       const updatedProduct =
         await product.save();
@@ -1488,9 +1483,24 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
+      /*
+       * IMPORTANT:
+       * Do not use:
+       *
+       * seller: {
+       *   $ne: null
+       * }
+       *
+       * because the current Mongoose setup is
+       * attempting to cast the $ne object as an
+       * ObjectId.
+       *
+       * $exists safely checks whether the seller
+       * field exists.
+       */
       const products = await Product.find({
         seller: {
-          $ne: null,
+          $exists: true,
         },
         approvalStatus: 'pending',
       })
@@ -1565,7 +1575,8 @@ router.put(
 
       product.rejectionReason = '';
 
-      product.approvedAt = new Date();
+      product.approvedAt =
+        new Date();
 
       product.approvedBy =
         req.user._id;
@@ -1885,6 +1896,27 @@ router.post(
         });
       }
 
+      /*
+       * Validate seller only when one was supplied.
+       */
+      let sellerId = null;
+
+      if (seller) {
+        if (
+          !mongoose.Types.ObjectId.isValid(
+            seller
+          )
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              'Invalid seller ID.',
+          });
+        }
+
+        sellerId = seller;
+      }
+
       const product =
         await Product.create({
           name,
@@ -2004,12 +2036,7 @@ router.post(
               : [],
 
           seller:
-            seller &&
-            mongoose.Types.ObjectId.isValid(
-              seller
-            )
-              ? seller
-              : null,
+            sellerId,
 
           approvalStatus:
             'approved',
@@ -2239,27 +2266,44 @@ router.put(
       /*
        * Validate category.
        */
-      if (
-        req.body.category &&
-        !mongoose.Types.ObjectId.isValid(
-          req.body.category
-        )
-      ) {
-        const categoryRecord =
-          await findCategory(
+      if (req.body.category) {
+        if (
+          mongoose.Types.ObjectId.isValid(
             req.body.category
-          );
+          )
+        ) {
+          const categoryRecord =
+            await Category.findById(
+              req.body.category
+            ).select('_id');
 
-        if (!categoryRecord) {
-          return res.status(400).json({
-            success: false,
-            message:
-              'The selected category does not exist.',
-          });
+          if (!categoryRecord) {
+            return res.status(400).json({
+              success: false,
+              message:
+                'The selected category does not exist.',
+            });
+          }
+
+          product.category =
+            categoryRecord._id;
+        } else {
+          const categoryRecord =
+            await findCategory(
+              req.body.category
+            );
+
+          if (!categoryRecord) {
+            return res.status(400).json({
+              success: false,
+              message:
+                'The selected category does not exist.',
+            });
+          }
+
+          product.category =
+            categoryRecord._id;
         }
-
-        product.category =
-          categoryRecord._id;
       }
 
       /*
@@ -2384,3 +2428,4 @@ router.delete(
 );
 
 module.exports = router;
+
