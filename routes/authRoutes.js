@@ -219,8 +219,8 @@ const createSecureTokenRecord = async ({
 const getFrontendUrl = () => {
   return (
     process.env.FRONTEND_URL ||
-    'https://sylva-technologies-frontend.vercel.app'
-  ).replace(/\/+$/, '');
+    'https://sylvatechnologies.vercel.app'
+  );
 };
 
 /*
