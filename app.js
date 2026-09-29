@@ -13,6 +13,7 @@ const contactRoutes = require('./routes/contactRoutes');
 const advertisementRoutes = require('./routes/advertisementRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const sellerManagementRoutes = require('./routes/sellerManagementRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 const app = express();
 
@@ -356,6 +357,10 @@ app.use('/api/admin', adminRoutes);
 app.use(
   '/api/seller-management',
   sellerManagementRoutes
+);
+app.use(
+  '/api/notifications',
+  notificationRoutes
 );
 
 /*

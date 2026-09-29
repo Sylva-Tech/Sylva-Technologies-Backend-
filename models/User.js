@@ -77,6 +77,8 @@ const userSchema = new mongoose.Schema(
      * is allowed to operate.
      *
      * active    = seller account operating normally
+     * warning   = seller receives a warning but
+     *             can continue operating
      * suspended = temporarily restricted
      * banned    = permanently/indefinitely restricted
      *
@@ -85,9 +87,35 @@ const userSchema = new mongoose.Schema(
 
     accountStatus: {
       type: String,
-      enum: ['active', 'suspended', 'banned'],
+      enum: [
+        'active',
+        'warning',
+        'suspended',
+        'banned',
+      ],
       default: 'active',
       index: true,
+    },
+
+    /* ==========================================
+     * WARNING INFORMATION
+     * ========================================== */
+
+    warningReason: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    warnedAt: {
+      type: Date,
+      default: null,
+    },
+
+    warnedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
     },
 
     /* ==========================================
@@ -101,7 +129,8 @@ const userSchema = new mongoose.Schema(
      * store when:
      *
      * sellerStatus === 'approved'
-     * accountStatus === 'active'
+     *
+     * and accountStatus is active or warning.
      * ========================================== */
 
     storeStatus: {
@@ -431,21 +460,25 @@ userSchema.methods.isLocked = function () {
  * SELLER OPERATIONAL CHECK
  * ==========================================
  *
- * Returns true only when the seller:
+ * Returns true when the seller:
  *
  * 1. Has an approved seller application
- * 2. Has an active account
+ * 2. Has an active account OR warning status
  * 3. Has an active store
  *
- * This is useful for seller product/order
+ * A warning does NOT prevent normal seller
  * operations.
+ *
+ * Suspended and banned sellers return false.
  * ========================================== */
 
 userSchema.methods.isActiveSeller = function () {
   return (
     this.role === 'seller' &&
     this.sellerStatus === 'approved' &&
-    this.accountStatus === 'active' &&
+    ['active', 'warning'].includes(
+      this.accountStatus
+    ) &&
     this.storeStatus === 'active'
   );
 };
@@ -459,6 +492,14 @@ userSchema.methods.isSellerRestricted = function () {
     this.accountStatus === 'suspended' ||
     this.accountStatus === 'banned'
   );
+};
+
+/* ==========================================
+ * SELLER WARNING CHECK
+ * ========================================== */
+
+userSchema.methods.isSellerWarned = function () {
+  return this.accountStatus === 'warning';
 };
 
 /* ==========================================

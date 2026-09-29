@@ -10,6 +10,10 @@ const {
   adminOnly,
 } = require('../middleware/authMiddleware');
 
+const {
+  createNotification,
+} = require('../services/notificationService');
+
 const router = express.Router();
 
 /*
@@ -25,8 +29,11 @@ const getStoreName = (seller) =>
   seller?.sellerProfile?.storeName?.trim() || '';
 
 const getEffectiveStatus = (seller) => {
-  const sellerStatus = seller?.sellerStatus || 'none';
-  const accountStatus = seller?.accountStatus || 'active';
+  const sellerStatus =
+    seller?.sellerStatus || 'none';
+
+  const accountStatus =
+    seller?.accountStatus || 'active';
 
   if (sellerStatus === 'pending') {
     return 'pending';
@@ -34,6 +41,10 @@ const getEffectiveStatus = (seller) => {
 
   if (sellerStatus === 'rejected') {
     return 'rejected';
+  }
+
+  if (accountStatus === 'warning') {
+    return 'warning';
   }
 
   if (accountStatus === 'banned') {
@@ -75,8 +86,11 @@ const serializeSeller = (
 
   const result = {
     _id: item._id,
+
     name: item.name,
+
     email: item.email,
+
     phone: item.phone,
 
     sellerStatus:
@@ -124,6 +138,21 @@ const serializeSeller = (
       item.sellerProfile?.rejectionReason ||
       '',
 
+    /*
+     * Warning information.
+     */
+    warningReason:
+      item.warningReason || '',
+
+    warnedAt:
+      item.warnedAt || null,
+
+    warnedBy:
+      item.warnedBy || null,
+
+    /*
+     * Suspension information.
+     */
     suspensionReason:
       item.suspensionReason || '',
 
@@ -133,6 +162,9 @@ const serializeSeller = (
     suspendedBy:
       item.suspendedBy || null,
 
+    /*
+     * Ban information.
+     */
     banReason:
       item.banReason || '',
 
@@ -253,6 +285,10 @@ router.get(
           )
           .populate(
             'bannedBy',
+            'name email'
+          )
+          .populate(
+            'warnedBy',
             'name email'
           );
 
@@ -465,6 +501,170 @@ router.patch(
 
 /*
 |--------------------------------------------------------------------------
+| ADMIN — WARN SELLER
+|--------------------------------------------------------------------------
+*/
+
+router.patch(
+  '/admin/sellers/:id/warn',
+  protect,
+  adminOnly,
+  async (req, res) => {
+    try {
+      const sellerId =
+        req.params.id;
+
+      if (!isValidObjectId(sellerId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid seller ID.',
+        });
+      }
+
+      const reason =
+        getReason(req.body?.reason);
+
+      if (!reason) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'A warning reason is required.',
+        });
+      }
+
+      if (reason.length < 5) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'The warning reason must contain at least 5 characters.',
+        });
+      }
+
+      if (reason.length > 1000) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'The warning reason cannot exceed 1000 characters.',
+        });
+      }
+
+      const seller =
+        await User.findOne({
+          _id: sellerId,
+          role: 'seller',
+        });
+
+      if (!seller) {
+        return res.status(404).json({
+          success: false,
+          message: 'Seller not found.',
+        });
+      }
+
+      if (
+        seller.sellerStatus !==
+        'approved'
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Only an approved seller can be warned.',
+        });
+      }
+
+      if (
+        seller.accountStatus ===
+        'suspended'
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'A suspended seller cannot be warned. Reactivate the seller first.',
+        });
+      }
+
+      if (
+        seller.accountStatus ===
+        'banned'
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'A banned seller cannot be warned. Reactivate the seller first.',
+        });
+      }
+
+      seller.accountStatus =
+        'warning';
+
+      seller.storeStatus =
+        'active';
+
+      seller.warningReason =
+        reason;
+
+      seller.warnedAt =
+        new Date();
+
+      seller.warnedBy =
+        req.user._id;
+
+      /*
+       * Clear stale suspension information.
+       */
+      seller.suspensionReason = '';
+      seller.suspendedAt = null;
+      seller.suspendedBy = null;
+
+      /*
+       * Clear stale ban information.
+       */
+      seller.banReason = '';
+      seller.bannedAt = null;
+      seller.bannedBy = null;
+
+      await seller.save();
+
+      /*
+       * Notify the seller by email and in-app notification.
+       */
+      await createNotification({
+        userId: seller._id,
+        type: 'account_warning',
+        title: 'Seller Account Warning',
+        message:
+          `Your Sylva Technologies seller account has received a warning. Reason: ${reason}`,
+        relatedId: seller._id,
+        relatedModel: 'User',
+        sendEmail: true,
+        emailSubject:
+          'Seller Account Warning - Sylva Technologies',
+      });
+
+      return res.json({
+        success: true,
+        message:
+          'Seller has been warned.',
+        data:
+          serializeSeller(seller),
+      });
+    } catch (error) {
+      console.error(
+        'Warn seller error:',
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          'Unable to warn seller.',
+      });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
 | ADMIN — SUSPEND SELLER
 |--------------------------------------------------------------------------
 */
@@ -574,13 +774,36 @@ router.patch(
         req.user._id;
 
       /*
-       * Clear any stale ban information.
+       * Clear warning information.
+       */
+      seller.warningReason = '';
+      seller.warnedAt = null;
+      seller.warnedBy = null;
+
+      /*
+       * Clear stale ban information.
        */
       seller.banReason = '';
       seller.bannedAt = null;
       seller.bannedBy = null;
 
       await seller.save();
+
+      /*
+       * Notify the seller by email and in-app notification.
+       */
+      await createNotification({
+        userId: seller._id,
+        type: 'account_suspended',
+        title: 'Seller Account Suspended',
+        message:
+          `Your Sylva Technologies seller account has been suspended. Reason: ${reason}`,
+        relatedId: seller._id,
+        relatedModel: 'User',
+        sendEmail: true,
+        emailSubject:
+          'Seller Account Suspended - Sylva Technologies',
+      });
 
       return res.json({
         success: true,
@@ -704,13 +927,36 @@ router.patch(
         req.user._id;
 
       /*
-       * Clear any stale suspension information.
+       * Clear warning information.
+       */
+      seller.warningReason = '';
+      seller.warnedAt = null;
+      seller.warnedBy = null;
+
+      /*
+       * Clear stale suspension information.
        */
       seller.suspensionReason = '';
       seller.suspendedAt = null;
       seller.suspendedBy = null;
 
       await seller.save();
+
+      /*
+       * Notify the seller by email and in-app notification.
+       */
+      await createNotification({
+        userId: seller._id,
+        type: 'account_banned',
+        title: 'Seller Account Banned',
+        message:
+          `Your Sylva Technologies seller account has been banned. Reason: ${reason}`,
+        relatedId: seller._id,
+        relatedModel: 'User',
+        sendEmail: true,
+        emailSubject:
+          'Seller Account Banned - Sylva Technologies',
+      });
 
       return res.json({
         success: true,
@@ -814,15 +1060,44 @@ router.patch(
       seller.storeStatus =
         'active';
 
+      /*
+       * Clear suspension information.
+       */
       seller.suspensionReason = '';
       seller.suspendedAt = null;
       seller.suspendedBy = null;
 
+      /*
+       * Clear ban information.
+       */
       seller.banReason = '';
       seller.bannedAt = null;
       seller.bannedBy = null;
 
+      /*
+       * Clear warning information.
+       */
+      seller.warningReason = '';
+      seller.warnedAt = null;
+      seller.warnedBy = null;
+
       await seller.save();
+
+      /*
+       * Notify the seller that their account has been restored.
+       */
+      await createNotification({
+        userId: seller._id,
+        type: 'account_reactivated',
+        title: 'Seller Account Reactivated',
+        message:
+          'Your Sylva Technologies seller account has been reactivated. Your seller store is active again and you can resume normal seller activities.',
+        relatedId: seller._id,
+        relatedModel: 'User',
+        sendEmail: true,
+        emailSubject:
+          'Seller Account Reactivated - Sylva Technologies',
+      });
 
       return res.json({
         success: true,
@@ -871,7 +1146,20 @@ router.get(
       const seller =
         await User.findById(
           req.user._id
-        ).select('-password');
+        )
+          .select('-password')
+          .populate(
+            'warnedBy',
+            'name email'
+          )
+          .populate(
+            'suspendedBy',
+            'name email'
+          )
+          .populate(
+            'bannedBy',
+            'name email'
+          );
 
       if (!seller) {
         return res.status(404).json({
@@ -1055,6 +1343,25 @@ router.post(
           type,
           reason,
         });
+
+      /*
+       * Notify the seller that their appeal was received.
+       */
+      await createNotification({
+        userId:
+          currentSeller._id,
+        type: 'appeal_submitted',
+        title: 'Appeal Submitted',
+        message:
+          `Your ${type === 'ban' ? 'ban' : 'suspension'} appeal has been submitted successfully. Our administration team will review your appeal and notify you of the decision.`,
+        relatedId:
+          appeal._id,
+        relatedModel:
+          'SellerAppeal',
+        sendEmail: true,
+        emailSubject:
+          'Seller Appeal Submitted - Sylva Technologies',
+      });
 
       return res.status(201).json({
         success: true,
@@ -1387,6 +1694,18 @@ router.patch(
           seller.bannedBy =
             null;
 
+          /*
+           * Clear warning information.
+           */
+          seller.warningReason =
+            '';
+
+          seller.warnedAt =
+            null;
+
+          seller.warnedBy =
+            null;
+
           await seller.save({
             session,
           });
@@ -1399,6 +1718,28 @@ router.patch(
             appeal;
         }
       );
+
+      /*
+       * Notify the seller only after the transaction
+       * has successfully committed.
+       */
+      if (approvedAppeal) {
+        await createNotification({
+          userId:
+            approvedAppeal.seller,
+          type: 'appeal_approved',
+          title: 'Appeal Approved',
+          message:
+            `Your ${approvedAppeal.type === 'ban' ? 'ban' : 'suspension'} appeal has been approved. Your Sylva Technologies seller account has been reactivated and your store is active again.`,
+          relatedId:
+            approvedAppeal._id,
+          relatedModel:
+            'SellerAppeal',
+          sendEmail: true,
+          emailSubject:
+            'Seller Appeal Approved - Sylva Technologies',
+        });
+      }
 
       return res.json({
         success: true,
@@ -1533,6 +1874,25 @@ router.patch(
         response;
 
       await appeal.save();
+
+      /*
+       * Notify the seller that their appeal was rejected.
+       *
+       * The account remains suspended/banned because rejection
+       * does not change the seller's current account state.
+       */
+      await createNotification({
+        userId: appeal.seller,
+        type: 'appeal_rejected',
+        title: 'Appeal Rejected',
+        message:
+          `Your ${appeal.type === 'ban' ? 'ban' : 'suspension'} appeal has been rejected. Admin response: ${response}`,
+        relatedId: appeal._id,
+        relatedModel: 'SellerAppeal',
+        sendEmail: true,
+        emailSubject:
+          'Seller Appeal Rejected - Sylva Technologies',
+      });
 
       return res.json({
         success: true,
