@@ -6,6 +6,7 @@ const User = require('../models/User');
 const VerificationToken = require('../models/VerificationToken');
 
 const { protect } = require('../middleware/authMiddleware');
+
 const generateToken = require('../utils/generateToken');
 
 const sellerUpload = require('../middleware/sellerUpload');
@@ -34,6 +35,12 @@ const MAX_OTP_ATTEMPTS = Number(
 const MAX_OTP_REQUESTS = Number(
   process.env.MAX_OTP_REQUESTS || 3
 );
+
+/*
+|--------------------------------------------------------------------------
+| NORMALIZATION HELPERS
+|--------------------------------------------------------------------------
+*/
 
 const normalizeEmail = (value) =>
   (value || '').toString().trim().toLowerCase();
@@ -69,6 +76,27 @@ const isValidKenyanPhone = (value) =>
 | - private Cloudinary document IDs
 | - sensitive internal fields
 |
+| IMPORTANT:
+| Seller application status and operational account status
+| are separate.
+|
+| sellerStatus:
+| - none
+| - pending
+| - approved
+| - rejected
+|
+| accountStatus:
+| - active
+| - warning
+| - suspended
+| - banned
+|
+| storeStatus:
+| - active
+| - inactive
+|
+|--------------------------------------------------------------------------
 */
 
 const sanitizeUser = (user) => {
@@ -76,20 +104,49 @@ const sanitizeUser = (user) => {
 
   return {
     _id: user._id,
+
     name: user.name || '',
+
     email: user.email || '',
+
     phone: user.phone || '',
+
     role: user.role || 'customer',
 
     isVerified: !!user.isVerified,
-    verificationMethod: user.verificationMethod || 'email',
+
+    verificationMethod:
+      user.verificationMethod || 'email',
 
     address: user.address || '',
 
-    sellerStatus: user.sellerStatus || 'none',
+    /*
+    |--------------------------------------------------------------------------
+    | SELLER APPLICATION STATUS
+    |--------------------------------------------------------------------------
+    */
+
+    sellerStatus:
+      user.sellerStatus || 'none',
+
+    /*
+    |--------------------------------------------------------------------------
+    | SELLER OPERATIONAL ACCOUNT STATUS
+    |--------------------------------------------------------------------------
+    |
+    | This is what tells the frontend whether the seller is:
+    | active, warned, suspended or banned.
+    |
+    */
 
     accountStatus:
       user.accountStatus || 'active',
+
+    /*
+    |--------------------------------------------------------------------------
+    | STORE STATUS
+    |--------------------------------------------------------------------------
+    */
 
     storeStatus:
       user.storeStatus ||
@@ -97,14 +154,68 @@ const sanitizeUser = (user) => {
         ? 'active'
         : 'inactive'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | WARNING INFORMATION
+    |--------------------------------------------------------------------------
+    */
+
+    warningReason:
+      user.warningReason || '',
+
+    warnedAt:
+      user.warnedAt || null,
+
+    warnedBy:
+      user.warnedBy || null,
+
+    /*
+    |--------------------------------------------------------------------------
+    | SUSPENSION INFORMATION
+    |--------------------------------------------------------------------------
+    */
+
     suspensionReason:
       user.suspensionReason || '',
+
+    suspendedAt:
+      user.suspendedAt || null,
+
+    suspendedBy:
+      user.suspendedBy || null,
+
+    /*
+    |--------------------------------------------------------------------------
+    | BAN INFORMATION
+    |--------------------------------------------------------------------------
+    */
 
     banReason:
       user.banReason || '',
 
+    bannedAt:
+      user.bannedAt || null,
+
+    bannedBy:
+      user.bannedBy || null,
+
+    /*
+    |--------------------------------------------------------------------------
+    | STORE NAME
+    |--------------------------------------------------------------------------
+    */
+
     storeName:
       sellerProfile.storeName || '',
+
+    /*
+    |--------------------------------------------------------------------------
+    | SELLER PROFILE
+    |--------------------------------------------------------------------------
+    |
+    | Deliberately exclude private Cloudinary document IDs.
+    |
+    */
 
     sellerProfile: {
       officialName:
@@ -122,6 +233,9 @@ const sanitizeUser = (user) => {
       mpesaPhone:
         sellerProfile.mpesaPhone || '',
 
+      storeLocation:
+        sellerProfile.storeLocation || '',
+
       applicationDate:
         sellerProfile.applicationDate || null,
 
@@ -130,12 +244,29 @@ const sanitizeUser = (user) => {
 
       rejectionReason:
         sellerProfile.rejectionReason || '',
-
-      storeLocation:
-        sellerProfile.storeLocation || '',
     },
 
-    createdAt: user.createdAt || null,
+    /*
+    |--------------------------------------------------------------------------
+    | CONSENT
+    |--------------------------------------------------------------------------
+    */
+
+    consent: user.consent
+      ? {
+          privacyPolicy:
+            !!user.consent.privacyPolicy,
+
+          termsAndConditions:
+            !!user.consent.termsAndConditions,
+
+          acceptedAt:
+            user.consent.acceptedAt || null,
+        }
+      : null,
+
+    createdAt:
+      user.createdAt || null,
   };
 };
 
@@ -185,8 +316,6 @@ const createSecureTokenRecord = async ({
 }) => {
   /*
    * Remove old unused tokens for the same purpose.
-   * This prevents a user from accumulating
-   * multiple active reset/verification tokens.
    */
   await VerificationToken.deleteMany({
     user: user._id,
@@ -216,6 +345,12 @@ const createSecureTokenRecord = async ({
   return token;
 };
 
+/*
+|--------------------------------------------------------------------------
+| FRONTEND URL
+|--------------------------------------------------------------------------
+*/
+
 const getFrontendUrl = () => {
   return (
     process.env.FRONTEND_URL ||
@@ -231,6 +366,7 @@ const getFrontendUrl = () => {
 
 router.post(
   '/seller/register',
+
   (req, res, next) => {
     sellerUpload.fields([
       {
@@ -258,6 +394,7 @@ router.post(
       next();
     });
   },
+
   async (req, res) => {
     const uploadedFiles = [];
 
@@ -420,6 +557,7 @@ router.post(
       /*
        * Upload seller verification documents.
        */
+
       const idFrontUpload =
         await uploadBufferToCloudinary(
           idFrontFile.buffer
@@ -443,8 +581,11 @@ router.post(
 
       const user = await User.create({
         name: trimmedOfficialName,
+
         email: normalizedEmail,
+
         phone: normalizedSellerPhone,
+
         password,
 
         role: 'seller',
@@ -490,7 +631,9 @@ router.post(
 
         consent: {
           privacyPolicy: true,
+
           termsAndConditions: true,
+
           acceptedAt: new Date(),
         },
 
@@ -502,6 +645,7 @@ router.post(
       /*
        * Create email verification token.
        */
+
       const verificationToken =
         await createSecureTokenRecord({
           user,
@@ -513,13 +657,9 @@ router.post(
         `${getFrontendUrl()}/verify-email?token=${verificationToken}`;
 
       /*
-       * Email failure should not leave the
-       * database user/document state half-created.
-       *
-       * Registration still reports failure if
-       * the verification email cannot be sent,
-       * because the user needs the verification flow.
+       * Send verification email.
        */
+
       await sendVerificationLinkEmail({
         to: user.email,
         name: user.name,
@@ -532,12 +672,17 @@ router.post(
 
       return res.status(201).json({
         success: true,
+
         message:
           'Seller registration submitted successfully. Please verify your email. Your seller account is awaiting admin approval.',
+
         data: {
           user: sanitizeUser(user),
+
           verificationPending: true,
+
           sellerStatus: 'pending',
+
           token,
         },
       });
@@ -551,6 +696,7 @@ router.post(
        * Clean up uploaded Cloudinary files
        * when registration fails.
        */
+
       for (const uploadedFile of uploadedFiles) {
         try {
           await cloudinary.uploader.destroy(
@@ -587,6 +733,7 @@ router.post(
 
 router.post(
   '/register',
+
   async (req, res) => {
     try {
       const {
@@ -712,8 +859,11 @@ router.post(
 
       const user = await User.create({
         name: trimmedName,
+
         email: normalizedEmail,
+
         phone: normalizedPhone,
+
         password,
 
         role: 'customer',
@@ -728,7 +878,9 @@ router.post(
 
         consent: {
           privacyPolicy: true,
+
           termsAndConditions: true,
+
           acceptedAt: new Date(),
         },
 
@@ -757,11 +909,15 @@ router.post(
 
       return res.status(201).json({
         success: true,
+
         message:
           'Registration successful. Verification email sent.',
+
         data: {
           user: sanitizeUser(user),
+
           verificationPending: true,
+
           token,
         },
       });
@@ -784,15 +940,11 @@ router.post(
 |--------------------------------------------------------------------------
 | VERIFY ACCOUNT
 |--------------------------------------------------------------------------
-|
-| Supports:
-| - token from email link
-| - token in request body
-|
 */
 
 router.post(
   '/verify',
+
   async (req, res) => {
     try {
       const {
@@ -836,8 +988,11 @@ router.post(
         record =
           await VerificationToken.findOne({
             purpose: 'verification',
+
             tokenHash,
+
             usedAt: null,
+
             expiresAt: {
               $gt: new Date(),
             },
@@ -864,6 +1019,7 @@ router.post(
           success: true,
           message:
             'Account already verified.',
+
           data: {
             user: sanitizeUser(user),
           },
@@ -885,9 +1041,13 @@ router.post(
         record =
           await VerificationToken.findOne({
             user: user._id,
+
             purpose: 'verification',
+
             tokenHash,
+
             usedAt: null,
+
             expiresAt: {
               $gt: new Date(),
             },
@@ -918,7 +1078,9 @@ router.post(
 
       await VerificationToken.deleteMany({
         user: user._id,
+
         purpose: 'verification',
+
         usedAt: {
           $ne: null,
         },
@@ -926,8 +1088,10 @@ router.post(
 
       return res.status(200).json({
         success: true,
+
         message:
           'Verification successful. Your account is now verified.',
+
         data: {
           user: sanitizeUser(user),
         },
@@ -955,6 +1119,7 @@ router.post(
 
 router.post(
   '/verify-email',
+
   (req, res) => {
     return res.redirect(
       307,
@@ -971,6 +1136,7 @@ router.post(
 
 router.post(
   '/resend-verification',
+
   async (req, res) => {
     try {
       const {
@@ -1038,7 +1204,9 @@ router.post(
         await VerificationToken.countDocuments(
           {
             user: user._id,
+
             purpose: 'verification',
+
             createdAt: {
               $gte: new Date(
                 Date.now() -
@@ -1115,19 +1283,18 @@ router.post(
 |--------------------------------------------------------------------------
 |
 | IMPORTANT:
-| - Password verification is handled with bcrypt.compare().
-| - Unverified users may still log in.
-| - Suspended/banned sellers may still log in so they can see
-|   their account status and appeal/restriction information.
-| - Seller operational access is controlled separately by
-|   sellerStatus, accountStatus, and storeStatus.
-| - Verification-email failures must never turn a valid login
-|   into HTTP 500.
 |
+| Suspended and banned sellers CAN still log in.
+|
+| Their operational access is controlled separately
+| by approvedSellerOnly / sellerOrAdmin middleware.
+|
+|--------------------------------------------------------------------------
 */
 
 router.post(
   '/login',
+
   async (req, res) => {
     try {
       const {
@@ -1163,6 +1330,7 @@ router.post(
       /*
        * Check temporary login lock.
        */
+
       let accountLocked = false;
 
       if (
@@ -1188,11 +1356,8 @@ router.post(
 
       /*
        * Verify password.
-       *
-       * Do not use user.matchPassword() here.
-       * bcrypt.compare() works directly with the
-       * hashed password stored in the User document.
        */
+
       const isMatch =
         await bcrypt.compare(
           password,
@@ -1206,8 +1371,8 @@ router.post(
 
         /*
          * Lock after 5 failed attempts.
-         * Lock duration: 15 minutes.
          */
+
         if (
           user.loginAttempts >= 5
         ) {
@@ -1241,10 +1406,10 @@ router.post(
 
       /*
        * Successful login.
-       *
-       * Reset failed-attempt counters.
        */
+
       user.loginAttempts = 0;
+
       user.lockUntil = null;
 
       await user.save();
@@ -1253,9 +1418,10 @@ router.post(
         generateToken(user._id);
 
       /*
-       * Build the response before attempting
-       * any verification-email operation.
+       * Build response before
+       * verification-email operation.
        */
+
       const responsePayload = {
         success: true,
 
@@ -1277,13 +1443,8 @@ router.post(
 
       /*
        * Unverified users can still log in.
-       *
-       * We only attempt to send a verification
-       * reminder when there is no active token.
-       *
-       * Any token/email failure is isolated from
-       * the successful authentication response.
        */
+
       if (!user.isVerified) {
         responsePayload.message =
           'Login successful. Email verification is pending.';
@@ -1292,8 +1453,11 @@ router.post(
           const existing =
             await VerificationToken.findOne({
               user: user._id,
+
               purpose: 'verification',
+
               usedAt: null,
+
               expiresAt: {
                 $gt: new Date(),
               },
@@ -1302,15 +1466,20 @@ router.post(
             });
 
           /*
-           * Only create and send a new token
-           * when there is no valid existing token.
+           * Only create and send a new
+           * token when there is no valid
+           * existing token.
            */
+
           if (!existing) {
             const verificationToken =
               await createSecureTokenRecord({
                 user,
+
                 purpose: 'verification',
-                expiresMinutes: 60 * 24,
+
+                expiresMinutes:
+                  60 * 24,
               });
 
             const verifyLink =
@@ -1319,15 +1488,15 @@ router.post(
             try {
               await sendVerificationLinkEmail({
                 to: user.email,
+
                 name: user.name,
+
                 verifyLink,
-                expiresInMinutes: 60 * 24,
+
+                expiresInMinutes:
+                  60 * 24,
               });
             } catch (emailError) {
-              /*
-               * Email failure must never invalidate
-               * the authenticated login.
-               */
               console.error(
                 'Login verification email error:',
                 emailError
@@ -1335,10 +1504,6 @@ router.post(
             }
           }
         } catch (verificationError) {
-          /*
-           * Token/reminder failure must never
-           * invalidate a successful login.
-           */
           console.error(
             'Login verification reminder error:',
             verificationError
@@ -1364,8 +1529,15 @@ router.post(
   }
 );
 
+/*
+|--------------------------------------------------------------------------
+| FORGOT PASSWORD
+|--------------------------------------------------------------------------
+*/
+
 router.post(
   '/forgot-password',
+
   async (req, res) => {
     try {
       const {
@@ -1395,6 +1567,7 @@ router.post(
       /*
        * Prevent account enumeration.
        */
+
       if (!user) {
         return res.status(200).json({
           success: true,
@@ -1405,7 +1578,9 @@ router.post(
       const resetToken =
         await createSecureTokenRecord({
           user,
+
           purpose: 'password-reset',
+
           expiresMinutes: 60,
         });
 
@@ -1414,8 +1589,11 @@ router.post(
 
       await sendPasswordResetLinkEmail({
         to: user.email,
+
         name: user.name,
+
         resetLink,
+
         expiresInMinutes: 60,
       });
 
@@ -1446,6 +1624,7 @@ router.post(
 
 router.post(
   '/reset-password',
+
   async (req, res) => {
     try {
       const {
@@ -1487,8 +1666,11 @@ router.post(
       const record =
         await VerificationToken.findOne({
           purpose: 'password-reset',
+
           tokenHash,
+
           usedAt: null,
+
           expiresAt: {
             $gt: new Date(),
           },
@@ -1529,7 +1711,9 @@ router.post(
 
       await VerificationToken.deleteMany({
         user: user._id,
+
         purpose: 'password-reset',
+
         usedAt: {
           $ne: null,
         },
@@ -1563,6 +1747,7 @@ router.post(
 
 router.post(
   '/logout',
+
   (req, res) => {
     return res.status(200).json({
       success: true,
@@ -1576,18 +1761,41 @@ router.post(
 |--------------------------------------------------------------------------
 | CURRENT USER
 |--------------------------------------------------------------------------
+|
+| IMPORTANT:
+| /auth/me now returns accountStatus,
+| sellerStatus, storeStatus and all
+| warning/suspension/ban information.
+|
+|--------------------------------------------------------------------------
 */
 
 router.get(
   '/me',
+
   protect,
+
   async (req, res) => {
-    return res.json({
-      success: true,
-      data: sanitizeUser(
-        req.user
-      ),
-    });
+    try {
+      return res.json({
+        success: true,
+
+        data: sanitizeUser(
+          req.user
+        ),
+      });
+    } catch (error) {
+      console.error(
+        'Get current user error:',
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          'Unable to load your account information.',
+      });
+    }
   }
 );
 
