@@ -94,13 +94,45 @@ const requireVerified = (req, res, next) => {
 };
 
 /*
- * Require an approved seller.
+ * Get the appropriate restriction message for a seller.
+ */
+const getSellerRestrictionMessage = (user) => {
+  if (user.accountStatus === 'suspended') {
+    return (
+      user.suspensionReason ||
+      'Your seller account is currently suspended.'
+    );
+  }
+
+  if (user.accountStatus === 'banned') {
+    return (
+      user.banReason ||
+      'Your seller account is currently banned.'
+    );
+  }
+
+  return null;
+};
+
+/*
+ * Require an active approved seller.
  *
- * Rules:
- * - Must be logged in
- * - Must have seller role
- * - Must have verified account
- * - Must have sellerStatus = approved
+ * Seller lifecycle:
+ *
+ * pending   -> cannot manage products
+ * rejected  -> cannot manage products
+ * approved  -> can manage products
+ *
+ * Account status:
+ *
+ * active     -> allowed
+ * warning    -> allowed
+ * suspended  -> blocked
+ * banned     -> blocked
+ *
+ * IMPORTANT:
+ * Suspended and banned sellers are still allowed to LOG IN.
+ * This middleware only blocks seller operations.
  */
 const approvedSellerOnly = (req, res, next) => {
   if (!req.user) {
@@ -125,6 +157,9 @@ const approvedSellerOnly = (req, res, next) => {
     });
   }
 
+  /*
+   * Seller application must be approved.
+   */
   if (req.user.sellerStatus !== 'approved') {
     if (req.user.sellerStatus === 'rejected') {
       return res.status(403).json({
@@ -141,6 +176,42 @@ const approvedSellerOnly = (req, res, next) => {
     });
   }
 
+  /*
+   * Account-level restrictions.
+   *
+   * WARNING is intentionally allowed.
+   */
+  if (
+    req.user.accountStatus === 'suspended' ||
+    req.user.accountStatus === 'banned'
+  ) {
+    const restrictionMessage =
+      getSellerRestrictionMessage(req.user);
+
+    return res.status(403).json({
+      success: false,
+      restricted: true,
+      accountStatus: req.user.accountStatus,
+      message: restrictionMessage,
+    });
+  }
+
+  /*
+   * Only active and warning sellers can operate.
+   */
+  if (
+    req.user.accountStatus !== 'active' &&
+    req.user.accountStatus !== 'warning'
+  ) {
+    return res.status(403).json({
+      success: false,
+      restricted: true,
+      accountStatus: req.user.accountStatus,
+      message:
+        'Your seller account is not currently active.',
+    });
+  }
+
   next();
 };
 
@@ -148,7 +219,7 @@ const approvedSellerOnly = (req, res, next) => {
  * Require either:
  * - An administrator
  * OR
- * - An approved seller
+ * - An active approved seller
  *
  * Useful for shared management endpoints.
  */
@@ -199,6 +270,40 @@ const sellerOrAdmin = (req, res, next) => {
         req.user.sellerStatus === 'rejected'
           ? 'Your seller application has been rejected.'
           : 'Your seller application is still under review.',
+    });
+  }
+
+  /*
+   * WARNING does NOT restrict seller operations.
+   */
+  if (
+    req.user.accountStatus === 'suspended' ||
+    req.user.accountStatus === 'banned'
+  ) {
+    const restrictionMessage =
+      getSellerRestrictionMessage(req.user);
+
+    return res.status(403).json({
+      success: false,
+      restricted: true,
+      accountStatus: req.user.accountStatus,
+      message: restrictionMessage,
+    });
+  }
+
+  /*
+   * Only active and warning sellers can operate.
+   */
+  if (
+    req.user.accountStatus !== 'active' &&
+    req.user.accountStatus !== 'warning'
+  ) {
+    return res.status(403).json({
+      success: false,
+      restricted: true,
+      accountStatus: req.user.accountStatus,
+      message:
+        'Your seller account is not currently active.',
     });
   }
 
