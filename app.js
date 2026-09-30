@@ -76,6 +76,8 @@ const allowedOrigins = [
   ...configuredOrigins,
 
   // Production frontend
+  'https://sylvatechnologies.co.ke',
+  'https://www.sylvatechnologies.co.ke',
   'https://sylvatechnologies.vercel.app',
   'https://sylva-technologies-frontend.vercel.app',
   'https://sylva-technologies-frontend-jucbjftlx.vercel.app',
