@@ -1,4 +1,4 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 const { verificationEmailTemplate } = require('../templates/verificationEmail');
 const { passwordResetTemplate } = require('../templates/passwordReset');
@@ -6,45 +6,66 @@ const { orderConfirmationTemplate } = require('../templates/orderConfirmation');
 const { adminOrderNotificationTemplate } = require('../templates/adminOrderNotification');
 const { orderStatusUpdateTemplate } = require('../templates/orderStatusUpdate');
 
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: Number(process.env.EMAIL_PORT || 587),
-  secure: Number(process.env.EMAIL_PORT || 587) === 465,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD,
-  },
-});
+// Initialize Resend
+const resend = process.env.RESEND_API_KEY
+  ? new Resend(process.env.RESEND_API_KEY)
+  : null;
 
+const getFromEmail = () => {
+  return (
+    process.env.EMAIL_FROM ||
+    'Sylva Technologies <verification@sylvatechnologies.co.ke>'
+  );
+};
+
+/**
+ * Send an email using Resend
+ */
 const sendMail = async ({ to, subject, html, text }) => {
-  if (
-    !process.env.EMAIL_HOST ||
-    !process.env.EMAIL_USER ||
-    !process.env.EMAIL_PASSWORD
-  ) {
+  if (!process.env.RESEND_API_KEY) {
     console.warn(
-      'Email service is not configured. Missing EMAIL_HOST, EMAIL_USER or EMAIL_PASSWORD.'
+      'Email service is not configured. Missing RESEND_API_KEY.'
     );
 
     return {
       success: false,
       message:
-        'Email service not configured. Please set the email environment variables.',
+        'Email service not configured. Please set RESEND_API_KEY.',
+    };
+  }
+
+  if (!resend) {
+    console.error('Resend client could not be initialized.');
+
+    return {
+      success: false,
+      message: 'Email service is unavailable.',
     };
   }
 
   try {
-    const info = await transporter.sendMail({
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+    const { data, error } = await resend.emails.send({
+      from: getFromEmail(),
       to,
       subject,
       html,
       text,
     });
 
+    if (error) {
+      console.error('Resend email error:', error);
+
+      return {
+        success: false,
+        message:
+          error.message ||
+          'Unable to send email at the moment. Please try again later.',
+      };
+    }
+
     return {
       success: true,
-      messageId: info.messageId,
+      messageId: data?.id || null,
     };
   } catch (error) {
     console.error('Email send failed:', error.message);
@@ -153,7 +174,7 @@ const sendVerificationLinkEmail = async ({
     to,
     subject: 'Verify your Sylva Technologies email',
     html,
-    text: `Verify your email by visiting: ${verifyLink}`,
+    text: `Hello ${name}, verify your email by visiting: ${verifyLink}`,
   });
 };
 
@@ -213,7 +234,7 @@ const sendPasswordResetLinkEmail = async ({
     to,
     subject: 'Reset your Sylva Technologies password',
     html,
-    text: `Reset your password by visiting: ${resetLink}`,
+    text: `Hello ${name}, reset your password by visiting: ${resetLink}`,
   });
 };
 
@@ -279,10 +300,7 @@ module.exports = {
   sendMail,
   sendVerificationEmail,
   sendPasswordResetEmail,
-
-  // Added this export so seller registration can use it
   sendVerificationLinkEmail,
-
   sendPasswordResetLinkEmail,
   sendOrderConfirmationEmail,
   sendAdminOrderNotificationEmail,

@@ -32,7 +32,8 @@
     "mongoose": "^9.10.1",
     "mongoose-sequence": "^6.0.1",
     "multer": "^2.4.0",
-    "nodemailer": "^10.0.10"
+    "nodemailer": "^10.0.10",
+    "resend": "^6.31.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
