@@ -1,27 +1,73 @@
 const { Resend } = require('resend');
 
-const { verificationEmailTemplate } = require('../templates/verificationEmail');
-const { passwordResetTemplate } = require('../templates/passwordReset');
-const { orderConfirmationTemplate } = require('../templates/orderConfirmation');
-const { adminOrderNotificationTemplate } = require('../templates/adminOrderNotification');
-const { orderStatusUpdateTemplate } = require('../templates/orderStatusUpdate');
+const {
+  verificationEmailTemplate,
+} = require('../templates/verificationEmail');
+
+const {
+  passwordResetTemplate,
+} = require('../templates/passwordReset');
+
+const {
+  orderConfirmationTemplate,
+} = require('../templates/orderConfirmation');
+
+const {
+  adminOrderNotificationTemplate,
+} = require('../templates/adminOrderNotification');
+
+const {
+  orderStatusUpdateTemplate,
+} = require('../templates/orderStatusUpdate');
 
 // Initialize Resend
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
 
-const getFromEmail = () => {
-  return (
-    process.env.EMAIL_FROM ||
-    'Sylva Technologies <verification@sylvatechnologies.co.ke>'
-  );
+/**
+ * Get the correct sender email based on the purpose of the email.
+ */
+const getFromEmail = (type = 'verification') => {
+  const senders = {
+    verification:
+      process.env.EMAIL_FROM_VERIFICATION ||
+      'Sylva Technologies <verification@sylvatechnologies.co.ke>',
+
+    passwordReset:
+      process.env.EMAIL_FROM_PASSWORD_RESET ||
+      'Sylva Technologies <resetpassword@sylvatechnologies.co.ke>',
+
+    orders:
+      process.env.EMAIL_FROM_ORDERS ||
+      'Sylva Technologies <orders@sylvatechnologies.co.ke>',
+
+    admin:
+      process.env.EMAIL_FROM_ADMIN ||
+      'Sylva Technologies <admin@sylvatechnologies.co.ke>',
+
+    support:
+      process.env.EMAIL_FROM_SUPPORT ||
+      'Sylva Technologies <support@sylvatechnologies.co.ke>',
+
+    sellers:
+      process.env.EMAIL_FROM_SELLERS ||
+      'Sylva Technologies <sellers@sylvatechnologies.co.ke>',
+  };
+
+  return senders[type] || senders.verification;
 };
 
 /**
- * Send an email using Resend
+ * Send an email using Resend.
  */
-const sendMail = async ({ to, subject, html, text }) => {
+const sendMail = async ({
+  to,
+  subject,
+  html,
+  text,
+  sender = 'verification',
+}) => {
   if (!process.env.RESEND_API_KEY) {
     console.warn(
       'Email service is not configured. Missing RESEND_API_KEY.'
@@ -35,7 +81,9 @@ const sendMail = async ({ to, subject, html, text }) => {
   }
 
   if (!resend) {
-    console.error('Resend client could not be initialized.');
+    console.error(
+      'Resend client could not be initialized.'
+    );
 
     return {
       success: false,
@@ -44,16 +92,20 @@ const sendMail = async ({ to, subject, html, text }) => {
   }
 
   try {
-    const { data, error } = await resend.emails.send({
-      from: getFromEmail(),
-      to,
-      subject,
-      html,
-      text,
-    });
+    const { data, error } =
+      await resend.emails.send({
+        from: getFromEmail(sender),
+        to,
+        subject,
+        html,
+        text,
+      });
 
     if (error) {
-      console.error('Resend email error:', error);
+      console.error(
+        'Resend email error:',
+        error
+      );
 
       return {
         success: false,
@@ -68,7 +120,10 @@ const sendMail = async ({ to, subject, html, text }) => {
       messageId: data?.id || null,
     };
   } catch (error) {
-    console.error('Email send failed:', error.message);
+    console.error(
+      'Email send failed:',
+      error.message
+    );
 
     return {
       success: false,
@@ -78,46 +133,61 @@ const sendMail = async ({ to, subject, html, text }) => {
   }
 };
 
+/**
+ * Verification email using OTP.
+ */
 const sendVerificationEmail = async ({
   to,
   name,
   otp,
   expiresInMinutes,
 }) => {
-  const html = verificationEmailTemplate({
-    name,
-    otp,
-    expiresInMinutes,
-  });
+  const html =
+    verificationEmailTemplate({
+      name,
+      otp,
+      expiresInMinutes,
+    });
 
   return sendMail({
     to,
-    subject: 'Verify your Sylva Technologies account',
+    subject:
+      'Verify your Sylva Technologies account',
     html,
     text: `Hello ${name}, your Sylva Technologies verification code is ${otp}. It expires in ${expiresInMinutes} minutes.`,
+    sender: 'verification',
   });
 };
 
+/**
+ * Password reset email using OTP.
+ */
 const sendPasswordResetEmail = async ({
   to,
   name,
   otp,
   expiresInMinutes,
 }) => {
-  const html = passwordResetTemplate({
-    name,
-    otp,
-    expiresInMinutes,
-  });
+  const html =
+    passwordResetTemplate({
+      name,
+      otp,
+      expiresInMinutes,
+    });
 
   return sendMail({
     to,
-    subject: 'Reset your Sylva Technologies password',
+    subject:
+      'Reset your Sylva Technologies password',
     html,
     text: `Hello ${name}, your Sylva Technologies password reset code is ${otp}. It expires in ${expiresInMinutes} minutes.`,
+    sender: 'passwordReset',
   });
 };
 
+/**
+ * Verification email using a link.
+ */
 const sendVerificationLinkEmail = async ({
   to,
   name,
@@ -129,7 +199,9 @@ const sendVerificationLinkEmail = async ({
       <div style="max-width:620px; margin:0 auto; background:#ffffff; border-radius:12px; overflow:hidden; border:1px solid #e5e7eb;">
 
         <div style="background:linear-gradient(135deg,#0f172a,#1d4ed8); padding:24px 32px; color:#fff;">
-          <h2 style="margin:0; font-size:26px;">Sylva Technologies</h2>
+          <h2 style="margin:0; font-size:26px;">
+            Sylva Technologies
+          </h2>
         </div>
 
         <div style="padding:32px;">
@@ -137,11 +209,15 @@ const sendVerificationLinkEmail = async ({
             Verify your email address
           </h3>
 
-          <p>Hello <strong>${name}</strong>,</p>
+          <p>
+            Hello <strong>${name}</strong>,
+          </p>
 
           <p>
-            Click the button below to verify your Sylva Technologies account.
-            This link expires in ${expiresInMinutes} minutes.
+            Click the button below to verify your
+            Sylva Technologies account.
+            This link expires in
+            ${expiresInMinutes} minutes.
           </p>
 
           <p style="text-align:center;">
@@ -154,7 +230,8 @@ const sendVerificationLinkEmail = async ({
           </p>
 
           <p>
-            If the button doesn't work, copy and paste this link into your browser:
+            If the button doesn't work, copy and
+            paste this link into your browser:
           </p>
 
           <p style="word-break:break-all;">
@@ -172,12 +249,17 @@ const sendVerificationLinkEmail = async ({
 
   return sendMail({
     to,
-    subject: 'Verify your Sylva Technologies email',
+    subject:
+      'Verify your Sylva Technologies email',
     html,
     text: `Hello ${name}, verify your email by visiting: ${verifyLink}`,
+    sender: 'verification',
   });
 };
 
+/**
+ * Password reset email using a secure reset link.
+ */
 const sendPasswordResetLinkEmail = async ({
   to,
   name,
@@ -189,7 +271,9 @@ const sendPasswordResetLinkEmail = async ({
       <div style="max-width:620px; margin:0 auto; background:#ffffff; border-radius:12px; overflow:hidden; border:1px solid #e5e7eb;">
 
         <div style="background:linear-gradient(135deg,#111827,#4338ca); padding:24px 32px; color:#fff;">
-          <h2 style="margin:0; font-size:26px;">Sylva Technologies</h2>
+          <h2 style="margin:0; font-size:26px;">
+            Sylva Technologies
+          </h2>
         </div>
 
         <div style="padding:32px;">
@@ -197,11 +281,15 @@ const sendPasswordResetLinkEmail = async ({
             Reset your password
           </h3>
 
-          <p>Hello <strong>${name}</strong>,</p>
+          <p>
+            Hello <strong>${name}</strong>,
+          </p>
 
           <p>
-            Click the button below to reset your password.
-            This link expires in ${expiresInMinutes} minutes.
+            Click the button below to reset your
+            password.
+            This link expires in
+            ${expiresInMinutes} minutes.
           </p>
 
           <p style="text-align:center;">
@@ -214,7 +302,8 @@ const sendPasswordResetLinkEmail = async ({
           </p>
 
           <p>
-            If the button doesn't work, copy and paste this link into your browser:
+            If the button doesn't work, copy and
+            paste this link into your browser:
           </p>
 
           <p style="word-break:break-all;">
@@ -232,67 +321,88 @@ const sendPasswordResetLinkEmail = async ({
 
   return sendMail({
     to,
-    subject: 'Reset your Sylva Technologies password',
+    subject:
+      'Reset your Sylva Technologies password',
     html,
     text: `Hello ${name}, reset your password by visiting: ${resetLink}`,
+    sender: 'passwordReset',
   });
 };
 
+/**
+ * Customer order confirmation.
+ */
 const sendOrderConfirmationEmail = async ({
   to,
   customerName,
   order,
   orderDate,
 }) => {
-  const html = orderConfirmationTemplate({
-    customerName,
-    order,
-    orderDate,
-  });
+  const html =
+    orderConfirmationTemplate({
+      customerName,
+      order,
+      orderDate,
+    });
 
   return sendMail({
     to,
-    subject: `Order Confirmation - ${order.orderNumber}`,
+    subject:
+      `Order Confirmation - ${order.orderNumber}`,
     html,
     text: `Thank you ${customerName} for shopping with Sylva Technologies. Your order ${order.orderNumber} has been placed successfully.`,
+    sender: 'orders',
   });
 };
 
-const sendAdminOrderNotificationEmail = async ({
-  to,
-  order,
-  customer,
-}) => {
-  const html = adminOrderNotificationTemplate({
+/**
+ * Admin notification when a new order is received.
+ */
+const sendAdminOrderNotificationEmail =
+  async ({
+    to,
     order,
     customer,
-  });
+  }) => {
+    const html =
+      adminOrderNotificationTemplate({
+        order,
+        customer,
+      });
 
-  return sendMail({
-    to,
-    subject: `New order received - ${order.orderNumber}`,
-    html,
-    text: `A new order ${order.orderNumber} has been placed by ${customer.name}.`,
-  });
-};
+    return sendMail({
+      to,
+      subject:
+        `New order received - ${order.orderNumber}`,
+      html,
+      text: `A new order ${order.orderNumber} has been placed by ${customer.name}.`,
+      sender: 'admin',
+    });
+  };
 
+/**
+ * Customer order status update.
+ */
 const sendOrderStatusUpdateEmail = async ({
   to,
   customerName,
   orderNumber,
   status,
 }) => {
-  const html = orderStatusUpdateTemplate({
-    customerName,
-    orderNumber,
-    status,
-  });
+  const html =
+    orderStatusUpdateTemplate({
+      customerName,
+      orderNumber,
+      status,
+    });
 
   return sendMail({
     to,
-    subject: `Order status update - ${orderNumber}`,
+    subject:
+      `Order status update - ${orderNumber}`,
     html,
     text: `Hello ${customerName}, your Sylva Technologies order ${orderNumber} status is now ${status}.`,
+    sender: 'orders',
   });
 };
 
