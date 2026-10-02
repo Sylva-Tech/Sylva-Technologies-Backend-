@@ -795,16 +795,19 @@ router.post(
         });
       }
 
-      if (
-        confirmPassword &&
-        password !== confirmPassword
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Passwords do not match.',
-        });
-      }
+    if (!confirmPassword) {
+  return res.status(400).json({
+    success: false,
+    message: 'Please confirm your new password.',
+  });
+}
+
+if (password !== confirmPassword) {
+  return res.status(400).json({
+    success: false,
+    message: 'Passwords do not match.',
+  });
+}
 
       if (consentAccepted !== true) {
         return res.status(400).json({
