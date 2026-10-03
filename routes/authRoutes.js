@@ -72,7 +72,6 @@ const sanitizeUser = (user) => {
     email: user.email || '',
     phone: user.phone || '',
     role: user.role || 'customer',
-
     isVerified: !!user.isVerified,
 
     verificationMethod:
@@ -255,7 +254,6 @@ const getFrontendUrl = () => {
 
 router.post(
   '/seller/register',
-
   (req, res, next) => {
     sellerUpload.fields([
       {
@@ -469,9 +467,7 @@ router.post(
         email: normalizedEmail,
         phone: normalizedSellerPhone,
         password,
-
         role: 'seller',
-
         sellerStatus: 'pending',
         accountStatus: 'active',
         storeStatus: 'inactive',
@@ -591,7 +587,6 @@ router.post(
 
 router.post(
   '/register',
-
   async (req, res) => {
     try {
       const {
@@ -725,13 +720,10 @@ router.post(
         email: normalizedEmail,
         phone: normalizedPhone,
         password,
-
         role: 'customer',
-
         sellerStatus: 'none',
         accountStatus: 'active',
         storeStatus: 'inactive',
-
         verificationMethod,
 
         consent: {
@@ -795,7 +787,6 @@ router.post(
 
 router.post(
   '/verify',
-
   async (req, res) => {
     try {
       const {
@@ -931,6 +922,7 @@ router.post(
         success: true,
         message:
           'Verification successful. Your account is now verified.',
+
         data: {
           user: sanitizeUser(user),
         },
@@ -970,7 +962,6 @@ router.post(
 
 router.post(
   '/resend-verification',
-
   async (req, res) => {
     try {
       const {
@@ -1035,21 +1026,19 @@ router.post(
       }
 
       const activeRequestCount =
-        await VerificationToken.countDocuments(
-          {
-            user: user._id,
-            purpose: 'verification',
-            createdAt: {
-              $gte: new Date(
-                Date.now() -
-                  24 *
-                    60 *
-                    60 *
-                    1000
-              ),
-            },
-          }
-        );
+        await VerificationToken.countDocuments({
+          user: user._id,
+          purpose: 'verification',
+          createdAt: {
+            $gte: new Date(
+              Date.now() -
+                24 *
+                  60 *
+                  60 *
+                  1000
+            ),
+          },
+        });
 
       if (
         activeRequestCount >=
@@ -1115,7 +1104,6 @@ router.post(
 
 router.post(
   '/login',
-
   async (req, res) => {
     try {
       const {
@@ -1230,7 +1218,6 @@ router.post(
         data: {
           user: sanitizeUser(user),
           token,
-
           emailVerified:
             !!user.isVerified,
 
@@ -1315,7 +1302,6 @@ router.post(
 
 router.post(
   '/forgot-password',
-
   async (req, res) => {
     try {
       const {
@@ -1354,23 +1340,27 @@ router.post(
         });
       }
 
-     await VerificationToken.deleteMany({
-  user: user._id,
-  purpose: 'password-reset',
-  usedAt: null,
-});
+      // Clean up existing password-reset records.
+      // These are intentionally separate queries because
+      // the current project/Mongoose setup was casting $in
+      // incorrectly for the purpose field.
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'password-reset',
+        usedAt: null,
+      });
 
-await VerificationToken.deleteMany({
-  user: user._id,
-  purpose: 'password-reset-code',
-  usedAt: null,
-});
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'password-reset-code',
+        usedAt: null,
+      });
 
-await VerificationToken.deleteMany({
-  user: user._id,
-  purpose: 'password-reset-verified',
-  usedAt: null,
-});
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'password-reset-verified',
+        usedAt: null,
+      });
 
       // Secure token used by the reset link.
       const resetToken =
@@ -1396,7 +1386,6 @@ await VerificationToken.deleteMany({
 
       await VerificationToken.create({
         user: user._id,
-
         purpose:
           'password-reset-code',
 
@@ -1440,8 +1429,6 @@ await VerificationToken.deleteMany({
             OTP_EXPIRY_MINUTES,
         });
 
-      // Resend returns an object instead of throwing
-      // when the email provider rejects the request.
       if (
         emailResult &&
         emailResult.success === false
@@ -1507,7 +1494,6 @@ await VerificationToken.deleteMany({
 
 router.post(
   '/verify-password-reset-code',
-
   async (req, res) => {
     try {
       const {
@@ -1555,14 +1541,10 @@ router.post(
       const codeRecord =
         await VerificationToken.findOne({
           user: user._id,
-
           purpose:
             'password-reset-code',
-
           tokenHash: codeHash,
-
           usedAt: null,
-
           expiresAt: {
             $gt: new Date(),
           },
@@ -1572,12 +1554,9 @@ router.post(
         const activeCode =
           await VerificationToken.findOne({
             user: user._id,
-
             purpose:
               'password-reset-code',
-
             usedAt: null,
-
             expiresAt: {
               $gt: new Date(),
             },
@@ -1621,15 +1600,11 @@ router.post(
         const resetTokenRecord =
           await VerificationToken.findOne({
             user: user._id,
-
             purpose:
               'password-reset',
-
             tokenHash:
               resetTokenHash,
-
             usedAt: null,
-
             expiresAt: {
               $gt: new Date(),
             },
@@ -1654,12 +1629,9 @@ router.post(
       const verifiedResetToken =
         await createSecureTokenRecord({
           user,
-
           purpose:
             'password-reset-verified',
-
           expiresMinutes: 15,
-
           method: 'email',
         });
 
@@ -1690,7 +1662,6 @@ router.post(
 
 router.post(
   '/reset-password',
-
   async (req, res) => {
     try {
       const {
@@ -1759,9 +1730,11 @@ router.post(
         });
       }
 
+      // Update password.
       user.password =
         password;
 
+      // Clear login lock information.
       user.loginAttempts = 0;
       user.lockUntil = null;
 
@@ -1773,17 +1746,21 @@ router.post(
 
       await record.save();
 
-      // Clean up all password-reset records.
+      // Clean up password-reset records.
+      // IMPORTANT: Keep these as separate queries.
       await VerificationToken.deleteMany({
         user: user._id,
+        purpose: 'password-reset',
+      });
 
-        purpose: {
-          $in: [
-            'password-reset',
-            'password-reset-code',
-            'password-reset-verified',
-          ],
-        },
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'password-reset-code',
+      });
+
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'password-reset-verified',
       });
 
       return res.status(200).json({
@@ -1810,7 +1787,6 @@ router.post(
 
 router.post(
   '/logout',
-
   (req, res) => {
     return res.status(200).json({
       success: true,
@@ -1826,14 +1802,11 @@ router.post(
 
 router.get(
   '/me',
-
   protect,
-
   async (req, res) => {
     try {
       return res.json({
         success: true,
-
         data:
           sanitizeUser(
             req.user
