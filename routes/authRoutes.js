@@ -6,7 +6,6 @@ const User = require('../models/User');
 const VerificationToken = require('../models/VerificationToken');
 
 const { protect } = require('../middleware/authMiddleware');
-
 const generateToken = require('../utils/generateToken');
 
 const sellerUpload = require('../middleware/sellerUpload');
@@ -36,11 +35,9 @@ const MAX_OTP_REQUESTS = Number(
   process.env.MAX_OTP_REQUESTS || 3
 );
 
-/*
-|--------------------------------------------------------------------------
-| NORMALIZATION HELPERS
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// NORMALIZATION HELPERS
+// ============================================================================
 
 const normalizeEmail = (value) =>
   (value || '').toString().trim().toLowerCase();
@@ -48,11 +45,9 @@ const normalizeEmail = (value) =>
 const normalizePhone = (value) =>
   (value || '').toString().trim();
 
-/*
-|--------------------------------------------------------------------------
-| VALIDATION HELPERS
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// VALIDATION HELPERS
+// ============================================================================
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -64,53 +59,18 @@ const isValidEmail = (value) =>
 const isValidKenyanPhone = (value) =>
   KENYAN_PHONE_REGEX.test(normalizePhone(value));
 
-/*
-|--------------------------------------------------------------------------
-| USER SANITIZATION
-|--------------------------------------------------------------------------
-|
-| Never return:
-| - password
-| - loginAttempts
-| - lockUntil
-| - private Cloudinary document IDs
-| - sensitive internal fields
-|
-| IMPORTANT:
-| Seller application status and operational account status
-| are separate.
-|
-| sellerStatus:
-| - none
-| - pending
-| - approved
-| - rejected
-|
-| accountStatus:
-| - active
-| - warning
-| - suspended
-| - banned
-|
-| storeStatus:
-| - active
-| - inactive
-|
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// USER SANITIZATION
+// ============================================================================
 
 const sanitizeUser = (user) => {
   const sellerProfile = user.sellerProfile || {};
 
   return {
     _id: user._id,
-
     name: user.name || '',
-
     email: user.email || '',
-
     phone: user.phone || '',
-
     role: user.role || 'customer',
 
     isVerified: !!user.isVerified,
@@ -120,45 +80,17 @@ const sanitizeUser = (user) => {
 
     address: user.address || '',
 
-    /*
-    |--------------------------------------------------------------------------
-    | SELLER APPLICATION STATUS
-    |--------------------------------------------------------------------------
-    */
-
     sellerStatus:
       user.sellerStatus || 'none',
 
-    /*
-    |--------------------------------------------------------------------------
-    | SELLER OPERATIONAL ACCOUNT STATUS
-    |--------------------------------------------------------------------------
-    |
-    | This is what tells the frontend whether the seller is:
-    | active, warned, suspended or banned.
-    |
-    */
-
     accountStatus:
       user.accountStatus || 'active',
-
-    /*
-    |--------------------------------------------------------------------------
-    | STORE STATUS
-    |--------------------------------------------------------------------------
-    */
 
     storeStatus:
       user.storeStatus ||
       (user.sellerStatus === 'approved'
         ? 'active'
         : 'inactive'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | WARNING INFORMATION
-    |--------------------------------------------------------------------------
-    */
 
     warningReason:
       user.warningReason || '',
@@ -169,12 +101,6 @@ const sanitizeUser = (user) => {
     warnedBy:
       user.warnedBy || null,
 
-    /*
-    |--------------------------------------------------------------------------
-    | SUSPENSION INFORMATION
-    |--------------------------------------------------------------------------
-    */
-
     suspensionReason:
       user.suspensionReason || '',
 
@@ -183,12 +109,6 @@ const sanitizeUser = (user) => {
 
     suspendedBy:
       user.suspendedBy || null,
-
-    /*
-    |--------------------------------------------------------------------------
-    | BAN INFORMATION
-    |--------------------------------------------------------------------------
-    */
 
     banReason:
       user.banReason || '',
@@ -199,23 +119,8 @@ const sanitizeUser = (user) => {
     bannedBy:
       user.bannedBy || null,
 
-    /*
-    |--------------------------------------------------------------------------
-    | STORE NAME
-    |--------------------------------------------------------------------------
-    */
-
     storeName:
       sellerProfile.storeName || '',
-
-    /*
-    |--------------------------------------------------------------------------
-    | SELLER PROFILE
-    |--------------------------------------------------------------------------
-    |
-    | Deliberately exclude private Cloudinary document IDs.
-    |
-    */
 
     sellerProfile: {
       officialName:
@@ -246,12 +151,6 @@ const sanitizeUser = (user) => {
         sellerProfile.rejectionReason || '',
     },
 
-    /*
-    |--------------------------------------------------------------------------
-    | CONSENT
-    |--------------------------------------------------------------------------
-    */
-
     consent: user.consent
       ? {
           privacyPolicy:
@@ -270,11 +169,9 @@ const sanitizeUser = (user) => {
   };
 };
 
-/*
-|--------------------------------------------------------------------------
-| FIND USER
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// FIND USER
+// ============================================================================
 
 const getUserByEmailOrPhone = async (value) => {
   const normalized = (value || '')
@@ -296,11 +193,9 @@ const getUserByEmailOrPhone = async (value) => {
   return User.findOne(query);
 };
 
-/*
-|--------------------------------------------------------------------------
-| SECURE TOKEN HELPERS
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// SECURE TOKEN HELPERS
+// ============================================================================
 
 const hashToken = (token) =>
   crypto
@@ -314,9 +209,6 @@ const createSecureTokenRecord = async ({
   expiresMinutes = 60 * 24,
   method = 'email',
 }) => {
-  /*
-   * Remove old unused tokens for the same purpose.
-   */
   await VerificationToken.deleteMany({
     user: user._id,
     purpose,
@@ -345,11 +237,9 @@ const createSecureTokenRecord = async ({
   return token;
 };
 
-/*
-|--------------------------------------------------------------------------
-| FRONTEND URL
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// FRONTEND URL
+// ============================================================================
 
 const getFrontendUrl = () => {
   return (
@@ -359,11 +249,9 @@ const getFrontendUrl = () => {
   );
 };
 
-/*
-|--------------------------------------------------------------------------
-| SELLER REGISTRATION
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// SELLER REGISTRATION
+// ============================================================================
 
 router.post(
   '/seller/register',
@@ -555,10 +443,6 @@ router.post(
         });
       }
 
-      /*
-       * Upload seller verification documents.
-       */
-
       const idFrontUpload =
         await uploadBufferToCloudinary(
           idFrontFile.buffer
@@ -582,19 +466,14 @@ router.post(
 
       const user = await User.create({
         name: trimmedOfficialName,
-
         email: normalizedEmail,
-
         phone: normalizedSellerPhone,
-
         password,
 
         role: 'seller',
 
         sellerStatus: 'pending',
-
         accountStatus: 'active',
-
         storeStatus: 'inactive',
 
         sellerProfile: {
@@ -632,20 +511,13 @@ router.post(
 
         consent: {
           privacyPolicy: true,
-
           termsAndConditions: true,
-
           acceptedAt: new Date(),
         },
 
         isVerified: false,
-
         verificationMethod: 'email',
       });
-
-      /*
-       * Create email verification token.
-       */
 
       const verificationToken =
         await createSecureTokenRecord({
@@ -656,10 +528,6 @@ router.post(
 
       const verifyLink =
         `${getFrontendUrl()}/verify-email?token=${verificationToken}`;
-
-      /*
-       * Send verification email.
-       */
 
       await sendVerificationLinkEmail({
         to: user.email,
@@ -673,17 +541,13 @@ router.post(
 
       return res.status(201).json({
         success: true,
-
         message:
           'Seller registration submitted successfully. Please verify your email. Your seller account is awaiting admin approval.',
 
         data: {
           user: sanitizeUser(user),
-
           verificationPending: true,
-
           sellerStatus: 'pending',
-
           token,
         },
       });
@@ -692,11 +556,6 @@ router.post(
         'Seller registration error:',
         error
       );
-
-      /*
-       * Clean up uploaded Cloudinary files
-       * when registration fails.
-       */
 
       for (const uploadedFile of uploadedFiles) {
         try {
@@ -726,11 +585,9 @@ router.post(
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| NORMAL CUSTOMER REGISTRATION
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// NORMAL CUSTOMER REGISTRATION
+// ============================================================================
 
 router.post(
   '/register',
@@ -795,19 +652,21 @@ router.post(
         });
       }
 
-    if (!confirmPassword) {
-  return res.status(400).json({
-    success: false,
-    message: 'Please confirm your new password.',
-  });
-}
+      if (!confirmPassword) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Please confirm your new password.',
+        });
+      }
 
-if (password !== confirmPassword) {
-  return res.status(400).json({
-    success: false,
-    message: 'Passwords do not match.',
-  });
-}
+      if (password !== confirmPassword) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Passwords do not match.',
+        });
+      }
 
       if (consentAccepted !== true) {
         return res.status(400).json({
@@ -863,28 +722,21 @@ if (password !== confirmPassword) {
 
       const user = await User.create({
         name: trimmedName,
-
         email: normalizedEmail,
-
         phone: normalizedPhone,
-
         password,
 
         role: 'customer',
 
         sellerStatus: 'none',
-
         accountStatus: 'active',
-
         storeStatus: 'inactive',
 
         verificationMethod,
 
         consent: {
           privacyPolicy: true,
-
           termsAndConditions: true,
-
           acceptedAt: new Date(),
         },
 
@@ -913,15 +765,12 @@ if (password !== confirmPassword) {
 
       return res.status(201).json({
         success: true,
-
         message:
           'Registration successful. Verification email sent.',
 
         data: {
           user: sanitizeUser(user),
-
           verificationPending: true,
-
           token,
         },
       });
@@ -940,11 +789,9 @@ if (password !== confirmPassword) {
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| VERIFY ACCOUNT
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// VERIFY ACCOUNT
+// ============================================================================
 
 router.post(
   '/verify',
@@ -992,11 +839,8 @@ router.post(
         record =
           await VerificationToken.findOne({
             purpose: 'verification',
-
             tokenHash,
-
             usedAt: null,
-
             expiresAt: {
               $gt: new Date(),
             },
@@ -1023,7 +867,6 @@ router.post(
           success: true,
           message:
             'Account already verified.',
-
           data: {
             user: sanitizeUser(user),
           },
@@ -1045,13 +888,9 @@ router.post(
         record =
           await VerificationToken.findOne({
             user: user._id,
-
             purpose: 'verification',
-
             tokenHash,
-
             usedAt: null,
-
             expiresAt: {
               $gt: new Date(),
             },
@@ -1082,9 +921,7 @@ router.post(
 
       await VerificationToken.deleteMany({
         user: user._id,
-
         purpose: 'verification',
-
         usedAt: {
           $ne: null,
         },
@@ -1092,10 +929,8 @@ router.post(
 
       return res.status(200).json({
         success: true,
-
         message:
           'Verification successful. Your account is now verified.',
-
         data: {
           user: sanitizeUser(user),
         },
@@ -1115,15 +950,12 @@ router.post(
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| VERIFY EMAIL
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// VERIFY EMAIL
+// ============================================================================
 
 router.post(
   '/verify-email',
-
   (req, res) => {
     return res.redirect(
       307,
@@ -1132,11 +964,9 @@ router.post(
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| RESEND VERIFICATION
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// RESEND VERIFICATION
+// ============================================================================
 
 router.post(
   '/resend-verification',
@@ -1208,9 +1038,7 @@ router.post(
         await VerificationToken.countDocuments(
           {
             user: user._id,
-
             purpose: 'verification',
-
             createdAt: {
               $gte: new Date(
                 Date.now() -
@@ -1281,20 +1109,9 @@ router.post(
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| LOGIN
-|--------------------------------------------------------------------------
-|
-| IMPORTANT:
-|
-| Suspended and banned sellers CAN still log in.
-|
-| Their operational access is controlled separately
-| by approvedSellerOnly / sellerOrAdmin middleware.
-|
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// LOGIN
+// ============================================================================
 
 router.post(
   '/login',
@@ -1331,10 +1148,6 @@ router.post(
         });
       }
 
-      /*
-       * Check temporary login lock.
-       */
-
       let accountLocked = false;
 
       if (
@@ -1358,10 +1171,6 @@ router.post(
         });
       }
 
-      /*
-       * Verify password.
-       */
-
       const isMatch =
         await bcrypt.compare(
           password,
@@ -1372,10 +1181,6 @@ router.post(
         user.loginAttempts =
           (user.loginAttempts || 0) +
           1;
-
-        /*
-         * Lock after 5 failed attempts.
-         */
 
         if (
           user.loginAttempts >= 5
@@ -1408,23 +1213,13 @@ router.post(
         });
       }
 
-      /*
-       * Successful login.
-       */
-
       user.loginAttempts = 0;
-
       user.lockUntil = null;
 
       await user.save();
 
       const token =
         generateToken(user._id);
-
-      /*
-       * Build response before
-       * verification-email operation.
-       */
 
       const responsePayload = {
         success: true,
@@ -1434,7 +1229,6 @@ router.post(
 
         data: {
           user: sanitizeUser(user),
-
           token,
 
           emailVerified:
@@ -1445,10 +1239,6 @@ router.post(
         },
       };
 
-      /*
-       * Unverified users can still log in.
-       */
-
       if (!user.isVerified) {
         responsePayload.message =
           'Login successful. Email verification is pending.';
@@ -1457,11 +1247,8 @@ router.post(
           const existing =
             await VerificationToken.findOne({
               user: user._id,
-
               purpose: 'verification',
-
               usedAt: null,
-
               expiresAt: {
                 $gt: new Date(),
               },
@@ -1469,19 +1256,11 @@ router.post(
               expiresAt: -1,
             });
 
-          /*
-           * Only create and send a new
-           * token when there is no valid
-           * existing token.
-           */
-
           if (!existing) {
             const verificationToken =
               await createSecureTokenRecord({
                 user,
-
                 purpose: 'verification',
-
                 expiresMinutes:
                   60 * 24,
               });
@@ -1492,11 +1271,8 @@ router.post(
             try {
               await sendVerificationLinkEmail({
                 to: user.email,
-
                 name: user.name,
-
                 verifyLink,
-
                 expiresInMinutes:
                   60 * 24,
               });
@@ -1533,120 +1309,209 @@ router.post(
   }
 );
 
-router.post('/forgot-password', async (req, res) => {
-  try {
-    const { email, phone } = req.body;
-    const identifier = email || phone;
+// ============================================================================
+// FORGOT PASSWORD
+// ============================================================================
 
-    const genericMessage =
-      'If an account exists for this email address, a password reset code and link have been sent.';
+router.post(
+  '/forgot-password',
 
-    if (!identifier) {
-      return res.status(400).json({
-        message: 'Email address is required.',
+  async (req, res) => {
+    try {
+      const {
+        email,
+        phone,
+      } = req.body;
+
+      const identifier =
+        email || phone;
+
+      const genericMessage =
+        'If an account exists for this email address, a password reset code and link have been sent.';
+
+      if (!identifier) {
+        return res.status(400).json({
+          message:
+            'Email address is required.',
+        });
+      }
+
+      const user =
+        await getUserByEmailOrPhone(
+          identifier
+        );
+
+      // Do not reveal whether an account exists.
+      if (!user) {
+        return res.status(200).json({
+          message: genericMessage,
+        });
+      }
+
+      if (!user.email) {
+        return res.status(200).json({
+          message: genericMessage,
+        });
+      }
+
+      // Remove previous active password-reset records.
+      await VerificationToken.deleteMany({
+        user: user._id,
+
+        purpose: {
+          $in: [
+            'password-reset',
+            'password-reset-code',
+            'password-reset-verified',
+          ],
+        },
+
+        usedAt: null,
       });
-    }
 
-    const user = await getUserByEmailOrPhone(identifier);
+      // Secure token used by the reset link.
+      const resetToken =
+        await createSecureTokenRecord({
+          user,
+          purpose: 'password-reset',
+          expiresMinutes: 60,
+          method: 'email',
+        });
 
-    // Do not reveal whether an account exists.
-    if (!user) {
-      return res.status(200).json({
-        message: genericMessage,
-      });
-    }
+      // Generate a cryptographically secure 6-digit code.
+      const resetCode =
+        crypto
+          .randomInt(
+            100000,
+            1000000
+          )
+          .toString();
 
-    if (!user.email) {
-      return res.status(200).json({
-        message: genericMessage,
-      });
-    }
+      // Store only the hash of the code.
+      const resetCodeHash =
+        hashToken(resetCode);
 
-    /*
-     * Remove previous active password-reset records
-     * for this user.
-     */
-    await VerificationToken.deleteMany({
-      user: user._id,
-      purpose: {
-        $in: [
-          'password-reset',
+      await VerificationToken.create({
+        user: user._id,
+
+        purpose:
           'password-reset-code',
-          'password-reset-verified',
-        ],
-      },
-      usedAt: null,
-    });
 
-    /*
-     * Secure token used by the reset link.
-     */
-    const resetToken = await createSecureTokenRecord({
-      user,
-      purpose: 'password-reset',
-      expiresMinutes: 60,
-      method: 'email',
-    });
+        tokenHash:
+          resetCodeHash,
 
-    /*
-     * Generate a cryptographically secure 6-digit code.
-     */
-    const resetCode = crypto
-      .randomInt(100000, 1000000)
-      .toString();
+        expiresAt:
+          new Date(
+            Date.now() +
+              OTP_EXPIRY_MINUTES *
+                60 *
+                1000
+          ),
 
-    /*
-     * Store only the hash of the code.
-     */
-    const resetCodeHash = hashToken(resetCode);
+        usedAt: null,
 
-    await VerificationToken.create({
-      user: user._id,
-      purpose: 'password-reset-code',
-      tokenHash: resetCodeHash,
-      expiresAt: new Date(
-        Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000
-      ),
-      usedAt: null,
-      attempts: 0,
-      maxAttempts: MAX_OTP_ATTEMPTS,
-      method: 'email',
-    });
+        attempts: 0,
 
-    const resetLink =
-      `${getFrontendUrl()}/reset-password` +
-      `?token=${encodeURIComponent(resetToken)}` +
-      `&email=${encodeURIComponent(user.email)}`;
+        maxAttempts:
+          MAX_OTP_ATTEMPTS,
 
-    await sendPasswordResetCodeAndLinkEmail({
-      to: user.email,
-      name: user.name,
-      resetCode,
-      resetLink,
-      expiresInMinutes: OTP_EXPIRY_MINUTES,
-    });
+        method: 'email',
+      });
 
-    return res.status(200).json({
-      message: genericMessage,
-    });
-  } catch (error) {
-    console.error(
-      'Forgot password error:',
-      error
-    );
+      const resetLink =
+        `${getFrontendUrl()}/reset-password` +
+        `?token=${encodeURIComponent(
+          resetToken
+        )}` +
+        `&email=${encodeURIComponent(
+          user.email
+        )}`;
 
-    return res.status(500).json({
-      message:
-        'Unable to process the password reset request right now.',
-    });
+      const emailResult =
+        await sendPasswordResetCodeAndLinkEmail({
+          to: user.email,
+          name: user.name,
+          resetCode,
+          resetLink,
+          expiresInMinutes:
+            OTP_EXPIRY_MINUTES,
+        });
+
+      // Resend returns an object instead of throwing
+      // when the email provider rejects the request.
+      if (
+        emailResult &&
+        emailResult.success === false
+      ) {
+        console.error(
+          'Password reset email was not sent:',
+          emailResult.message
+        );
+
+        return res.status(500).json({
+          message:
+            'Unable to send the password reset email right now. Please try again later.',
+        });
+      }
+
+      return res.status(200).json({
+        message: genericMessage,
+      });
+    } catch (error) {
+      console.error(
+        '========================================'
+      );
+
+      console.error(
+        'FORGOT PASSWORD ERROR'
+      );
+
+      console.error(
+        'Message:',
+        error.message
+      );
+
+      console.error(
+        'Name:',
+        error.name
+      );
+
+      console.error(
+        'Code:',
+        error.code
+      );
+
+      console.error(
+        'Stack:',
+        error.stack
+      );
+
+      console.error(
+        '========================================'
+      );
+
+      return res.status(500).json({
+        message:
+          'Unable to process the password reset request right now.',
+      });
+    }
   }
-});
+);
+
+// ============================================================================
+// VERIFY PASSWORD RESET CODE
+// ============================================================================
 
 router.post(
   '/verify-password-reset-code',
+
   async (req, res) => {
     try {
-      const { email, code, token } = req.body;
+      const {
+        email,
+        code,
+        token,
+      } = req.body;
 
       if (!email || !code) {
         return res.status(400).json({
@@ -1655,47 +1520,61 @@ router.post(
         });
       }
 
-      const normalizedEmail = normalizeEmail(email);
+      const normalizedEmail =
+        normalizeEmail(email);
 
-      if (!/^\d{6}$/.test(String(code))) {
+      if (
+        !/^\d{6}$/.test(
+          String(code)
+        )
+      ) {
         return res.status(400).json({
           message:
             'Please enter the 6-digit reset code.',
         });
       }
 
-      const user = await User.findOne({
-        email: normalizedEmail,
-      });
+      const user =
+        await User.findOne({
+          email: normalizedEmail,
+        });
 
       if (!user) {
         return res.status(400).json({
-          message: 'Invalid or expired reset code.',
+          message:
+            'Invalid or expired reset code.',
         });
       }
 
-      const codeHash = hashToken(String(code));
+      const codeHash =
+        hashToken(String(code));
 
       const codeRecord =
         await VerificationToken.findOne({
           user: user._id,
-          purpose: 'password-reset-code',
+
+          purpose:
+            'password-reset-code',
+
           tokenHash: codeHash,
+
           usedAt: null,
+
           expiresAt: {
             $gt: new Date(),
           },
         });
 
       if (!codeRecord) {
-        /*
-         * Find the active code so we can count failed attempts.
-         */
         const activeCode =
           await VerificationToken.findOne({
             user: user._id,
-            purpose: 'password-reset-code',
+
+            purpose:
+              'password-reset-code',
+
             usedAt: null,
+
             expiresAt: {
               $gt: new Date(),
             },
@@ -1708,7 +1587,8 @@ router.post(
             activeCode.attempts >=
             activeCode.maxAttempts
           ) {
-            activeCode.usedAt = new Date();
+            activeCode.usedAt =
+              new Date();
           }
 
           await activeCode.save();
@@ -1730,18 +1610,23 @@ router.post(
         });
       }
 
-      /*
-       * If a link token was supplied, validate it too.
-       */
+      // If a link token was supplied, validate it too.
       if (token) {
-        const resetTokenHash = hashToken(token);
+        const resetTokenHash =
+          hashToken(token);
 
         const resetTokenRecord =
           await VerificationToken.findOne({
             user: user._id,
-            purpose: 'password-reset',
-            tokenHash: resetTokenHash,
+
+            purpose:
+              'password-reset',
+
+            tokenHash:
+              resetTokenHash,
+
             usedAt: null,
+
             expiresAt: {
               $gt: new Date(),
             },
@@ -1755,28 +1640,32 @@ router.post(
         }
       }
 
-      /*
-       * Code is correct.
-       */
-      codeRecord.usedAt = new Date();
+      // Code is correct.
+      codeRecord.usedAt =
+        new Date();
+
       await codeRecord.save();
 
-      /*
-       * Create a separate short-lived token that can actually
-       * change the password.
-       */
+      // Create a separate short-lived token
+      // that can actually change the password.
       const verifiedResetToken =
         await createSecureTokenRecord({
           user,
-          purpose: 'password-reset-verified',
+
+          purpose:
+            'password-reset-verified',
+
           expiresMinutes: 15,
+
           method: 'email',
         });
 
       return res.status(200).json({
         message:
           'Reset code verified successfully.',
-        resetToken: verifiedResetToken,
+
+        resetToken:
+          verifiedResetToken,
       });
     } catch (error) {
       console.error(
@@ -1791,11 +1680,10 @@ router.post(
     }
   }
 );
-/*
-|--------------------------------------------------------------------------
-| RESET PASSWORD
-|--------------------------------------------------------------------------
-*/
+
+// ============================================================================
+// RESET PASSWORD
+// ============================================================================
 
 router.post(
   '/reset-password',
@@ -1810,17 +1698,15 @@ router.post(
 
       if (!token || !password) {
         return res.status(400).json({
-          success: false,
           message:
-            'Token and new password are required.',
+            'Reset token and new password are required.',
         });
       }
 
       if (password.length < 6) {
         return res.status(400).json({
-          success: false,
           message:
-            'Password must be at least 6 characters.',
+            'Password must be at least 6 characters long.',
         });
       }
 
@@ -1829,7 +1715,6 @@ router.post(
         password !== confirmPassword
       ) {
         return res.status(400).json({
-          success: false,
           message:
             'Passwords do not match.',
         });
@@ -1840,7 +1725,8 @@ router.post(
 
       const record =
         await VerificationToken.findOne({
-          purpose: 'password-reset',
+          purpose:
+            'password-reset-verified',
 
           tokenHash,
 
@@ -1853,9 +1739,8 @@ router.post(
 
       if (!record) {
         return res.status(400).json({
-          success: false,
           message:
-            'Password reset token expired or invalid.',
+            'This password reset session is invalid or expired. Please request a new reset code.',
         });
       }
 
@@ -1866,38 +1751,41 @@ router.post(
 
       if (!user) {
         return res.status(400).json({
-          success: false,
           message:
-            'Invalid password reset request.',
+            'The account associated with this reset request could not be found.',
         });
       }
 
-      user.password = password;
+      user.password =
+        password;
 
       user.loginAttempts = 0;
-
       user.lockUntil = null;
 
       await user.save();
 
-      record.usedAt = new Date();
+      // Consume the verified reset token.
+      record.usedAt =
+        new Date();
 
       await record.save();
 
+      // Clean up all password-reset records.
       await VerificationToken.deleteMany({
         user: user._id,
 
-        purpose: 'password-reset',
-
-        usedAt: {
-          $ne: null,
+        purpose: {
+          $in: [
+            'password-reset',
+            'password-reset-code',
+            'password-reset-verified',
+          ],
         },
       });
 
       return res.status(200).json({
-        success: true,
         message:
-          'Password reset successful.',
+          'Your password has been reset successfully. You can now log in with your new password.',
       });
     } catch (error) {
       console.error(
@@ -1906,19 +1794,16 @@ router.post(
       );
 
       return res.status(500).json({
-        success: false,
         message:
-          'Unable to reset password right now.',
+          'Unable to reset your password right now.',
       });
     }
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| LOGOUT
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// LOGOUT
+// ============================================================================
 
 router.post(
   '/logout',
@@ -1932,18 +1817,9 @@ router.post(
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| CURRENT USER
-|--------------------------------------------------------------------------
-|
-| IMPORTANT:
-| /auth/me now returns accountStatus,
-| sellerStatus, storeStatus and all
-| warning/suspension/ban information.
-|
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// CURRENT USER
+// ============================================================================
 
 router.get(
   '/me',
@@ -1955,9 +1831,10 @@ router.get(
       return res.json({
         success: true,
 
-        data: sanitizeUser(
-          req.user
-        ),
+        data:
+          sanitizeUser(
+            req.user
+          ),
       });
     } catch (error) {
       console.error(
@@ -1973,5 +1850,9 @@ router.get(
     }
   }
 );
+
+// ============================================================================
+// EXPORT ROUTER
+// ============================================================================
 
 module.exports = router;
