@@ -281,7 +281,6 @@ router.post(
       next();
     });
   },
-
   async (req, res) => {
     const uploadedFiles = [];
 
@@ -1220,7 +1219,6 @@ router.post(
           token,
           emailVerified:
             !!user.isVerified,
-
           verificationPending:
             !user.isVerified,
         },
@@ -1327,7 +1325,6 @@ router.post(
           identifier
         );
 
-      // Do not reveal whether an account exists.
       if (!user) {
         return res.status(200).json({
           message: genericMessage,
@@ -1340,10 +1337,11 @@ router.post(
         });
       }
 
-      // Clean up existing password-reset records.
-      // These are intentionally separate queries because
-      // the current project/Mongoose setup was casting $in
-      // incorrectly for the purpose field.
+      // ----------------------------------------------------------------------
+      // CLEAN OLD PASSWORD RESET RECORDS
+      // Keep these as separate queries.
+      // ----------------------------------------------------------------------
+
       await VerificationToken.deleteMany({
         user: user._id,
         purpose: 'password-reset',
@@ -1358,11 +1356,15 @@ router.post(
 
       await VerificationToken.deleteMany({
         user: user._id,
-        purpose: 'password-reset-verified',
+        purpose:
+          'password-reset-verified',
         usedAt: null,
       });
 
-      // Secure token used by the reset link.
+      // ----------------------------------------------------------------------
+      // CREATE PASSWORD RESET LINK TOKEN
+      // ----------------------------------------------------------------------
+
       const resetToken =
         await createSecureTokenRecord({
           user,
@@ -1371,7 +1373,10 @@ router.post(
           method: 'email',
         });
 
-      // Generate a cryptographically secure 6-digit code.
+      // ----------------------------------------------------------------------
+      // CREATE 6-DIGIT PASSWORD RESET CODE
+      // ----------------------------------------------------------------------
+
       const resetCode =
         crypto
           .randomInt(
@@ -1380,12 +1385,12 @@ router.post(
           )
           .toString();
 
-      // Store only the hash of the code.
       const resetCodeHash =
         hashToken(resetCode);
 
       await VerificationToken.create({
         user: user._id,
+
         purpose:
           'password-reset-code',
 
@@ -1410,6 +1415,10 @@ router.post(
         method: 'email',
       });
 
+      // ----------------------------------------------------------------------
+      // RESET LINK
+      // ----------------------------------------------------------------------
+
       const resetLink =
         `${getFrontendUrl()}/reset-password` +
         `?token=${encodeURIComponent(
@@ -1418,6 +1427,10 @@ router.post(
         `&email=${encodeURIComponent(
           user.email
         )}`;
+
+      // ----------------------------------------------------------------------
+      // SEND EMAIL
+      // ----------------------------------------------------------------------
 
       const emailResult =
         await sendPasswordResetCodeAndLinkEmail({
@@ -1535,28 +1548,44 @@ router.post(
         });
       }
 
+      // ----------------------------------------------------------------------
+      // FIND VALID RESET CODE
+      // ----------------------------------------------------------------------
+
       const codeHash =
         hashToken(String(code));
 
       const codeRecord =
         await VerificationToken.findOne({
           user: user._id,
+
           purpose:
             'password-reset-code',
-          tokenHash: codeHash,
+
+          tokenHash:
+            codeHash,
+
           usedAt: null,
+
           expiresAt: {
             $gt: new Date(),
           },
         });
 
+      // ----------------------------------------------------------------------
+      // INVALID CODE
+      // ----------------------------------------------------------------------
+
       if (!codeRecord) {
         const activeCode =
           await VerificationToken.findOne({
             user: user._id,
+
             purpose:
               'password-reset-code',
+
             usedAt: null,
+
             expiresAt: {
               $gt: new Date(),
             },
@@ -1592,7 +1621,10 @@ router.post(
         });
       }
 
-      // If a link token was supplied, validate it too.
+      // ----------------------------------------------------------------------
+      // IF RESET LINK TOKEN WAS PROVIDED, VALIDATE IT
+      // ----------------------------------------------------------------------
+
       if (token) {
         const resetTokenHash =
           hashToken(token);
@@ -1600,11 +1632,15 @@ router.post(
         const resetTokenRecord =
           await VerificationToken.findOne({
             user: user._id,
+
             purpose:
               'password-reset',
+
             tokenHash:
               resetTokenHash,
+
             usedAt: null,
+
             expiresAt: {
               $gt: new Date(),
             },
@@ -1618,20 +1654,29 @@ router.post(
         }
       }
 
-      // Code is correct.
+      // ----------------------------------------------------------------------
+      // CODE IS CORRECT
+      // ----------------------------------------------------------------------
+
       codeRecord.usedAt =
         new Date();
 
       await codeRecord.save();
 
-      // Create a separate short-lived token
-      // that can actually change the password.
+      // ----------------------------------------------------------------------
+      // CREATE VERIFIED RESET TOKEN
+      // This is the token the frontend must send to /reset-password.
+      // ----------------------------------------------------------------------
+
       const verifiedResetToken =
         await createSecureTokenRecord({
           user,
+
           purpose:
             'password-reset-verified',
+
           expiresMinutes: 15,
+
           method: 'email',
         });
 
@@ -1670,12 +1715,20 @@ router.post(
         confirmPassword,
       } = req.body;
 
+      // ----------------------------------------------------------------------
+      // REQUIRED FIELDS
+      // ----------------------------------------------------------------------
+
       if (!token || !password) {
         return res.status(400).json({
           message:
             'Reset token and new password are required.',
         });
       }
+
+      // ----------------------------------------------------------------------
+      // PASSWORD VALIDATION
+      // ----------------------------------------------------------------------
 
       if (password.length < 6) {
         return res.status(400).json({
@@ -1693,6 +1746,10 @@ router.post(
             'Passwords do not match.',
         });
       }
+
+      // ----------------------------------------------------------------------
+      // FIND VERIFIED RESET TOKEN
+      // ----------------------------------------------------------------------
 
       const tokenHash =
         hashToken(token);
@@ -1718,6 +1775,10 @@ router.post(
         });
       }
 
+      // ----------------------------------------------------------------------
+      // FIND USER
+      // ----------------------------------------------------------------------
+
       const user =
         await User.findById(
           record.user
@@ -1730,24 +1791,34 @@ router.post(
         });
       }
 
-      // Update password.
+      // ----------------------------------------------------------------------
+      // UPDATE PASSWORD
+      // The User model's password middleware should hash it.
+      // ----------------------------------------------------------------------
+
       user.password =
         password;
 
-      // Clear login lock information.
       user.loginAttempts = 0;
+
       user.lockUntil = null;
 
       await user.save();
 
-      // Consume the verified reset token.
+      // ----------------------------------------------------------------------
+      // CONSUME VERIFIED TOKEN
+      // ----------------------------------------------------------------------
+
       record.usedAt =
         new Date();
 
       await record.save();
 
-      // Clean up password-reset records.
-      // IMPORTANT: Keep these as separate queries.
+      // ----------------------------------------------------------------------
+      // CLEAN UP ALL RESET RECORDS
+      // Keep these as separate queries.
+      // ----------------------------------------------------------------------
+
       await VerificationToken.deleteMany({
         user: user._id,
         purpose: 'password-reset',
@@ -1755,13 +1826,19 @@ router.post(
 
       await VerificationToken.deleteMany({
         user: user._id,
-        purpose: 'password-reset-code',
+        purpose:
+          'password-reset-code',
       });
 
       await VerificationToken.deleteMany({
         user: user._id,
-        purpose: 'password-reset-verified',
+        purpose:
+          'password-reset-verified',
       });
+
+      // ----------------------------------------------------------------------
+      // SUCCESS
+      // ----------------------------------------------------------------------
 
       return res.status(200).json({
         message:
