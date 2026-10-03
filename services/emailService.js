@@ -20,10 +20,17 @@ const {
   orderStatusUpdateTemplate,
 } = require('../templates/orderStatusUpdate');
 
-// Initialize Resend
+// ============================================================
+// INITIALIZE RESEND
+// ============================================================
+
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
+
+// ============================================================
+// GET SENDER EMAIL
+// ============================================================
 
 /**
  * Get the correct sender email based on the purpose of the email.
@@ -57,6 +64,10 @@ const getFromEmail = (type = 'verification') => {
 
   return senders[type] || senders.verification;
 };
+
+// ============================================================
+// GENERIC SEND MAIL FUNCTION
+// ============================================================
 
 /**
  * Send an email using Resend.
@@ -133,6 +144,10 @@ const sendMail = async ({
   }
 };
 
+// ============================================================
+// VERIFICATION EMAIL - OTP
+// ============================================================
+
 /**
  * Verification email using OTP.
  */
@@ -158,6 +173,10 @@ const sendVerificationEmail = async ({
     sender: 'verification',
   });
 };
+
+// ============================================================
+// PASSWORD RESET EMAIL - OTP ONLY
+// ============================================================
 
 /**
  * Password reset email using OTP.
@@ -185,8 +204,12 @@ const sendPasswordResetEmail = async ({
   });
 };
 
+// ============================================================
+// VERIFICATION EMAIL - LINK
+// ============================================================
+
 /**
- * Verification email using a link.
+ * Verification email using a secure link.
  */
 const sendVerificationLinkEmail = async ({
   to,
@@ -194,23 +217,53 @@ const sendVerificationLinkEmail = async ({
   verifyLink,
   expiresInMinutes,
 }) => {
-  const html = `
-    <div style="font-family: Arial, sans-serif; background:#f4f7fb; padding:24px; color:#1a1a1a;">
-      <div style="max-width:620px; margin:0 auto; background:#ffffff; border-radius:12px; overflow:hidden; border:1px solid #e5e7eb;">
+  const safeName = name || 'Customer';
 
-        <div style="background:linear-gradient(135deg,#0f172a,#1d4ed8); padding:24px 32px; color:#fff;">
-          <h2 style="margin:0; font-size:26px;">
+  const html = `
+    <div
+      style="
+        font-family:Arial,sans-serif;
+        background:#f4f7fb;
+        padding:24px;
+        color:#1a1a1a;
+      "
+    >
+      <div
+        style="
+          max-width:620px;
+          margin:0 auto;
+          background:#ffffff;
+          border-radius:12px;
+          overflow:hidden;
+          border:1px solid #e5e7eb;
+        "
+      >
+
+        <div
+          style="
+            background:linear-gradient(135deg,#0f172a,#1d4ed8);
+            padding:24px 32px;
+            color:#fff;
+          "
+        >
+          <h2 style="margin:0;font-size:26px;">
             Sylva Technologies
           </h2>
         </div>
 
         <div style="padding:32px;">
-          <h3 style="margin-top:0; font-size:22px;">
+
+          <h3
+            style="
+              margin-top:0;
+              font-size:22px;
+            "
+          >
             Verify your email address
           </h3>
 
           <p>
-            Hello <strong>${name}</strong>,
+            Hello <strong>${safeName}</strong>,
           </p>
 
           <p>
@@ -223,7 +276,14 @@ const sendVerificationLinkEmail = async ({
           <p style="text-align:center;">
             <a
               href="${verifyLink}"
-              style="display:inline-block; background:#1d4ed8; color:#fff; padding:12px 20px; border-radius:8px; text-decoration:none;"
+              style="
+                display:inline-block;
+                background:#1d4ed8;
+                color:#fff;
+                padding:12px 20px;
+                border-radius:8px;
+                text-decoration:none;
+              "
             >
               Verify My Email
             </a>
@@ -237,10 +297,20 @@ const sendVerificationLinkEmail = async ({
           <p style="word-break:break-all;">
             ${verifyLink}
           </p>
+
         </div>
 
-        <div style="background:#f8fafc; color:#475569; padding:18px 32px; font-size:12px; border-top:1px solid #e5e7eb;">
-          © 2026 Sylva Technologies. All rights reserved.
+        <div
+          style="
+            background:#f8fafc;
+            color:#475569;
+            padding:18px 32px;
+            font-size:12px;
+            border-top:1px solid #e5e7eb;
+          "
+        >
+          © 2026 Sylva Technologies.
+          All rights reserved.
         </div>
 
       </div>
@@ -252,71 +322,200 @@ const sendVerificationLinkEmail = async ({
     subject:
       'Verify your Sylva Technologies email',
     html,
-    text: `Hello ${name}, verify your email by visiting: ${verifyLink}`,
+    text:
+      `Hello ${safeName}, verify your email by visiting: ${verifyLink}`,
     sender: 'verification',
   });
 };
 
+// ============================================================
+// PASSWORD RESET EMAIL - LINK ONLY
+// ============================================================
+
 /**
  * Password reset email using a secure reset link.
+ *
+ * This function is kept separately because authRoutes.js
+ * may use sendPasswordResetLinkEmail for link-based resets.
  */
 const sendPasswordResetLinkEmail = async ({
   to,
   name,
   resetLink,
-  expiresInMinutes,
+  expiresInMinutes = 10,
 }) => {
+  const safeName = name || 'Customer';
+
   const html = `
-    <div style="font-family: Arial, sans-serif; background:#f4f7fb; padding:24px; color:#1a1a1a;">
-      <div style="max-width:620px; margin:0 auto; background:#ffffff; border-radius:12px; overflow:hidden; border:1px solid #e5e7eb;">
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1.0"
+        />
+        <title>Password Reset</title>
+      </head>
 
-        <div style="background:linear-gradient(135deg,#111827,#4338ca); padding:24px 32px; color:#fff;">
-          <h2 style="margin:0; font-size:26px;">
-            Sylva Technologies
-          </h2>
-        </div>
+      <body
+        style="
+          margin:0;
+          padding:0;
+          background:#f5f7f6;
+          font-family:Arial,Helvetica,sans-serif;
+          color:#222;
+        "
+      >
 
-        <div style="padding:32px;">
-          <h3 style="margin-top:0; font-size:22px;">
-            Reset your password
-          </h3>
+        <div
+          style="
+            max-width:600px;
+            margin:0 auto;
+            padding:30px 15px;
+          "
+        >
 
-          <p>
-            Hello <strong>${name}</strong>,
-          </p>
+          <div
+            style="
+              background:#ffffff;
+              border-radius:12px;
+              padding:30px;
+              border:1px solid #e5e7eb;
+            "
+          >
 
-          <p>
-            Click the button below to reset your
-            password.
-            This link expires in
-            ${expiresInMinutes} minutes.
-          </p>
-
-          <p style="text-align:center;">
-            <a
-              href="${resetLink}"
-              style="display:inline-block; background:#4338ca; color:#fff; padding:12px 20px; border-radius:8px; text-decoration:none;"
+            <h2
+              style="
+                margin-top:0;
+                color:#166534;
+              "
             >
-              Reset My Password
-            </a>
-          </p>
+              Sylva Technologies
+            </h2>
 
-          <p>
-            If the button doesn't work, copy and
-            paste this link into your browser:
-          </p>
+            <h3>Password Reset Request</h3>
 
-          <p style="word-break:break-all;">
-            ${resetLink}
-          </p>
+            <p>
+              Hello ${safeName},
+            </p>
+
+            <p>
+              We received a request to reset the password
+              for your Sylva Technologies account.
+            </p>
+
+            <p>
+              Click the button below to continue.
+            </p>
+
+            <div
+              style="
+                text-align:center;
+                margin:30px 0;
+              "
+            >
+              <a
+                href="${resetLink}"
+                style="
+                  display:inline-block;
+                  background:#166534;
+                  color:#ffffff;
+                  text-decoration:none;
+                  padding:14px 24px;
+                  border-radius:8px;
+                  font-weight:bold;
+                "
+              >
+                Reset My Password
+              </a>
+            </div>
+
+            <p
+              style="
+                font-size:14px;
+                color:#666;
+              "
+            >
+              This password reset link expires in
+              <strong>
+                ${expiresInMinutes} minutes
+              </strong>.
+            </p>
+
+            <p
+              style="
+                font-size:14px;
+                color:#666;
+              "
+            >
+              If the button doesn't work, copy and paste
+              this link into your browser:
+            </p>
+
+            <p
+              style="
+                font-size:13px;
+                color:#555;
+                word-break:break-all;
+              "
+            >
+              ${resetLink}
+            </p>
+
+            <p
+              style="
+                font-size:14px;
+                color:#666;
+              "
+            >
+              If you did not request a password reset,
+              you can safely ignore this email.
+            </p>
+
+            <hr
+              style="
+                border:none;
+                border-top:1px solid #e5e7eb;
+                margin:30px 0;
+              "
+            />
+
+            <p
+              style="
+                font-size:13px;
+                color:#777;
+                margin-bottom:0;
+              "
+            >
+              Sylva Technologies<br />
+              Empowering Your Digital Life
+            </p>
+
+          </div>
         </div>
 
-        <div style="background:#f8fafc; color:#475569; padding:18px 32px; font-size:12px; border-top:1px solid #e5e7eb;">
-          © 2026 Sylva Technologies. All rights reserved.
-        </div>
+      </body>
+    </html>
+  `;
 
-      </div>
-    </div>
+  const text = `
+Sylva Technologies - Password Reset
+
+Hello ${safeName},
+
+We received a request to reset your Sylva Technologies account password.
+
+Open the password recovery page using this link:
+
+${resetLink}
+
+This link expires in ${expiresInMinutes} minutes.
+
+If you did not request this password reset, you can safely ignore this email.
+
+Sylva Technologies
+Empowering Your Digital Life
   `;
 
   return sendMail({
@@ -324,10 +523,234 @@ const sendPasswordResetLinkEmail = async ({
     subject:
       'Reset your Sylva Technologies password',
     html,
-    text: `Hello ${name}, reset your password by visiting: ${resetLink}`,
+    text,
     sender: 'passwordReset',
   });
 };
+
+// ============================================================
+// PASSWORD RESET EMAIL - CODE + LINK
+// ============================================================
+
+/**
+ * Password reset email containing both:
+ *
+ * 1. Six-digit reset code
+ * 2. Secure password reset link
+ */
+const sendPasswordResetCodeAndLinkEmail = async ({
+  to,
+  name,
+  resetCode,
+  resetLink,
+  expiresInMinutes = 10,
+}) => {
+  const safeName = name || 'Customer';
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1.0"
+        />
+        <title>Password Reset</title>
+      </head>
+
+      <body
+        style="
+          margin:0;
+          padding:0;
+          background:#f5f7f6;
+          font-family:Arial,Helvetica,sans-serif;
+          color:#222;
+        "
+      >
+
+        <div
+          style="
+            max-width:600px;
+            margin:0 auto;
+            padding:30px 15px;
+          "
+        >
+
+          <div
+            style="
+              background:#ffffff;
+              border-radius:12px;
+              padding:30px;
+              border:1px solid #e5e7eb;
+            "
+          >
+
+            <h2
+              style="
+                margin-top:0;
+                color:#166534;
+              "
+            >
+              Sylva Technologies
+            </h2>
+
+            <h3>Password Reset Request</h3>
+
+            <p>
+              Hello ${safeName},
+            </p>
+
+            <p>
+              We received a request to reset the password
+              for your Sylva Technologies account.
+            </p>
+
+            <p>
+              Your password reset code is:
+            </p>
+
+            <div
+              style="
+                background:#f0fdf4;
+                border:2px dashed #16a34a;
+                border-radius:10px;
+                padding:18px;
+                text-align:center;
+                margin:20px 0;
+              "
+            >
+              <span
+                style="
+                  font-size:32px;
+                  font-weight:bold;
+                  letter-spacing:8px;
+                  color:#166534;
+                "
+              >
+                ${resetCode}
+              </span>
+            </div>
+
+            <p>
+              This code expires in
+              <strong>
+                ${expiresInMinutes} minutes
+              </strong>.
+            </p>
+
+            <p>
+              You can also open the password recovery page
+              using the button below:
+            </p>
+
+            <div
+              style="
+                text-align:center;
+                margin:30px 0;
+              "
+            >
+              <a
+                href="${resetLink}"
+                style="
+                  display:inline-block;
+                  background:#166534;
+                  color:#ffffff;
+                  text-decoration:none;
+                  padding:14px 24px;
+                  border-radius:8px;
+                  font-weight:bold;
+                "
+              >
+                Reset My Password
+              </a>
+            </div>
+
+            <p
+              style="
+                font-size:14px;
+                color:#666;
+              "
+            >
+              After opening the page, enter the
+              6-digit code above before choosing
+              your new password.
+            </p>
+
+            <p
+              style="
+                font-size:14px;
+                color:#666;
+              "
+            >
+              If you did not request a password reset,
+              you can safely ignore this email.
+            </p>
+
+            <hr
+              style="
+                border:none;
+                border-top:1px solid #e5e7eb;
+                margin:30px 0;
+              "
+            />
+
+            <p
+              style="
+                font-size:13px;
+                color:#777;
+                margin-bottom:0;
+              "
+            >
+              Sylva Technologies<br />
+              Empowering Your Digital Life
+            </p>
+
+          </div>
+        </div>
+
+      </body>
+    </html>
+  `;
+
+  const text = `
+Sylva Technologies - Password Reset
+
+Hello ${safeName},
+
+We received a request to reset your Sylva Technologies account password.
+
+Your password reset code is:
+
+${resetCode}
+
+The code expires in ${expiresInMinutes} minutes.
+
+Open the password recovery page:
+
+${resetLink}
+
+Enter the 6-digit code before choosing your new password.
+
+If you did not request this password reset, you can safely ignore this email.
+
+Sylva Technologies
+Empowering Your Digital Life
+  `;
+
+  return sendMail({
+    to,
+    subject:
+      'Your Sylva Technologies Password Reset Code',
+    html,
+    text,
+    sender: 'passwordReset',
+  });
+};
+
+// ============================================================
+// CUSTOMER ORDER CONFIRMATION
+// ============================================================
 
 /**
  * Customer order confirmation.
@@ -350,10 +773,15 @@ const sendOrderConfirmationEmail = async ({
     subject:
       `Order Confirmation - ${order.orderNumber}`,
     html,
-    text: `Thank you ${customerName} for shopping with Sylva Technologies. Your order ${order.orderNumber} has been placed successfully.`,
+    text:
+      `Thank you ${customerName} for shopping with Sylva Technologies. Your order ${order.orderNumber} has been placed successfully.`,
     sender: 'orders',
   });
 };
+
+// ============================================================
+// ADMIN ORDER NOTIFICATION
+// ============================================================
 
 /**
  * Admin notification when a new order is received.
@@ -375,10 +803,15 @@ const sendAdminOrderNotificationEmail =
       subject:
         `New order received - ${order.orderNumber}`,
       html,
-      text: `A new order ${order.orderNumber} has been placed by ${customer.name}.`,
+      text:
+        `A new order ${order.orderNumber} has been placed by ${customer.name}.`,
       sender: 'admin',
     });
   };
+
+// ============================================================
+// CUSTOMER ORDER STATUS UPDATE
+// ============================================================
 
 /**
  * Customer order status update.
@@ -401,17 +834,29 @@ const sendOrderStatusUpdateEmail = async ({
     subject:
       `Order status update - ${orderNumber}`,
     html,
-    text: `Hello ${customerName}, your Sylva Technologies order ${orderNumber} status is now ${status}.`,
+    text:
+      `Hello ${customerName}, your Sylva Technologies order ${orderNumber} status is now ${status}.`,
     sender: 'orders',
   });
 };
 
+// ============================================================
+// EXPORTS
+// ============================================================
+
 module.exports = {
   sendMail,
+
+  // Account verification
   sendVerificationEmail,
-  sendPasswordResetEmail,
   sendVerificationLinkEmail,
+
+  // Password reset
+  sendPasswordResetEmail,
   sendPasswordResetLinkEmail,
+  sendPasswordResetCodeAndLinkEmail,
+
+  // Orders
   sendOrderConfirmationEmail,
   sendAdminOrderNotificationEmail,
   sendOrderStatusUpdateEmail,

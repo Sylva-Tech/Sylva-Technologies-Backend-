@@ -1,3 +1,4 @@
+
 const mongoose = require('mongoose');
 
 const verificationTokenSchema = new mongoose.Schema(
@@ -8,32 +9,44 @@ const verificationTokenSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+
     purpose: {
       type: String,
-      enum: ['verification', 'password-reset'],
+      enum: [
+        'verification',
+        'password-reset',
+        'password-reset-code',
+        'password-reset-verified',
+      ],
       required: true,
     },
+
     tokenHash: {
       type: String,
       required: true,
     },
+
     expiresAt: {
       type: Date,
       required: true,
       index: true,
     },
+
     usedAt: {
       type: Date,
       default: null,
     },
+
     attempts: {
       type: Number,
       default: 0,
     },
+
     maxAttempts: {
       type: Number,
       default: 5,
     },
+
     method: {
       type: String,
       enum: ['email', 'sms'],
@@ -45,6 +58,13 @@ const verificationTokenSchema = new mongoose.Schema(
   }
 );
 
-verificationTokenSchema.index({ user: 1, purpose: 1, expiresAt: 1 });
+verificationTokenSchema.index({
+  user: 1,
+  purpose: 1,
+  expiresAt: 1,
+});
 
-module.exports = mongoose.model('VerificationToken', verificationTokenSchema);
+module.exports = mongoose.model(
+  'VerificationToken',
+  verificationTokenSchema
+);

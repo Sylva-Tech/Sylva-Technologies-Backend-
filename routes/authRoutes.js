@@ -15,7 +15,7 @@ const cloudinary = require('../config/cloudinary');
 
 const {
   sendVerificationLinkEmail,
-  sendPasswordResetLinkEmail,
+  sendPasswordResetCodeAndLinkEmail,
 } = require('../services/emailService');
 
 const router = express.Router();
@@ -1533,93 +1533,264 @@ router.post(
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| FORGOT PASSWORD
-|--------------------------------------------------------------------------
-*/
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email, phone } = req.body;
+    const identifier = email || phone;
+
+    const genericMessage =
+      'If an account exists for this email address, a password reset code and link have been sent.';
+
+    if (!identifier) {
+      return res.status(400).json({
+        message: 'Email address is required.',
+      });
+    }
+
+    const user = await getUserByEmailOrPhone(identifier);
+
+    // Do not reveal whether an account exists.
+    if (!user) {
+      return res.status(200).json({
+        message: genericMessage,
+      });
+    }
+
+    if (!user.email) {
+      return res.status(200).json({
+        message: genericMessage,
+      });
+    }
+
+    /*
+     * Remove previous active password-reset records
+     * for this user.
+     */
+    await VerificationToken.deleteMany({
+      user: user._id,
+      purpose: {
+        $in: [
+          'password-reset',
+          'password-reset-code',
+          'password-reset-verified',
+        ],
+      },
+      usedAt: null,
+    });
+
+    /*
+     * Secure token used by the reset link.
+     */
+    const resetToken = await createSecureTokenRecord({
+      user,
+      purpose: 'password-reset',
+      expiresMinutes: 60,
+      method: 'email',
+    });
+
+    /*
+     * Generate a cryptographically secure 6-digit code.
+     */
+    const resetCode = crypto
+      .randomInt(100000, 1000000)
+      .toString();
+
+    /*
+     * Store only the hash of the code.
+     */
+    const resetCodeHash = hashToken(resetCode);
+
+    await VerificationToken.create({
+      user: user._id,
+      purpose: 'password-reset-code',
+      tokenHash: resetCodeHash,
+      expiresAt: new Date(
+        Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000
+      ),
+      usedAt: null,
+      attempts: 0,
+      maxAttempts: MAX_OTP_ATTEMPTS,
+      method: 'email',
+    });
+
+    const resetLink =
+      `${getFrontendUrl()}/reset-password` +
+      `?token=${encodeURIComponent(resetToken)}` +
+      `&email=${encodeURIComponent(user.email)}`;
+
+    await sendPasswordResetCodeAndLinkEmail({
+      to: user.email,
+      name: user.name,
+      resetCode,
+      resetLink,
+      expiresInMinutes: OTP_EXPIRY_MINUTES,
+    });
+
+    return res.status(200).json({
+      message: genericMessage,
+    });
+  } catch (error) {
+    console.error(
+      'Forgot password error:',
+      error
+    );
+
+    return res.status(500).json({
+      message:
+        'Unable to process the password reset request right now.',
+    });
+  }
+});
 
 router.post(
-  '/forgot-password',
-
+  '/verify-password-reset-code',
   async (req, res) => {
     try {
-      const {
-        email,
-        phone,
-      } = req.body;
+      const { email, code, token } = req.body;
 
-      const identifier =
-        email || phone;
-
-      const genericMessage =
-        'If an account exists for this email address, a password reset link has been sent.';
-
-      if (!identifier) {
+      if (!email || !code) {
         return res.status(400).json({
-          success: false,
           message:
-            'Email or phone is required.',
+            'Email address and reset code are required.',
         });
       }
 
-      const user =
-        await getUserByEmailOrPhone(
-          identifier
-        );
+      const normalizedEmail = normalizeEmail(email);
 
-      /*
-       * Prevent account enumeration.
-       */
-
-      if (!user) {
-        return res.status(200).json({
-          success: true,
-          message: genericMessage,
+      if (!/^\d{6}$/.test(String(code))) {
+        return res.status(400).json({
+          message:
+            'Please enter the 6-digit reset code.',
         });
       }
 
-      const resetToken =
-        await createSecureTokenRecord({
-          user,
-
-          purpose: 'password-reset',
-
-          expiresMinutes: 60,
-        });
-
-      const resetLink =
-        `${getFrontendUrl()}/reset-password?token=${resetToken}`;
-
-      await sendPasswordResetLinkEmail({
-        to: user.email,
-
-        name: user.name,
-
-        resetLink,
-
-        expiresInMinutes: 60,
+      const user = await User.findOne({
+        email: normalizedEmail,
       });
 
+      if (!user) {
+        return res.status(400).json({
+          message: 'Invalid or expired reset code.',
+        });
+      }
+
+      const codeHash = hashToken(String(code));
+
+      const codeRecord =
+        await VerificationToken.findOne({
+          user: user._id,
+          purpose: 'password-reset-code',
+          tokenHash: codeHash,
+          usedAt: null,
+          expiresAt: {
+            $gt: new Date(),
+          },
+        });
+
+      if (!codeRecord) {
+        /*
+         * Find the active code so we can count failed attempts.
+         */
+        const activeCode =
+          await VerificationToken.findOne({
+            user: user._id,
+            purpose: 'password-reset-code',
+            usedAt: null,
+            expiresAt: {
+              $gt: new Date(),
+            },
+          });
+
+        if (activeCode) {
+          activeCode.attempts += 1;
+
+          if (
+            activeCode.attempts >=
+            activeCode.maxAttempts
+          ) {
+            activeCode.usedAt = new Date();
+          }
+
+          await activeCode.save();
+
+          if (
+            activeCode.attempts >=
+            activeCode.maxAttempts
+          ) {
+            return res.status(400).json({
+              message:
+                'Too many incorrect attempts. Please request a new reset code.',
+            });
+          }
+        }
+
+        return res.status(400).json({
+          message:
+            'Invalid or expired reset code.',
+        });
+      }
+
+      /*
+       * If a link token was supplied, validate it too.
+       */
+      if (token) {
+        const resetTokenHash = hashToken(token);
+
+        const resetTokenRecord =
+          await VerificationToken.findOne({
+            user: user._id,
+            purpose: 'password-reset',
+            tokenHash: resetTokenHash,
+            usedAt: null,
+            expiresAt: {
+              $gt: new Date(),
+            },
+          });
+
+        if (!resetTokenRecord) {
+          return res.status(400).json({
+            message:
+              'This password reset link is invalid or expired. Please request a new one.',
+          });
+        }
+      }
+
+      /*
+       * Code is correct.
+       */
+      codeRecord.usedAt = new Date();
+      await codeRecord.save();
+
+      /*
+       * Create a separate short-lived token that can actually
+       * change the password.
+       */
+      const verifiedResetToken =
+        await createSecureTokenRecord({
+          user,
+          purpose: 'password-reset-verified',
+          expiresMinutes: 15,
+          method: 'email',
+        });
+
       return res.status(200).json({
-        success: true,
-        message: genericMessage,
+        message:
+          'Reset code verified successfully.',
+        resetToken: verifiedResetToken,
       });
     } catch (error) {
       console.error(
-        'Forgot password error:',
+        'Verify password reset code error:',
         error
       );
 
       return res.status(500).json({
-        success: false,
         message:
-          'Unable to process reset request right now.',
+          'Unable to verify the reset code right now.',
       });
     }
   }
 );
-
 /*
 |--------------------------------------------------------------------------
 | RESET PASSWORD
