@@ -1354,20 +1354,23 @@ router.post(
         });
       }
 
-      // Remove previous active password-reset records.
-      await VerificationToken.deleteMany({
-        user: user._id,
+     await VerificationToken.deleteMany({
+  user: user._id,
+  purpose: 'password-reset',
+  usedAt: null,
+});
 
-        purpose: {
-          $in: [
-            'password-reset',
-            'password-reset-code',
-            'password-reset-verified',
-          ],
-        },
+await VerificationToken.deleteMany({
+  user: user._id,
+  purpose: 'password-reset-code',
+  usedAt: null,
+});
 
-        usedAt: null,
-      });
+await VerificationToken.deleteMany({
+  user: user._id,
+  purpose: 'password-reset-verified',
+  usedAt: null,
+});
 
       // Secure token used by the reset link.
       const resetToken =
