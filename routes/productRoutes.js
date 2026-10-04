@@ -2121,6 +2121,11 @@ router.put(
   adminOnly,
   async (req, res) => {
     try {
+      console.log('ADMIN PRODUCT UPDATE DEBUG');
+console.log('req.params.id:', req.params.id);
+console.log('req.body._id:', req.body?._id);
+console.log('req.body.id:', req.body?.id);
+console.log('req.body:', req.body);
       const product =
         await Product.findById(
           req.params.id
