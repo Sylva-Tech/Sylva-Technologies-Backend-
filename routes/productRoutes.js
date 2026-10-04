@@ -189,6 +189,15 @@ router.get('/', async (req, res) => {
       Math.max(1, Number(limit) || 12)
     );
 
+    /*
+     * Public catalogue only shows:
+     * - active products
+     * - approved products
+     *
+     * This includes:
+     * - Sylva Fulfilled products
+     * - approved seller products
+     */
     const filter = {
       isActive: true,
       approvalStatus: 'approved',
@@ -243,39 +252,6 @@ router.get('/', async (req, res) => {
     }
 
     /*
-     * Check offer dates.
-     */
-    if (
-      flashSale === 'true' ||
-      offer === 'true'
-    ) {
-      const now = new Date();
-
-      filter.$and = [
-        {
-          $or: [
-            { offerStartDate: null },
-            {
-              offerStartDate: {
-                $lte: now,
-              },
-            },
-          ],
-        },
-        {
-          $or: [
-            { offerEndDate: null },
-            {
-              offerEndDate: {
-                $gt: now,
-              },
-            },
-          ],
-        },
-      ];
-    }
-
-    /*
      * In-stock products.
      */
     if (inStock === 'true') {
@@ -285,7 +261,7 @@ router.get('/', async (req, res) => {
     }
 
     /*
-     * Search.
+     * Search by name, brand or SKU.
      */
     if (search) {
       filter.$or = [
@@ -340,50 +316,108 @@ router.get('/', async (req, res) => {
         break;
     }
 
-    const total =
-      await Product.countDocuments(filter);
-
-  const products = await Product.find({
-  approvalStatus: 'pending',
-})
-  .populate('seller', 'name email phone sellerProfile')
-  .populate('category', 'name slug')
-  .sort({ createdAt: -1 });
-
-// Only return products that actually belong to a seller.
-// We deliberately filter in JavaScript instead of using
-// seller: { $ne: null } because the current Mongoose setup
-// is incorrectly casting the $ne operator as an ObjectId.
-const sellerProducts = products.filter(
-  (product) => product.seller
-);
-
-res.json({
-  success: true,
-  products: sellerProducts,
-})
-        .sort(sortOption)
-        .skip(
-          (safePage - 1) * safeLimit
+    /*
+     * Fetch all matching products first.
+     *
+     * We then handle offer dates in JavaScript
+     * to avoid the Mongoose operator-casting
+     * problem already seen elsewhere in this
+     * project.
+     */
+    let products =
+      await Product.find(filter)
+        .populate(
+          'category',
+          'name slug'
         )
-        .limit(safeLimit);
+        .populate(
+          'seller',
+          'name email sellerProfile.storeName'
+        )
+        .sort(sortOption);
 
-    res.json({
-      products,
-      page: safePage,
-      totalPages: Math.ceil(
-        total / safeLimit
-      ),
-      totalProducts: total,
+    /*
+     * For offer/flash-sale requests,
+     * ensure the current date is inside
+     * the optional offer date range.
+     */
+    if (
+      flashSale === 'true' ||
+      offer === 'true'
+    ) {
+      const now = new Date();
+
+      products = products.filter(
+        (product) => {
+          const start =
+            product.offerStartDate
+              ? new Date(
+                  product.offerStartDate
+                )
+              : null;
+
+          const end =
+            product.offerEndDate
+              ? new Date(
+                  product.offerEndDate
+                )
+              : null;
+
+          const hasStarted =
+            !start ||
+            start.getTime() <=
+              now.getTime();
+
+          const hasNotEnded =
+            !end ||
+            end.getTime() >
+              now.getTime();
+
+          return (
+            hasStarted &&
+            hasNotEnded
+          );
+        }
+      );
+    }
+
+    const totalProducts =
+      products.length;
+
+    const totalPages =
+      Math.ceil(
+        totalProducts / safeLimit
+      );
+
+    const startIndex =
+      (safePage - 1) * safeLimit;
+
+    const paginatedProducts =
+      products.slice(
+        startIndex,
+        startIndex + safeLimit
+      );
+
+    return res.json({
+      products:
+        paginatedProducts,
+
+      page:
+        safePage,
+
+      totalPages,
+
+      totalProducts,
     });
   } catch (error) {
     console.error(
       'Load products error:',
-      error.message
+      error
     );
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
+
       message:
         error.message ||
         'Unable to load products.',
