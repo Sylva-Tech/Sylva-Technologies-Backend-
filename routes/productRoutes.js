@@ -193,10 +193,6 @@ router.get('/', async (req, res) => {
      * Public catalogue only shows:
      * - active products
      * - approved products
-     *
-     * This includes:
-     * - Sylva Fulfilled products
-     * - approved seller products
      */
     const filter = {
       isActive: true,
@@ -318,11 +314,6 @@ router.get('/', async (req, res) => {
 
     /*
      * Fetch all matching products first.
-     *
-     * We then handle offer dates in JavaScript
-     * to avoid the Mongoose operator-casting
-     * problem already seen elsewhere in this
-     * project.
      */
     let products =
       await Product.find(filter)
@@ -586,10 +577,6 @@ router.get(
 
 /*
  * POST /api/products/seller
- *
- * Seller creates a product.
- *
- * Maximum 4 images.
  */
 router.post(
   '/seller',
@@ -630,9 +617,6 @@ router.post(
         isNew,
       } = req.body;
 
-      /*
-       * Required fields.
-       */
       if (
         !name ||
         !brand ||
@@ -648,9 +632,6 @@ router.post(
         });
       }
 
-      /*
-       * Maximum image check.
-       */
       if (
         req.files &&
         req.files.length >
@@ -707,17 +688,11 @@ router.post(
         });
       }
 
-      /*
-       * Normalize SKU.
-       */
       const normalizedSku =
         String(sku)
           .trim()
           .toUpperCase();
 
-      /*
-       * Generate slug.
-       */
       const productSlug =
         buildSlug(name);
 
@@ -729,9 +704,6 @@ router.post(
         });
       }
 
-      /*
-       * Check duplicate SKU or slug.
-       */
       const duplicate =
         await Product.findOne({
           $or: [
@@ -752,9 +724,6 @@ router.post(
         });
       }
 
-      /*
-       * Validate category.
-       */
       const categoryRecord =
         await findCategory(category);
 
@@ -766,23 +735,11 @@ router.post(
         });
       }
 
-      /*
-       * Upload product images.
-       */
       const imageUrls =
         await uploadProductImages(
           req.files || []
         );
 
-      /*
-       * Create seller product.
-       *
-       * Seller products:
-       * - belong to the logged-in seller
-       * - are inactive
-       * - are pending admin approval
-       * - cannot control featured/offer fields
-       */
       const product =
         await Product.create({
           name: name.trim(),
@@ -876,10 +833,6 @@ router.post(
           isNew:
             String(isNew) === 'true',
 
-          /*
-           * Seller products must be approved
-           * before appearing publicly.
-           */
           isActive: false,
 
           approvalStatus: 'pending',
@@ -890,9 +843,6 @@ router.post(
 
           approvedBy: null,
 
-          /*
-           * Platform-controlled fields.
-           */
           featured: false,
 
           flashSale: false,
@@ -941,10 +891,6 @@ router.post(
 
 /*
  * PUT /api/products/seller/:id
- *
- * Seller updates own product.
- *
- * Maximum 4 replacement images.
  */
 router.put(
   '/seller/:id',
@@ -982,9 +928,6 @@ router.put(
         });
       }
 
-      /*
-       * Product name and slug.
-       */
       if (req.body.name) {
         const newName =
           req.body.name.trim();
@@ -1017,9 +960,6 @@ router.put(
         }
       }
 
-      /*
-       * Brand.
-       */
       if (
         req.body.brand !==
         undefined
@@ -1030,9 +970,6 @@ router.put(
           ).trim();
       }
 
-      /*
-       * SKU.
-       */
       if (
         req.body.sku !==
         undefined
@@ -1062,9 +999,6 @@ router.put(
           newSku;
       }
 
-      /*
-       * Category.
-       */
       if (req.body.category) {
         const categoryRecord =
           await findCategory(
@@ -1083,9 +1017,6 @@ router.put(
           categoryRecord._id;
       }
 
-      /*
-       * Basic product details.
-       */
       if (
         req.body.subcategory !==
         undefined
@@ -1110,9 +1041,6 @@ router.put(
           req.body.shortDescription;
       }
 
-      /*
-       * Price.
-       */
       if (
         req.body.price !==
         undefined
@@ -1135,9 +1063,6 @@ router.put(
           numericPrice;
       }
 
-      /*
-       * Old price.
-       */
       if (
         req.body.oldPrice !==
         undefined
@@ -1160,18 +1085,12 @@ router.put(
           numericOldPrice;
       }
 
-      /*
-       * Recalculate discount.
-       */
       product.discount =
         calculateDiscount(
           product.oldPrice,
           product.price
         );
 
-      /*
-       * Stock.
-       */
       if (
         req.body.stock !==
         undefined
@@ -1194,17 +1113,11 @@ router.put(
           numericStock;
       }
 
-      /*
-       * Condition.
-       */
       if (req.body.condition) {
         product.condition =
           req.body.condition;
       }
 
-      /*
-       * Warranty.
-       */
       if (
         req.body.warranty !==
         undefined
@@ -1229,9 +1142,6 @@ router.put(
           req.body.warrantyTerms;
       }
 
-      /*
-       * Delivery.
-       */
       if (
         req.body.deliveryDuration !==
         undefined
@@ -1278,9 +1188,6 @@ router.put(
           req.body.deliveryLocations;
       }
 
-      /*
-       * Returns.
-       */
       if (
         req.body.returnPeriod !==
         undefined
@@ -1305,9 +1212,6 @@ router.put(
           req.body.returnConditions;
       }
 
-      /*
-       * Product contents/features.
-       */
       if (
         req.body.whatsIncluded !==
         undefined
@@ -1334,9 +1238,6 @@ router.put(
           req.body.sellerNotes;
       }
 
-      /*
-       * Specifications.
-       */
       if (
         req.body.specifications !==
         undefined
@@ -1347,9 +1248,6 @@ router.put(
           );
       }
 
-      /*
-       * isNew.
-       */
       if (
         req.body.isNew !==
         undefined
@@ -1360,10 +1258,6 @@ router.put(
           ) === 'true';
       }
 
-      /*
-       * Replace images if new images
-       * were supplied.
-       */
       if (
         req.files &&
         req.files.length > 0
@@ -1377,11 +1271,6 @@ router.put(
           imageUrls;
       }
 
-      /*
-       * IMPORTANT:
-       * Any seller edit requires another
-       * admin review.
-       */
       product.approvalStatus =
         'pending';
 
@@ -1397,15 +1286,9 @@ router.put(
       product.approvedBy =
         null;
 
-      /*
-       * Seller ownership cannot be changed.
-       */
       product.seller =
         req.user._id;
 
-      /*
-       * Platform-controlled fields.
-       */
       product.featured =
         false;
 
@@ -1423,14 +1306,6 @@ router.put(
 
       product.offerEndDate =
         null;
-
-      /*
-       * Seller resubmission after rejection.
-       *
-       * The product is already set to pending
-       * above, so no separate rejected-state
-       * branch is required here.
-       */
 
       const updatedProduct =
         await product.save();
@@ -1514,15 +1389,15 @@ router.delete(
   }
 );
 
+/*
+ * GET /api/products/admin/product-approvals
+ */
 router.get(
   '/admin/product-approvals',
   protect,
   adminOnly,
   async (req, res) => {
     try {
-      // Fetch pending products without filtering on seller.
-      // This avoids the Mongoose ObjectId casting issue
-      // with $ne / $exists on the seller field.
       const products = await Product.find({
         approvalStatus: 'pending',
       })
@@ -1538,7 +1413,6 @@ router.get(
           createdAt: -1,
         });
 
-      // Keep only products that actually have a seller.
       const sellerProducts = products.filter(
         (product) => product.seller
       );
@@ -1564,8 +1438,6 @@ router.get(
 
 /*
  * PUT /api/products/admin/product-approvals/:id/approve
- *
- * Approve a seller product.
  */
 router.put(
   '/admin/product-approvals/:id/approve',
@@ -1648,8 +1520,6 @@ router.put(
 
 /*
  * PUT /api/products/admin/product-approvals/:id/reject
- *
- * Reject a seller product.
  */
 router.put(
   '/admin/product-approvals/:id/reject',
@@ -1922,9 +1792,6 @@ router.post(
         });
       }
 
-      /*
-       * Validate seller only when one was supplied.
-       */
       let sellerId = null;
 
       if (seller) {
@@ -2121,11 +1988,21 @@ router.put(
   adminOnly,
   async (req, res) => {
     try {
+      /*
+       * TEMPORARY DEBUGGING
+       *
+       * These logs will help us identify exactly
+       * what ID and body are being received when
+       * the admin updates a product.
+       */
+      console.log('====================================');
       console.log('ADMIN PRODUCT UPDATE DEBUG');
-console.log('req.params.id:', req.params.id);
-console.log('req.body._id:', req.body?._id);
-console.log('req.body.id:', req.body?.id);
-console.log('req.body:', req.body);
+      console.log('req.params.id:', req.params.id);
+      console.log('req.body._id:', req.body?._id);
+      console.log('req.body.id:', req.body?.id);
+      console.log('req.body:', req.body);
+      console.log('====================================');
+
       const product =
         await Product.findById(
           req.params.id
@@ -2396,10 +2273,19 @@ console.log('req.body:', req.body);
           populatedProduct,
       });
     } catch (error) {
-      console.error(
-        'Admin product update error:',
-        error
-      );
+      /*
+       * TEMPORARY DEBUGGING
+       *
+       * We need the full stack trace from Render
+       * to identify the exact line causing the
+       * ObjectId / $ne error.
+       */
+      console.error('====================================');
+      console.error('ADMIN PRODUCT UPDATE ERROR');
+      console.error('Message:', error.message);
+      console.error('Name:', error.name);
+      console.error('Stack:', error.stack);
+      console.error('====================================');
 
       res.status(500).json({
         success: false,
@@ -2459,4 +2345,3 @@ router.delete(
 );
 
 module.exports = router;
-
