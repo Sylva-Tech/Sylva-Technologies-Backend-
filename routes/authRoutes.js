@@ -387,16 +387,20 @@ router.post(
       /*
        * Remove old password-reset tokens.
        */
-      await VerificationToken.deleteMany({
-        user: user._id,
-        purpose: {
-          $in: [
-            'password-reset',
-            'password-reset-code',
-            'password-reset-verified',
-          ],
-        },
-      });
+    await VerificationToken.deleteMany({
+  user: user._id,
+  purpose: 'password-reset',
+});
+
+await VerificationToken.deleteMany({
+  user: user._id,
+  purpose: 'password-reset-code',
+});
+
+await VerificationToken.deleteMany({
+  user: user._id,
+  purpose: 'password-reset-verified',
+});
 
       /*
        * Generate secure link token.
