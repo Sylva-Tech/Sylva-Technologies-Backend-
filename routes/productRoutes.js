@@ -2026,13 +2026,21 @@ router.put(
         const newSlug =
           buildSlug(req.body.name);
 
-        const duplicate =
-          await Product.findOne({
-            slug: newSlug,
-            _id: {
-              $ne: product._id,
-            },
-          });
+       const duplicate =
+  await Product.findOne({
+    slug: newSlug,
+  });
+
+if (
+  duplicate &&
+  duplicate._id.toString() !== product._id.toString()
+) {
+  return res.status(400).json({
+    success: false,
+    message:
+      'Another product already uses this name.',
+  });
+}
 
         if (duplicate) {
           return res.status(400).json({
