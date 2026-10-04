@@ -2028,7 +2028,7 @@ router.put(
 
        const duplicate =
   await Product.findOne({
-    slug: newSlug,
+    slug: newSlug, 
   });
 
 if (
@@ -2230,23 +2230,21 @@ if (
           String(req.body.sku)
             .trim()
             .toUpperCase();
+const duplicateSku =
+  await Product.findOne({
+    sku: normalizedSku,
+  });
 
-        const duplicateSku =
-          await Product.findOne({
-            sku: normalizedSku,
-            _id: {
-              $ne: product._id,
-            },
-          });
-
-        if (duplicateSku) {
-          return res.status(400).json({
-            success: false,
-            message:
-              'Another product already uses this SKU.',
-          });
-        }
-
+if (
+  duplicateSku &&
+  duplicateSku._id.toString() !== product._id.toString()
+) {
+  return res.status(400).json({
+    success: false,
+    message:
+      'Another product already uses this SKU.',
+  });
+}
         product.sku =
           normalizedSku;
       }
