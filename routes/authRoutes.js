@@ -1,16 +1,10 @@
 const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const User = require('../models/User');
 const VerificationToken = require('../models/VerificationToken');
-
-const { protect } = require('../middleware/authMiddleware');
-const generateToken = require('../utils/generateToken');
-
-const sellerUpload = require('../middleware/sellerUpload');
-const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
-const cloudinary = require('../config/cloudinary');
 
 const {
   sendVerificationLinkEmail,
@@ -19,1284 +13,344 @@ const {
 
 const router = express.Router();
 
-const OTP_EXPIRY_MINUTES = Number(
-  process.env.OTP_EXPIRY_MINUTES || 10
-);
+/* ============================================================
+ * CONFIGURATION
+ * ============================================================ */
 
-const RESEND_COOLDOWN_MINUTES = Number(
-  process.env.RESEND_COOLDOWN_MINUTES || 1
-);
-
-const MAX_OTP_ATTEMPTS = Number(
-  process.env.MAX_OTP_ATTEMPTS || 5
-);
-
-const MAX_OTP_REQUESTS = Number(
-  process.env.MAX_OTP_REQUESTS || 3
-);
-
-// ============================================================================
-// NORMALIZATION HELPERS
-// ============================================================================
-
-const normalizeEmail = (value) =>
-  (value || '').toString().trim().toLowerCase();
-
-const normalizePhone = (value) =>
-  (value || '').toString().trim();
-
-// ============================================================================
-// VALIDATION HELPERS
-// ============================================================================
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const KENYAN_PHONE_REGEX = /^\+2547\d{8}$/;
-
-const isValidEmail = (value) =>
-  EMAIL_REGEX.test(normalizeEmail(value));
-
-const isValidKenyanPhone = (value) =>
-  KENYAN_PHONE_REGEX.test(normalizePhone(value));
-
-// ============================================================================
-// USER SANITIZATION
-// ============================================================================
-
-const sanitizeUser = (user) => {
-  const sellerProfile = user.sellerProfile || {};
-
-  return {
-    _id: user._id,
-    name: user.name || '',
-    email: user.email || '',
-    phone: user.phone || '',
-    role: user.role || 'customer',
-    isVerified: !!user.isVerified,
-
-    verificationMethod:
-      user.verificationMethod || 'email',
-
-    address: user.address || '',
-
-    sellerStatus:
-      user.sellerStatus || 'none',
-
-    accountStatus:
-      user.accountStatus || 'active',
-
-    storeStatus:
-      user.storeStatus ||
-      (user.sellerStatus === 'approved'
-        ? 'active'
-        : 'inactive'),
-
-    warningReason:
-      user.warningReason || '',
-
-    warnedAt:
-      user.warnedAt || null,
-
-    warnedBy:
-      user.warnedBy || null,
-
-    suspensionReason:
-      user.suspensionReason || '',
-
-    suspendedAt:
-      user.suspendedAt || null,
-
-    suspendedBy:
-      user.suspendedBy || null,
-
-    banReason:
-      user.banReason || '',
-
-    bannedAt:
-      user.bannedAt || null,
-
-    bannedBy:
-      user.bannedBy || null,
-
-    storeName:
-      sellerProfile.storeName || '',
-
-    sellerProfile: {
-      officialName:
-        sellerProfile.officialName || '',
-
-      storeName:
-        sellerProfile.storeName || '',
-
-      storeEmail:
-        sellerProfile.storeEmail || '',
-
-      storePhone:
-        sellerProfile.storePhone || '',
-
-      mpesaPhone:
-        sellerProfile.mpesaPhone || '',
-
-      storeLocation:
-        sellerProfile.storeLocation || '',
-
-      applicationDate:
-        sellerProfile.applicationDate || null,
-
-      reviewedAt:
-        sellerProfile.reviewedAt || null,
-
-      rejectionReason:
-        sellerProfile.rejectionReason || '',
-    },
-
-    consent: user.consent
-      ? {
-          privacyPolicy:
-            !!user.consent.privacyPolicy,
-
-          termsAndConditions:
-            !!user.consent.termsAndConditions,
-
-          acceptedAt:
-            user.consent.acceptedAt || null,
-        }
-      : null,
-
-    createdAt:
-      user.createdAt || null,
-  };
-};
-
-// ============================================================================
-// FIND USER
-// ============================================================================
-
-const getUserByEmailOrPhone = async (value) => {
-  const normalized = (value || '')
-    .toString()
-    .trim();
-
-  if (!normalized) {
-    return null;
-  }
-
-  const query = EMAIL_REGEX.test(normalized)
-    ? {
-        email: normalizeEmail(normalized),
-      }
-    : {
-        phone: normalizePhone(normalized),
-      };
-
-  return User.findOne(query);
-};
-
-// ============================================================================
-// SECURE TOKEN HELPERS
-// ============================================================================
-
-const hashToken = (token) =>
-  crypto
-    .createHash('sha256')
-    .update(token)
-    .digest('hex');
-
-const createSecureTokenRecord = async ({
-  user,
-  purpose,
-  expiresMinutes = 60 * 24,
-  method = 'email',
-}) => {
-  await VerificationToken.deleteMany({
-    user: user._id,
-    purpose,
-    usedAt: null,
-  });
-
-  const token = crypto
-    .randomBytes(32)
-    .toString('hex');
-
-  const tokenHash = hashToken(token);
-
-  const expiresAt = new Date(
-    Date.now() +
-      expiresMinutes * 60 * 1000
-  );
-
-  await VerificationToken.create({
-    user: user._id,
-    purpose,
-    tokenHash,
-    expiresAt,
-    method,
-  });
-
-  return token;
-};
-
-// ============================================================================
-// FRONTEND URL
-// ============================================================================
+const PASSWORD_RESET_MINUTES = 10;
+const PASSWORD_RESET_CODE_LENGTH = 6;
 
 const getFrontendUrl = () => {
   return (
     process.env.FRONTEND_URL ||
     process.env.CLIENT_URL ||
     'https://sylvatechnologies.co.ke'
+  ).replace(/\/$/, '');
+};
+
+/* ============================================================
+ * HELPERS
+ * ============================================================ */
+
+/**
+ * Normalize email.
+ */
+const normalizeEmail = (email) => {
+  return String(email || '')
+    .trim()
+    .toLowerCase();
+};
+
+/**
+ * Create a secure random token.
+ */
+const generateSecureToken = () => {
+  return crypto.randomBytes(32).toString('hex');
+};
+
+/**
+ * Hash a token before storing it in MongoDB.
+ */
+const hashToken = (token) => {
+  return crypto
+    .createHash('sha256')
+    .update(token)
+    .digest('hex');
+};
+
+/**
+ * Generate a six-digit password reset code.
+ */
+const generateResetCode = () => {
+  return crypto
+    .randomInt(0, 1000000)
+    .toString()
+    .padStart(PASSWORD_RESET_CODE_LENGTH, '0');
+};
+
+/**
+ * Create JWT.
+ */
+const createJwt = (user) => {
+  const secret = process.env.JWT_SECRET;
+
+  if (!secret) {
+    throw new Error('JWT_SECRET is not configured.');
+  }
+
+  return jwt.sign(
+    {
+      id: user._id.toString(),
+      role: user.role,
+    },
+    secret,
+    {
+      expiresIn:
+        process.env.JWT_EXPIRES_IN || '7d',
+    }
   );
 };
 
-// ============================================================================
-// SELLER REGISTRATION
-// ============================================================================
+/**
+ * Remove sensitive fields before sending user data.
+ */
+const safeUser = (user) => {
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone || '',
+    role: user.role,
+    sellerStatus: user.sellerStatus,
+    accountStatus: user.accountStatus,
+    storeStatus: user.storeStatus,
+    isVerified: user.isVerified,
+  };
+};
 
-router.post(
-  '/seller/register',
-  (req, res, next) => {
-    sellerUpload.fields([
-      {
-        name: 'idFront',
-        maxCount: 1,
-      },
-      {
-        name: 'idBack',
-        maxCount: 1,
-      },
-      {
-        name: 'kraPin',
-        maxCount: 1,
-      },
-    ])(req, res, (error) => {
-      if (error) {
-        return res.status(400).json({
-          success: false,
-          message:
-            error.message ||
-            'Unable to upload seller documents.',
-        });
-      }
+/* ============================================================
+ * REGISTER
+ * POST /api/auth/register
+ * ============================================================ */
 
-      next();
+router.post('/register', async (req, res) => {
+  try {
+    const {
+      name,
+      email,
+      phone,
+      password,
+      confirmPassword,
+    } = req.body;
+
+    const normalizedEmail =
+      normalizeEmail(email);
+
+    if (!name || !normalizedEmail || !password) {
+      return res.status(400).json({
+        message:
+          'Name, email and password are required.',
+      });
+    }
+
+    if (
+      confirmPassword !== undefined &&
+      password !== confirmPassword
+    ) {
+      return res.status(400).json({
+        message: 'Passwords do not match.',
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        message:
+          'Password must be at least 6 characters.',
+      });
+    }
+
+    const existingUser =
+      await User.findOne({
+        email: normalizedEmail,
+      });
+
+    if (existingUser) {
+      return res.status(409).json({
+        message:
+          'An account with this email already exists.',
+      });
+    }
+
+    const user = await User.create({
+      name: String(name).trim(),
+      email: normalizedEmail,
+      phone: phone
+        ? String(phone).trim()
+        : '',
+      password,
+      role: 'customer',
+      sellerStatus: 'none',
+      accountStatus: 'active',
+      storeStatus: 'inactive',
+      isVerified: false,
     });
-  },
-  async (req, res) => {
-    const uploadedFiles = [];
 
+    /*
+     * Create email verification token.
+     */
+    const rawVerificationToken =
+      generateSecureToken();
+
+    const verificationTokenHash =
+      hashToken(rawVerificationToken);
+
+    const verificationExpiresAt =
+      new Date(
+        Date.now() +
+          24 * 60 * 60 * 1000
+      );
+
+    await VerificationToken.deleteMany({
+      user: user._id,
+      purpose: 'verification',
+    });
+
+    await VerificationToken.create({
+      user: user._id,
+      purpose: 'verification',
+      tokenHash: verificationTokenHash,
+      expiresAt: verificationExpiresAt,
+      method: 'email',
+    });
+
+    const verifyLink =
+      `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(
+        rawVerificationToken
+      )}&email=${encodeURIComponent(
+        normalizedEmail
+      )}`;
+
+    /*
+     * Email failure should not destroy the account.
+     */
     try {
-      const {
-        officialName,
-        email,
-        mpesaPhone,
-        storeName,
-        password,
-        confirmPassword,
-        privacyPolicyAccepted,
-        termsAndConditionsAccepted,
-      } = req.body;
-
-      const files = req.files || {};
-
-      const idFrontFile =
-        files.idFront?.[0];
-
-      const idBackFile =
-        files.idBack?.[0];
-
-      const kraPinFile =
-        files.kraPin?.[0];
-
-      if (
-        !officialName ||
-        !email ||
-        !mpesaPhone ||
-        !storeName ||
-        !password
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Official/business name, email, phone number, store name and password are required.',
-        });
-      }
-
-      const trimmedOfficialName =
-        officialName.toString().trim();
-
-      if (
-        trimmedOfficialName.length < 2
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Please enter a valid official or business name.',
-        });
-      }
-
-      const trimmedStoreName =
-        storeName.toString().trim();
-
-      if (
-        !trimmedStoreName ||
-        trimmedStoreName.length < 2 ||
-        trimmedStoreName.length > 100
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Store name is required and must be between 2 and 100 characters.',
-        });
-      }
-
-      if (!isValidEmail(email)) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Please enter a valid email address.',
-        });
-      }
-
-      const normalizedSellerPhone =
-        normalizePhone(mpesaPhone);
-
-      if (
-        !isValidKenyanPhone(
-          normalizedSellerPhone
-        )
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Enter a valid Kenyan phone number in the format +2547XXXXXXXX.',
-        });
-      }
-
-      if (password.length < 6) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Password must be at least 6 characters.',
-        });
-      }
-
-      if (confirmPassword !== password) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Passwords do not match.',
-        });
-      }
-
-      if (
-        privacyPolicyAccepted !== 'true' ||
-        termsAndConditionsAccepted !== 'true'
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'You must agree to the Privacy Policy and Terms & Conditions before registering as a seller.',
-        });
-      }
-
-      if (
-        !idFrontFile ||
-        !idBackFile ||
-        !kraPinFile
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'ID front, ID back and KRA PIN documents are all required.',
-        });
-      }
-
-      const normalizedEmail =
-        normalizeEmail(email);
-
-      const existingEmail =
-        await User.findOne({
-          email: normalizedEmail,
-        });
-
-      if (existingEmail) {
-        return res.status(409).json({
-          success: false,
-          message:
-            'An account with this email already exists. Please log in to your existing account.',
-        });
-      }
-
-      const existingPhone =
-        await User.findOne({
-          phone: normalizedSellerPhone,
-        });
-
-      if (existingPhone) {
-        return res.status(409).json({
-          success: false,
-          message:
-            'An account with this phone number already exists. Please log in to your existing account.',
-        });
-      }
-
-      const idFrontUpload =
-        await uploadBufferToCloudinary(
-          idFrontFile.buffer
-        );
-
-      uploadedFiles.push(idFrontUpload);
-
-      const idBackUpload =
-        await uploadBufferToCloudinary(
-          idBackFile.buffer
-        );
-
-      uploadedFiles.push(idBackUpload);
-
-      const kraPinUpload =
-        await uploadBufferToCloudinary(
-          kraPinFile.buffer
-        );
-
-      uploadedFiles.push(kraPinUpload);
-
-      const user = await User.create({
-        name: trimmedOfficialName,
-        email: normalizedEmail,
-        phone: normalizedSellerPhone,
-        password,
-        role: 'seller',
-        sellerStatus: 'pending',
-        accountStatus: 'active',
-        storeStatus: 'inactive',
-
-        sellerProfile: {
-          officialName:
-            trimmedOfficialName,
-
-          storeName:
-            trimmedStoreName,
-
-          storeEmail:
-            normalizedEmail,
-
-          storePhone:
-            normalizedSellerPhone,
-
-          mpesaPhone:
-            normalizedSellerPhone,
-
-          idFrontDocument:
-            idFrontUpload.public_id,
-
-          idBackDocument:
-            idBackUpload.public_id,
-
-          kraPinDocument:
-            kraPinUpload.public_id,
-
-          applicationDate:
-            new Date(),
-
-          reviewedAt: null,
-
-          rejectionReason: '',
-        },
-
-        consent: {
-          privacyPolicy: true,
-          termsAndConditions: true,
-          acceptedAt: new Date(),
-        },
-
-        isVerified: false,
-        verificationMethod: 'email',
-      });
-
-      const verificationToken =
-        await createSecureTokenRecord({
-          user,
-          purpose: 'verification',
-          expiresMinutes: 60 * 24,
-        });
-
-      const verifyLink =
-        `${getFrontendUrl()}/verify-email?token=${verificationToken}`;
-
       await sendVerificationLinkEmail({
-        to: user.email,
+        to: normalizedEmail,
         name: user.name,
         verifyLink,
-        expiresInMinutes: 60 * 24,
+        expiresInMinutes: 24 * 60,
       });
-
-      const token =
-        generateToken(user._id);
-
-      return res.status(201).json({
-        success: true,
-        message:
-          'Seller registration submitted successfully. Please verify your email. Your seller account is awaiting admin approval.',
-
-        data: {
-          user: sanitizeUser(user),
-          verificationPending: true,
-          sellerStatus: 'pending',
-          token,
-        },
-      });
-    } catch (error) {
+    } catch (emailError) {
       console.error(
-        'Seller registration error:',
-        error
+        'Verification email error:',
+        emailError
       );
-
-      for (const uploadedFile of uploadedFiles) {
-        try {
-          await cloudinary.uploader.destroy(
-            uploadedFile.public_id,
-            {
-              type: 'authenticated',
-              resource_type:
-                uploadedFile.resource_type ||
-                'image',
-            }
-          );
-        } catch (cleanupError) {
-          console.error(
-            'Cloudinary cleanup error:',
-            cleanupError.message
-          );
-        }
-      }
-
-      return res.status(500).json({
-        success: false,
-        message:
-          'Seller registration failed. Please try again.',
-      });
     }
-  }
-);
 
-// ============================================================================
-// NORMAL CUSTOMER REGISTRATION
-// ============================================================================
-
-router.post(
-  '/register',
-  async (req, res) => {
-    try {
-      const {
-        name,
-        email,
-        phone,
-        password,
-        confirmPassword,
-        consentAccepted,
-        verificationMethod = 'email',
-      } = req.body;
-
-      if (!name || !email || !password) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Name, email and password are required.',
-        });
-      }
-
-      const trimmedName =
-        name.toString().trim();
-
-      if (trimmedName.length < 2) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Please enter your full name.',
-        });
-      }
-
-      if (!isValidEmail(email)) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Please enter a valid email address.',
-        });
-      }
-
-      if (
-        !phone ||
-        !isValidKenyanPhone(
-          normalizePhone(phone)
-        )
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Enter a valid Kenyan phone number in the format +2547XXXXXXXX.',
-        });
-      }
-
-      if (password.length < 6) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Password must be at least 6 characters.',
-        });
-      }
-
-      if (!confirmPassword) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Please confirm your new password.',
-        });
-      }
-
-      if (password !== confirmPassword) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Passwords do not match.',
-        });
-      }
-
-      if (consentAccepted !== true) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'You must agree to the Privacy Policy and Terms & Conditions before creating an account.',
-        });
-      }
-
-      if (
-        !['email', 'sms'].includes(
-          verificationMethod
-        )
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Please select a valid verification method.',
-        });
-      }
-
-      const normalizedEmail =
-        normalizeEmail(email);
-
-      const normalizedPhone =
-        normalizePhone(phone);
-
-      const existingEmail =
-        await User.findOne({
-          email: normalizedEmail,
-        });
-
-      if (existingEmail) {
-        return res.status(409).json({
-          success: false,
-          message:
-            'Email already registered.',
-        });
-      }
-
-      const existingPhone =
-        await User.findOne({
-          phone: normalizedPhone,
-        });
-
-      if (existingPhone) {
-        return res.status(409).json({
-          success: false,
-          message:
-            'Phone number already registered.',
-        });
-      }
-
-      const user = await User.create({
-        name: trimmedName,
-        email: normalizedEmail,
-        phone: normalizedPhone,
-        password,
-        role: 'customer',
-        sellerStatus: 'none',
-        accountStatus: 'active',
-        storeStatus: 'inactive',
-        verificationMethod,
-
-        consent: {
-          privacyPolicy: true,
-          termsAndConditions: true,
-          acceptedAt: new Date(),
-        },
-
-        isVerified: false,
-      });
-
-      const verificationToken =
-        await createSecureTokenRecord({
-          user,
-          purpose: 'verification',
-          expiresMinutes: 60 * 24,
-        });
-
-      const verifyLink =
-        `${getFrontendUrl()}/verify-email?token=${verificationToken}`;
-
-      await sendVerificationLinkEmail({
-        to: user.email,
-        name: user.name,
-        verifyLink,
-        expiresInMinutes: 60 * 24,
-      });
-
-      const token =
-        generateToken(user._id);
-
-      return res.status(201).json({
-        success: true,
-        message:
-          'Registration successful. Verification email sent.',
-
-        data: {
-          user: sanitizeUser(user),
-          verificationPending: true,
-          token,
-        },
-      });
-    } catch (error) {
-      console.error(
-        'Registration error:',
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        message:
-          'Registration failed. Please try again.',
-      });
-    }
-  }
-);
-
-// ============================================================================
-// VERIFY ACCOUNT
-// ============================================================================
-
-router.post(
-  '/verify',
-  async (req, res) => {
-    try {
-      const {
-        email,
-        phone,
-        otp,
-        token: bodyToken,
-      } = req.body;
-
-      const identifier =
-        email || phone;
-
-      const tokenValue =
-        bodyToken ||
-        otp ||
-        req.query.token;
-
-      if (!identifier && !tokenValue) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Email/phone or verification token is required.',
-        });
-      }
-
-      let user = null;
-
-      if (identifier) {
-        user =
-          await getUserByEmailOrPhone(
-            identifier
-          );
-      }
-
-      let record = null;
-
-      if (tokenValue) {
-        const tokenHash =
-          hashToken(tokenValue);
-
-        record =
-          await VerificationToken.findOne({
-            purpose: 'verification',
-            tokenHash,
-            usedAt: null,
-            expiresAt: {
-              $gt: new Date(),
-            },
-          });
-
-        if (record && !user) {
-          user =
-            await User.findById(
-              record.user
-            );
-        }
-      }
-
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message:
-            'User account not found.',
-        });
-      }
-
-      if (user.isVerified) {
-        return res.status(200).json({
-          success: true,
-          message:
-            'Account already verified.',
-          data: {
-            user: sanitizeUser(user),
-          },
-        });
-      }
-
-      if (!tokenValue) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Verification token or code is required.',
-        });
-      }
-
-      if (!record) {
-        const tokenHash =
-          hashToken(tokenValue);
-
-        record =
-          await VerificationToken.findOne({
-            user: user._id,
-            purpose: 'verification',
-            tokenHash,
-            usedAt: null,
-            expiresAt: {
-              $gt: new Date(),
-            },
-          });
-      }
-
-      if (!record) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Verification token expired or invalid.',
-        });
-      }
-
-      user.isVerified = true;
-
-      user.verificationMethod =
-        user.verificationMethod ||
-        'email';
-
-      user.otpCooldownUntil = null;
-
-      await user.save();
-
-      record.usedAt = new Date();
-
-      await record.save();
-
-      await VerificationToken.deleteMany({
-        user: user._id,
-        purpose: 'verification',
-        usedAt: {
-          $ne: null,
-        },
-      });
-
-      return res.status(200).json({
-        success: true,
-        message:
-          'Verification successful. Your account is now verified.',
-
-        data: {
-          user: sanitizeUser(user),
-        },
-      });
-    } catch (error) {
-      console.error(
-        'Verification error:',
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        message:
-          'Unable to verify account right now.',
-      });
-    }
-  }
-);
-
-// ============================================================================
-// VERIFY EMAIL
-// ============================================================================
-
-router.post(
-  '/verify-email',
-  (req, res) => {
-    return res.redirect(
-      307,
-      '/verify'
+    return res.status(201).json({
+      message:
+        'Account created successfully. Please check your email to verify your account.',
+      user: safeUser(user),
+      token: createJwt(user),
+    });
+  } catch (error) {
+    console.error(
+      'Register error:',
+      error
     );
+
+    return res.status(500).json({
+      message:
+        'Unable to create your account right now.',
+    });
   }
-);
+});
 
-// ============================================================================
-// RESEND VERIFICATION
-// ============================================================================
+/* ============================================================
+ * LOGIN
+ * POST /api/auth/login
+ * ============================================================ */
 
-router.post(
-  '/resend-verification',
-  async (req, res) => {
-    try {
-      const {
-        email,
-        phone,
-      } = req.body;
+router.post('/login', async (req, res) => {
+  try {
+    const {
+      email,
+      password,
+    } = req.body;
 
-      const identifier =
-        email || phone;
+    const normalizedEmail =
+      normalizeEmail(email);
 
-      if (!identifier) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Email or phone is required.',
-        });
-      }
-
-      const user =
-        await getUserByEmailOrPhone(
-          identifier
-        );
-
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message:
-            'User account not found.',
-        });
-      }
-
-      if (user.isVerified) {
-        return res.status(200).json({
-          success: true,
-          message:
-            'Your account is already verified.',
-        });
-      }
-
-      const cooldown =
-        user.otpCooldownUntil
-          ? new Date(
-              user.otpCooldownUntil
-            )
-          : null;
-
-      if (
-        cooldown &&
-        cooldown > new Date()
-      ) {
-        const remainingSeconds =
-          Math.ceil(
-            (cooldown - new Date()) /
-              1000
-          );
-
-        return res.status(429).json({
-          success: false,
-          message:
-            `Please wait ${remainingSeconds} seconds before requesting a new code.`,
-        });
-      }
-
-      const activeRequestCount =
-        await VerificationToken.countDocuments({
-          user: user._id,
-          purpose: 'verification',
-          createdAt: {
-            $gte: new Date(
-              Date.now() -
-                24 *
-                  60 *
-                  60 *
-                  1000
-            ),
-          },
-        });
-
-      if (
-        activeRequestCount >=
-        MAX_OTP_REQUESTS
-      ) {
-        return res.status(429).json({
-          success: false,
-          message:
-            'Too many verification requests. Please try again later.',
-        });
-      }
-
-      user.otpCooldownUntil =
-        new Date(
-          Date.now() +
-            RESEND_COOLDOWN_MINUTES *
-              60 *
-              1000
-        );
-
-      await user.save();
-
-      const verificationToken =
-        await createSecureTokenRecord({
-          user,
-          purpose: 'verification',
-          expiresMinutes: 60 * 24,
-        });
-
-      const verifyLink =
-        `${getFrontendUrl()}/verify-email?token=${verificationToken}`;
-
-      await sendVerificationLinkEmail({
-        to: user.email,
-        name: user.name,
-        verifyLink,
-        expiresInMinutes: 60 * 24,
-      });
-
-      return res.status(200).json({
-        success: true,
+    if (!normalizedEmail || !password) {
+      return res.status(400).json({
         message:
-          'Verification email resent successfully. Please check your inbox.',
-      });
-    } catch (error) {
-      console.error(
-        'Resend verification error:',
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        message:
-          'Unable to resend verification code.',
+          'Email and password are required.',
       });
     }
-  }
-);
 
-// ============================================================================
-// LOGIN
-// ============================================================================
+    const user =
+      await User.findOne({
+        email: normalizedEmail,
+      });
 
-router.post(
-  '/login',
-  async (req, res) => {
-    try {
-      const {
-        email,
-        phone,
-        password,
-      } = req.body;
+    if (!user) {
+      return res.status(401).json({
+        message:
+          'Invalid email or password.',
+      });
+    }
 
-      const identifier =
-        email || phone;
+    /*
+     * Check account lock.
+     */
+    if (user.isLocked()) {
+      return res.status(423).json({
+        message:
+          'Your account is temporarily locked. Please try again later.',
+      });
+    }
 
-      if (!identifier || !password) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Email/phone and password are required.',
-        });
-      }
+    const passwordMatches =
+      await user.matchPassword(password);
 
-      const user =
-        await getUserByEmailOrPhone(
-          identifier
-        );
+    if (!passwordMatches) {
+      user.loginAttempts =
+        (user.loginAttempts || 0) + 1;
 
-      if (!user) {
-        return res.status(401).json({
-          success: false,
-          message:
-            'Invalid credentials.',
-        });
-      }
-
-      let accountLocked = false;
-
-      if (
-        typeof user.isLocked ===
-        'function'
-      ) {
-        accountLocked =
-          user.isLocked();
-      } else if (user.lockUntil) {
-        accountLocked =
+      /*
+       * Lock after 5 failed attempts.
+       */
+      if (user.loginAttempts >= 5) {
+        user.lockUntil =
           new Date(
-            user.lockUntil
-          ) > new Date();
+            Date.now() + 15 * 60 * 1000
+          );
+        user.loginAttempts = 0;
       }
-
-      if (accountLocked) {
-        return res.status(423).json({
-          success: false,
-          message:
-            'Your account is temporarily locked. Please try again later.',
-        });
-      }
-
-      const isMatch =
-        await bcrypt.compare(
-          password,
-          user.password
-        );
-
-      if (!isMatch) {
-        user.loginAttempts =
-          (user.loginAttempts || 0) +
-          1;
-
-        if (
-          user.loginAttempts >= 5
-        ) {
-          user.lockUntil =
-            new Date(
-              Date.now() +
-                15 *
-                  60 *
-                  1000
-            );
-
-          user.loginAttempts = 0;
-
-          await user.save();
-
-          return res.status(423).json({
-            success: false,
-            message:
-              'Too many failed login attempts. Your account is temporarily locked for 15 minutes.',
-          });
-        }
-
-        await user.save();
-
-        return res.status(401).json({
-          success: false,
-          message:
-            'Invalid credentials.',
-        });
-      }
-
-      user.loginAttempts = 0;
-      user.lockUntil = null;
 
       await user.save();
 
-      const token =
-        generateToken(user._id);
-
-      const responsePayload = {
-        success: true,
-
+      return res.status(401).json({
         message:
-          'Login successful.',
-
-        data: {
-          user: sanitizeUser(user),
-          token,
-          emailVerified:
-            !!user.isVerified,
-          verificationPending:
-            !user.isVerified,
-        },
-      };
-
-      if (!user.isVerified) {
-        responsePayload.message =
-          'Login successful. Email verification is pending.';
-
-        try {
-          const existing =
-            await VerificationToken.findOne({
-              user: user._id,
-              purpose: 'verification',
-              usedAt: null,
-              expiresAt: {
-                $gt: new Date(),
-              },
-            }).sort({
-              expiresAt: -1,
-            });
-
-          if (!existing) {
-            const verificationToken =
-              await createSecureTokenRecord({
-                user,
-                purpose: 'verification',
-                expiresMinutes:
-                  60 * 24,
-              });
-
-            const verifyLink =
-              `${getFrontendUrl()}/verify-email?token=${verificationToken}`;
-
-            try {
-              await sendVerificationLinkEmail({
-                to: user.email,
-                name: user.name,
-                verifyLink,
-                expiresInMinutes:
-                  60 * 24,
-              });
-            } catch (emailError) {
-              console.error(
-                'Login verification email error:',
-                emailError
-              );
-            }
-          }
-        } catch (verificationError) {
-          console.error(
-            'Login verification reminder error:',
-            verificationError
-          );
-        }
-      }
-
-      return res.json(
-        responsePayload
-      );
-    } catch (error) {
-      console.error(
-        'Login error:',
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        message:
-          'Login failed. Please try again.',
+          'Invalid email or password.',
       });
     }
-  }
-);
 
-// ============================================================================
-// FORGOT PASSWORD
-// ============================================================================
+    /*
+     * Successful login.
+     */
+    user.loginAttempts = 0;
+    user.lockUntil = null;
+
+    await user.save();
+
+    return res.status(200).json({
+      message: 'Login successful.',
+      token: createJwt(user),
+      user: safeUser(user),
+    });
+  } catch (error) {
+    console.error(
+      'Login error:',
+      error
+    );
+
+    return res.status(500).json({
+      message:
+        'Unable to login right now.',
+    });
+  }
+});
+
+/* ============================================================
+ * FORGOT PASSWORD
+ *
+ * POST /api/auth/forgot-password
+ *
+ * Sends:
+ * - 6-digit code
+ * - secure reset link
+ * ============================================================ */
 
 router.post(
   '/forgot-password',
@@ -1304,206 +358,153 @@ router.post(
     try {
       const {
         email,
-        phone,
       } = req.body;
 
-      const identifier =
-        email || phone;
+      const normalizedEmail =
+        normalizeEmail(email);
 
-      const genericMessage =
-        'If an account exists for this email address, a password reset code and link have been sent.';
-
-      if (!identifier) {
+      if (!normalizedEmail) {
         return res.status(400).json({
-          message:
-            'Email address is required.',
+          message: 'Email is required.',
         });
       }
 
       const user =
-        await getUserByEmailOrPhone(
-          identifier
-        );
+        await User.findOne({
+          email: normalizedEmail,
+        });
 
+      /*
+       * Do not reveal whether an email exists.
+       */
       if (!user) {
         return res.status(200).json({
-          message: genericMessage,
+          message:
+            'If an account exists for that email, a password reset code has been sent.',
         });
       }
 
-      if (!user.email) {
-        return res.status(200).json({
-          message: genericMessage,
-        });
-      }
-
-      // ----------------------------------------------------------------------
-      // CLEAN OLD PASSWORD RESET RECORDS
-      // Keep these as separate queries.
-      // ----------------------------------------------------------------------
-
+      /*
+       * Remove old password-reset tokens.
+       */
       await VerificationToken.deleteMany({
         user: user._id,
-        purpose: 'password-reset',
-        usedAt: null,
+        purpose: {
+          $in: [
+            'password-reset',
+            'password-reset-code',
+            'password-reset-verified',
+          ],
+        },
       });
 
-      await VerificationToken.deleteMany({
-        user: user._id,
-        purpose: 'password-reset-code',
-        usedAt: null,
-      });
-
-      await VerificationToken.deleteMany({
-        user: user._id,
-        purpose:
-          'password-reset-verified',
-        usedAt: null,
-      });
-
-      // ----------------------------------------------------------------------
-      // CREATE PASSWORD RESET LINK TOKEN
-      // ----------------------------------------------------------------------
-
+      /*
+       * Generate secure link token.
+       */
       const resetToken =
-        await createSecureTokenRecord({
-          user,
-          purpose: 'password-reset',
-          expiresMinutes: 60,
-          method: 'email',
-        });
+        generateSecureToken();
 
-      // ----------------------------------------------------------------------
-      // CREATE 6-DIGIT PASSWORD RESET CODE
-      // ----------------------------------------------------------------------
+      const resetTokenHash =
+        hashToken(resetToken);
 
+      /*
+       * Generate six-digit code.
+       */
       const resetCode =
-        crypto
-          .randomInt(
-            100000,
-            1000000
-          )
-          .toString();
+        generateResetCode();
 
       const resetCodeHash =
         hashToken(resetCode);
 
+      const expiresAt =
+        new Date(
+          Date.now() +
+            PASSWORD_RESET_MINUTES *
+              60 *
+              1000
+        );
+
+      /*
+       * Store the reset CODE.
+       */
       await VerificationToken.create({
         user: user._id,
-
-        purpose:
-          'password-reset-code',
-
-        tokenHash:
-          resetCodeHash,
-
-        expiresAt:
-          new Date(
-            Date.now() +
-              OTP_EXPIRY_MINUTES *
-                60 *
-                1000
-          ),
-
-        usedAt: null,
-
+        purpose: 'password-reset-code',
+        tokenHash: resetCodeHash,
+        expiresAt,
         attempts: 0,
-
-        maxAttempts:
-          MAX_OTP_ATTEMPTS,
-
+        maxAttempts: 5,
         method: 'email',
       });
 
-      // ----------------------------------------------------------------------
-      // RESET LINK
-      // ----------------------------------------------------------------------
+      /*
+       * Store the secure LINK token.
+       */
+      await VerificationToken.create({
+        user: user._id,
+        purpose: 'password-reset',
+        tokenHash: resetTokenHash,
+        expiresAt,
+        attempts: 0,
+        maxAttempts: 5,
+        method: 'email',
+      });
 
+      /*
+       * Link sent in email.
+       */
       const resetLink =
-        `${getFrontendUrl()}/reset-password` +
-        `?token=${encodeURIComponent(
+        `${getFrontendUrl()}/reset-password?token=${encodeURIComponent(
           resetToken
-        )}` +
-        `&email=${encodeURIComponent(
-          user.email
+        )}&email=${encodeURIComponent(
+          normalizedEmail
         )}`;
 
-      // ----------------------------------------------------------------------
-      // SEND EMAIL
-      // ----------------------------------------------------------------------
-
-      const emailResult =
-        await sendPasswordResetCodeAndLinkEmail({
-          to: user.email,
-          name: user.name,
-          resetCode,
-          resetLink,
-          expiresInMinutes:
-            OTP_EXPIRY_MINUTES,
-        });
-
-      if (
-        emailResult &&
-        emailResult.success === false
-      ) {
-        console.error(
-          'Password reset email was not sent:',
-          emailResult.message
-        );
-
-        return res.status(500).json({
-          message:
-            'Unable to send the password reset email right now. Please try again later.',
-        });
-      }
+      await sendPasswordResetCodeAndLinkEmail({
+        to: normalizedEmail,
+        name: user.name,
+        resetCode,
+        resetLink,
+        expiresInMinutes:
+          PASSWORD_RESET_MINUTES,
+      });
 
       return res.status(200).json({
-        message: genericMessage,
+        message:
+          'If an account exists for that email, a password reset code has been sent.',
       });
     } catch (error) {
       console.error(
-        '========================================'
-      );
-
-      console.error(
-        'FORGOT PASSWORD ERROR'
-      );
-
-      console.error(
-        'Message:',
-        error.message
-      );
-
-      console.error(
-        'Name:',
-        error.name
-      );
-
-      console.error(
-        'Code:',
-        error.code
-      );
-
-      console.error(
-        'Stack:',
-        error.stack
-      );
-
-      console.error(
-        '========================================'
+        'Forgot password error:',
+        error
       );
 
       return res.status(500).json({
         message:
-          'Unable to process the password reset request right now.',
+          'Unable to send the password reset code right now.',
       });
     }
   }
 );
 
-// ============================================================================
-// VERIFY PASSWORD RESET CODE
-// ============================================================================
+/* ============================================================
+ * VERIFY PASSWORD RESET CODE
+ *
+ * POST /api/auth/verify-password-reset-code
+ *
+ * Frontend sends:
+ * {
+ *   email,
+ *   code,
+ *   token
+ * }
+ *
+ * Returns:
+ * {
+ *   message,
+ *   resetToken
+ * }
+ * ============================================================ */
 
 router.post(
   '/verify-password-reset-code',
@@ -1512,27 +513,29 @@ router.post(
       const {
         email,
         code,
-        token,
+        token: linkToken,
       } = req.body;
-
-      if (!email || !code) {
-        return res.status(400).json({
-          message:
-            'Email address and reset code are required.',
-        });
-      }
 
       const normalizedEmail =
         normalizeEmail(email);
 
+      const normalizedCode =
+        String(code || '').trim();
+
+      if (!normalizedEmail) {
+        return res.status(400).json({
+          message: 'Email is required.',
+        });
+      }
+
       if (
         !/^\d{6}$/.test(
-          String(code)
+          normalizedCode
         )
       ) {
         return res.status(400).json({
           message:
-            'Please enter the 6-digit reset code.',
+            'Please enter a valid 6-digit reset code.',
         });
       }
 
@@ -1548,142 +551,171 @@ router.post(
         });
       }
 
-      // ----------------------------------------------------------------------
-      // FIND VALID RESET CODE
-      // ----------------------------------------------------------------------
+      /*
+       * IMPORTANT:
+       *
+       * We intentionally DO NOT use:
+       *
+       * expiresAt: { $gt: new Date() }
+       *
+       * because that was causing your Render
+       * CastError.
+       */
 
       const codeHash =
-        hashToken(String(code));
+        hashToken(normalizedCode);
 
-      const codeRecord =
+      const verificationToken =
         await VerificationToken.findOne({
           user: user._id,
-
           purpose:
             'password-reset-code',
-
-          tokenHash:
-            codeHash,
-
-          usedAt: null,
-
-          expiresAt: {
-            $gt: new Date(),
-          },
+          tokenHash: codeHash,
         });
 
-      // ----------------------------------------------------------------------
-      // INVALID CODE
-      // ----------------------------------------------------------------------
-
-      if (!codeRecord) {
-        const activeCode =
-          await VerificationToken.findOne({
-            user: user._id,
-
-            purpose:
-              'password-reset-code',
-
-            usedAt: null,
-
-            expiresAt: {
-              $gt: new Date(),
-            },
-          });
-
-        if (activeCode) {
-          activeCode.attempts += 1;
-
-          if (
-            activeCode.attempts >=
-            activeCode.maxAttempts
-          ) {
-            activeCode.usedAt =
-              new Date();
-          }
-
-          await activeCode.save();
-
-          if (
-            activeCode.attempts >=
-            activeCode.maxAttempts
-          ) {
-            return res.status(400).json({
-              message:
-                'Too many incorrect attempts. Please request a new reset code.',
-            });
-          }
-        }
-
+      if (!verificationToken) {
         return res.status(400).json({
           message:
             'Invalid or expired reset code.',
         });
       }
 
-      // ----------------------------------------------------------------------
-      // IF RESET LINK TOKEN WAS PROVIDED, VALIDATE IT
-      // ----------------------------------------------------------------------
-
-      if (token) {
-        const resetTokenHash =
-          hashToken(token);
-
-        const resetTokenRecord =
-          await VerificationToken.findOne({
-            user: user._id,
-
-            purpose:
-              'password-reset',
-
-            tokenHash:
-              resetTokenHash,
-
-            usedAt: null,
-
-            expiresAt: {
-              $gt: new Date(),
-            },
-          });
-
-        if (!resetTokenRecord) {
-          return res.status(400).json({
-            message:
-              'This password reset link is invalid or expired. Please request a new one.',
-          });
-        }
+      /*
+       * Check whether it has already been used.
+       */
+      if (verificationToken.usedAt) {
+        return res.status(400).json({
+          message:
+            'This reset code has already been used.',
+        });
       }
 
-      // ----------------------------------------------------------------------
-      // CODE IS CORRECT
-      // ----------------------------------------------------------------------
+      /*
+       * Check expiry in JavaScript.
+       *
+       * This is the direct fix for your
+       * Cast-to-date error.
+       */
+      if (
+        !verificationToken.expiresAt ||
+        verificationToken.expiresAt <=
+          new Date()
+      ) {
+        return res.status(400).json({
+          message:
+            'This reset code has expired.',
+        });
+      }
 
-      codeRecord.usedAt =
+      /*
+       * Check attempts.
+       */
+      if (
+        verificationToken.attempts >=
+        verificationToken.maxAttempts
+      ) {
+        return res.status(429).json({
+          message:
+            'Too many attempts. Please request a new reset code.',
+        });
+      }
+
+      /*
+       * Mark code as used.
+       */
+      verificationToken.usedAt =
         new Date();
 
-      await codeRecord.save();
+      await verificationToken.save();
 
-      // ----------------------------------------------------------------------
-      // CREATE VERIFIED RESET TOKEN
-      // This is the token the frontend must send to /reset-password.
-      // ----------------------------------------------------------------------
-
+      /*
+       * Create a NEW short-lived verified reset token.
+       *
+       * This is what the frontend stores in:
+       * sylva_password_reset_token
+       */
       const verifiedResetToken =
-        await createSecureTokenRecord({
-          user,
+        generateSecureToken();
 
-          purpose:
-            'password-reset-verified',
+      const verifiedResetTokenHash =
+        hashToken(
+          verifiedResetToken
+        );
 
-          expiresMinutes: 15,
+      const verifiedExpiresAt =
+        new Date(
+          Date.now() +
+            15 * 60 * 1000
+        );
 
-          method: 'email',
-        });
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose:
+          'password-reset-verified',
+      });
+
+      await VerificationToken.create({
+        user: user._id,
+        purpose:
+          'password-reset-verified',
+        tokenHash:
+          verifiedResetTokenHash,
+        expiresAt:
+          verifiedExpiresAt,
+        attempts: 0,
+        maxAttempts: 5,
+        method: 'email',
+      });
+
+      /*
+       * If the user arrived through the secure
+       * email link, validate it as well.
+       */
+      if (linkToken) {
+        const linkHash =
+          hashToken(
+            String(linkToken)
+          );
+
+        const linkTokenRecord =
+          await VerificationToken.findOne({
+            user: user._id,
+            purpose:
+              'password-reset',
+            tokenHash: linkHash,
+          });
+
+        if (linkTokenRecord) {
+          if (
+            linkTokenRecord.usedAt
+          ) {
+            return res.status(400).json({
+              message:
+                'This reset link has already been used.',
+            });
+          }
+
+          if (
+            !linkTokenRecord.expiresAt ||
+            linkTokenRecord.expiresAt <=
+              new Date()
+          ) {
+            return res.status(400).json({
+              message:
+                'This reset link has expired.',
+            });
+          }
+
+          linkTokenRecord.usedAt =
+            new Date();
+
+          await linkTokenRecord.save();
+        }
+      }
 
       return res.status(200).json({
         message:
           'Reset code verified successfully.',
-
         resetToken:
           verifiedResetToken,
       });
@@ -1701,9 +733,18 @@ router.post(
   }
 );
 
-// ============================================================================
-// RESET PASSWORD
-// ============================================================================
+/* ============================================================
+ * RESET PASSWORD
+ *
+ * POST /api/auth/reset-password
+ *
+ * Frontend sends:
+ * {
+ *   token,
+ *   password,
+ *   confirmPassword
+ * }
+ * ============================================================ */
 
 router.post(
   '/reset-password',
@@ -1715,30 +756,29 @@ router.post(
         confirmPassword,
       } = req.body;
 
-      // ----------------------------------------------------------------------
-      // REQUIRED FIELDS
-      // ----------------------------------------------------------------------
-
-      if (!token || !password) {
+      if (!token) {
         return res.status(400).json({
           message:
-            'Reset token and new password are required.',
+            'Password reset token is required.',
         });
       }
 
-      // ----------------------------------------------------------------------
-      // PASSWORD VALIDATION
-      // ----------------------------------------------------------------------
+      if (!password) {
+        return res.status(400).json({
+          message:
+            'New password is required.',
+        });
+      }
 
       if (password.length < 6) {
         return res.status(400).json({
           message:
-            'Password must be at least 6 characters long.',
+            'Password must be at least 6 characters.',
         });
       }
 
       if (
-        confirmPassword &&
+        confirmPassword !== undefined &&
         password !== confirmPassword
       ) {
         return res.status(400).json({
@@ -1747,102 +787,99 @@ router.post(
         });
       }
 
-      // ----------------------------------------------------------------------
-      // FIND VERIFIED RESET TOKEN
-      // ----------------------------------------------------------------------
-
       const tokenHash =
-        hashToken(token);
+        hashToken(
+          String(token)
+        );
 
-      const record =
+      const verificationToken =
         await VerificationToken.findOne({
           purpose:
             'password-reset-verified',
-
           tokenHash,
-
-          usedAt: null,
-
-          expiresAt: {
-            $gt: new Date(),
-          },
         });
 
-      if (!record) {
+      if (!verificationToken) {
         return res.status(400).json({
           message:
-            'This password reset session is invalid or expired. Please request a new reset code.',
+            'Invalid or expired password reset token.',
         });
       }
 
-      // ----------------------------------------------------------------------
-      // FIND USER
-      // ----------------------------------------------------------------------
+      if (verificationToken.usedAt) {
+        return res.status(400).json({
+          message:
+            'This password reset token has already been used.',
+        });
+      }
+
+      /*
+       * Again, check Date in JavaScript.
+       */
+      if (
+        !verificationToken.expiresAt ||
+        verificationToken.expiresAt <=
+          new Date()
+      ) {
+        return res.status(400).json({
+          message:
+            'This password reset token has expired.',
+        });
+      }
 
       const user =
         await User.findById(
-          record.user
+          verificationToken.user
         );
 
       if (!user) {
-        return res.status(400).json({
+        return res.status(404).json({
           message:
-            'The account associated with this reset request could not be found.',
+            'User account could not be found.',
         });
       }
 
-      // ----------------------------------------------------------------------
-      // UPDATE PASSWORD
-      // The User model's password middleware should hash it.
-      // ----------------------------------------------------------------------
-
+      /*
+       * Assign the new password.
+       *
+       * User.js contains a pre-save hook that
+       * automatically bcrypt-hashes the password.
+       */
       user.password =
         password;
 
+      /*
+       * Reset login security counters.
+       */
       user.loginAttempts = 0;
-
       user.lockUntil = null;
 
       await user.save();
 
-      // ----------------------------------------------------------------------
-      // CONSUME VERIFIED TOKEN
-      // ----------------------------------------------------------------------
-
-      record.usedAt =
+      /*
+       * Invalidate the reset token.
+       */
+      verificationToken.usedAt =
         new Date();
 
-      await record.save();
+      await verificationToken.save();
 
-      // ----------------------------------------------------------------------
-      // CLEAN UP ALL RESET RECORDS
-      // Keep these as separate queries.
-      // ----------------------------------------------------------------------
-
+      /*
+       * Remove remaining reset credentials.
+       */
       await VerificationToken.deleteMany({
         user: user._id,
-        purpose: 'password-reset',
+        purpose: {
+          $in: [
+            'password-reset',
+            'password-reset-code',
+          ],
+        },
       });
-
-      await VerificationToken.deleteMany({
-        user: user._id,
-        purpose:
-          'password-reset-code',
-      });
-
-      await VerificationToken.deleteMany({
-        user: user._id,
-        purpose:
-          'password-reset-verified',
-      });
-
-      // ----------------------------------------------------------------------
-      // SUCCESS
-      // ----------------------------------------------------------------------
 
       return res.status(200).json({
         message:
-          'Your password has been reset successfully. You can now log in with your new password.',
+          'Password reset successfully. You can now log in with your new password.',
       });
     } catch (error) {
       console.error(
@@ -1858,54 +895,124 @@ router.post(
   }
 );
 
-// ============================================================================
-// LOGOUT
-// ============================================================================
-
-router.post(
-  '/logout',
-  (req, res) => {
-    return res.status(200).json({
-      success: true,
-      message:
-        'Logged out successfully.',
-    });
-  }
-);
-
-// ============================================================================
-// CURRENT USER
-// ============================================================================
+/* ============================================================
+ * VERIFY EMAIL
+ *
+ * GET /api/auth/verify-email
+ * ============================================================ */
 
 router.get(
-  '/me',
-  protect,
+  '/verify-email',
   async (req, res) => {
     try {
-      return res.json({
-        success: true,
-        data:
-          sanitizeUser(
-            req.user
-          ),
+      const {
+        token,
+        email,
+      } = req.query;
+
+      const normalizedEmail =
+        normalizeEmail(email);
+
+      if (!token || !normalizedEmail) {
+        return res.status(400).json({
+          message:
+            'Verification token and email are required.',
+        });
+      }
+
+      const user =
+        await User.findOne({
+          email: normalizedEmail,
+        });
+
+      if (!user) {
+        return res.status(404).json({
+          message:
+            'User account not found.',
+        });
+      }
+
+      const tokenHash =
+        hashToken(
+          String(token)
+        );
+
+      const verificationToken =
+        await VerificationToken.findOne({
+          user: user._id,
+          purpose:
+            'verification',
+          tokenHash,
+        });
+
+      if (!verificationToken) {
+        return res.status(400).json({
+          message:
+            'Invalid or expired verification link.',
+        });
+      }
+
+      if (verificationToken.usedAt) {
+        return res.status(400).json({
+          message:
+            'This verification link has already been used.',
+        });
+      }
+
+      if (
+        !verificationToken.expiresAt ||
+        verificationToken.expiresAt <=
+          new Date()
+      ) {
+        return res.status(400).json({
+          message:
+            'This verification link has expired.',
+        });
+      }
+
+      user.isVerified = true;
+
+      await user.save();
+
+      verificationToken.usedAt =
+        new Date();
+
+      await verificationToken.save();
+
+      return res.status(200).json({
+        message:
+          'Email verified successfully.',
       });
     } catch (error) {
       console.error(
-        'Get current user error:',
+        'Email verification error:',
         error
       );
 
       return res.status(500).json({
-        success: false,
         message:
-          'Unable to load your account information.',
+          'Unable to verify your email right now.',
       });
     }
   }
 );
 
-// ============================================================================
-// EXPORT ROUTER
-// ============================================================================
+/* ============================================================
+ * HEALTH CHECK FOR AUTH ROUTES
+ * ============================================================ */
+
+router.get(
+  '/health',
+  (req, res) => {
+    res.status(200).json({
+      message:
+        'Sylva Technologies authentication service is running.',
+    });
+  }
+);
+
+/* ============================================================
+ * EXPORT
+ * ============================================================ */
 
 module.exports = router;
