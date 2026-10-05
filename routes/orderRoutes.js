@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 
 const Order = require('../models/Order');
+const User = require('../models/User');
 const Product = require('../models/Product');
 const {
   protect,
@@ -27,6 +28,135 @@ const PAYMENT_STATUSES = [
   'Failed',
   'Refunded',
 ];
+
+const roundMoney = (value) => {
+  const normalized = Number(value || 0);
+  if (!Number.isFinite(normalized)) {
+    return 0;
+  }
+
+  return Number(normalized.toFixed(2));
+};
+
+const applySellerSettlement = async (order) => {
+  if (!order || !Array.isArray(order.items)) {
+    return { settled: false, count: 0 };
+  }
+
+  const commissionRate = Number(
+    process.env.PLATFORM_COMMISSION_RATE || 0.1
+  );
+
+  const groupedSettlements = new Map();
+
+  for (const item of order.items) {
+    if (!item || !item.product) {
+      continue;
+    }
+
+    const product = await Product.findById(item.product).select(
+      'seller price name'
+    );
+
+    if (!product || !product.seller) {
+      continue;
+    }
+
+    const sellerId = product.seller.toString();
+    const grossAmount = roundMoney(
+      Number(item.subtotal || 0)
+    );
+    const commission = roundMoney(
+      grossAmount * commissionRate
+    );
+    const netAmount = roundMoney(
+      grossAmount - commission
+    );
+
+    if (!groupedSettlements.has(sellerId)) {
+      groupedSettlements.set(sellerId, {
+        sellerId,
+        grossAmount: 0,
+        commission: 0,
+        netAmount: 0,
+        products: [],
+      });
+    }
+
+    const current = groupedSettlements.get(sellerId);
+    current.grossAmount = roundMoney(
+      current.grossAmount + grossAmount
+    );
+    current.commission = roundMoney(
+      current.commission + commission
+    );
+    current.netAmount = roundMoney(
+      current.netAmount + netAmount
+    );
+    current.products.push({
+      productId: product._id,
+      productName: product.name,
+      amount: grossAmount,
+      netAmount,
+      orderItemId: item._id || item.product,
+    });
+  }
+
+  let settledCount = 0;
+
+  for (const settlement of groupedSettlements.values()) {
+    const seller = await User.findById(settlement.sellerId);
+
+    if (!seller) {
+      continue;
+    }
+
+    const wallet = seller.wallet || {
+      currency: 'KES',
+      availableBalance: 0,
+      pendingBalance: 0,
+      transactions: [],
+    };
+
+    wallet.currency = wallet.currency || 'KES';
+    wallet.availableBalance = roundMoney(
+      Number(wallet.availableBalance || 0) +
+        Number(settlement.netAmount || 0)
+    );
+    wallet.lastUpdatedAt = new Date();
+
+    wallet.transactions = Array.isArray(wallet.transactions)
+      ? wallet.transactions
+      : [];
+
+    wallet.transactions.unshift({
+      _id: new mongoose.Types.ObjectId(),
+      type: 'credit',
+      amount: roundMoney(settlement.netAmount),
+      category: 'order_settlement',
+      status: 'completed',
+      description: `Order settlement for ${order.orderNumber}.`,
+      reference: `order:${order.orderNumber}`,
+      relatedOrder: order._id,
+      metadata: {
+        commission: roundMoney(settlement.commission),
+        grossAmount: roundMoney(settlement.grossAmount),
+        products: settlement.products,
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    seller.wallet = wallet;
+    await seller.save();
+    settledCount += 1;
+  }
+
+  return {
+    settled: settledCount > 0,
+    count: settledCount,
+  };
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -235,14 +365,18 @@ router.post('/', protect, requireVerified, async (req, res) => {
         });
       }
 
+      const unitPrice = Number(product.price || 0);
+      const subtotal = roundMoney(unitPrice * quantity);
+
       preparedItems.push({
         product: product._id,
         name: product.name,
         quantity,
-        price: Number(product.price || 0),
+        price: unitPrice,
 
         // Required by the Order model
-        unitPrice: Number(product.price || 0),
+        unitPrice,
+        subtotal,
 
         image:
           Array.isArray(product.images) && product.images.length > 0
@@ -499,18 +633,32 @@ router.patch('/:id/payment-status', protect, adminOnly, async (req, res) => {
       });
     }
 
-    /*
-     * Update only the paymentStatus field.
-     * This avoids validating unrelated legacy order fields.
-     */
-    await Order.updateOne(
-      { _id: order._id },
-      {
-        $set: {
-          paymentStatus,
-        },
+    const isFirstPaymentConfirmation =
+      paymentStatus === 'Paid' &&
+      order.paymentStatus !== 'Paid';
+
+    order.paymentStatus = paymentStatus;
+
+    if (paymentStatus === 'Paid') {
+      order.status =
+        order.status === 'Pending'
+          ? 'Confirmed'
+          : order.status;
+
+      if (isFirstPaymentConfirmation) {
+        const settlementResult = await applySellerSettlement(order);
+
+        if (settlementResult.settled) {
+          console.info(
+            'Seller settlements applied for order:',
+            order.orderNumber,
+            settlementResult.count
+          );
+        }
       }
-    );
+    }
+
+    await order.save();
 
     const updated = await Order.findById(order._id)
       .populate('customer', 'name email phone')

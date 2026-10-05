@@ -325,6 +325,114 @@ const userSchema = new mongoose.Schema(
     },
 
     /* ==========================================
+     * SELLER / CUSTOMER WALLET
+     * ==========================================
+     *
+     * This model stores wallet balances and transaction
+     * history server-side. Payout and settlement actions are
+     * validated on the backend before any balance changes are
+     * applied.
+     * ========================================== */
+
+    wallet: {
+      currency: {
+        type: String,
+        default: 'KES',
+        trim: true,
+      },
+
+      availableBalance: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      pendingBalance: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      lastUpdatedAt: {
+        type: Date,
+        default: null,
+      },
+
+      transactions: [
+        {
+          _id: {
+            type: mongoose.Schema.Types.ObjectId,
+            default: () => new mongoose.Types.ObjectId(),
+          },
+
+          type: {
+            type: String,
+            enum: ['credit', 'debit'],
+            default: 'credit',
+          },
+
+          amount: {
+            type: Number,
+            default: 0,
+            min: 0,
+          },
+
+          category: {
+            type: String,
+            default: 'manual_adjustment',
+            trim: true,
+          },
+
+          status: {
+            type: String,
+            enum: [
+              'pending',
+              'completed',
+              'paid',
+              'rejected',
+              'failed',
+              'reversed',
+            ],
+            default: 'completed',
+          },
+
+          description: {
+            type: String,
+            default: '',
+            trim: true,
+          },
+
+          reference: {
+            type: String,
+            default: '',
+            trim: true,
+          },
+
+          relatedOrder: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Order',
+            default: null,
+          },
+
+          metadata: {
+            type: mongoose.Schema.Types.Mixed,
+            default: {},
+          },
+
+          createdAt: {
+            type: Date,
+            default: Date.now,
+          },
+
+          updatedAt: {
+            type: Date,
+            default: Date.now,
+          },
+        },
+      ],
+    },
+
+    /* ==========================================
      * SELLER / CUSTOMER AGREEMENTS
      * ========================================== */
 

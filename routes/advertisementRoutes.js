@@ -19,68 +19,51 @@ const router = express.Router();
 |--------------------------------------------------------------------------
 */
 
-router.get(
-  '/',
-  async (req, res) => {
-    try {
-      const now = new Date();
+const buildActiveAdvertisementQuery = () => {
+  const now = new Date();
 
-      const ads =
-        await Advertisement.find({
-          active: true,
+  return {
+    active: true,
+    $and: [
+      {
+        $or: [
+          { startsAt: null },
+          { startsAt: { $lte: now } },
+        ],
+      },
+      {
+        $or: [
+          { endsAt: null },
+          { endsAt: { $gte: now } },
+        ],
+      },
+    ],
+  };
+};
 
-          $and: [
-            {
-              $or: [
-                {
-                  startsAt: null,
-                },
-                {
-                  startsAt: {
-                    $lte: now,
-                  },
-                },
-              ],
-            },
+const sendActiveAdvertisements = async (req, res) => {
+  try {
+    const ads = await Advertisement.find(buildActiveAdvertisementQuery())
+      .sort({ priority: -1, createdAt: -1 })
+      .lean();
 
-            {
-              $or: [
-                {
-                  endsAt: null,
-                },
-                {
-                  endsAt: {
-                    $gt: now,
-                  },
-                },
-              ],
-            },
-          ],
-        })
-          .sort({
-            createdAt: -1,
-          })
-          .lean();
+    return res.json({
+      success: true,
+      count: ads.length,
+      data: ads,
+    });
+  } catch (error) {
+    console.error('Unable to load advertisements:', error);
 
-      return res.json({
-        success: true,
-        count: ads.length,
-        data: ads,
-      });
-    } catch (error) {
-      console.error(
-        'Unable to load advertisements:',
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        message:
-          'Unable to load advertisements.',
-      });
-    }
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to load advertisements.',
+    });
   }
-);
+};
+
+router.get('/', sendActiveAdvertisements);
+router.get('/active', sendActiveAdvertisements);
 
 /*
 |--------------------------------------------------------------------------
