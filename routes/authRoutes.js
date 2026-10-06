@@ -328,7 +328,7 @@ router.post(
 
       return res.status(200).json({
         message: emailSent
-          ? 'A verification email has been sent to your inbox. Please check your email and enter the 6-digit code below to continue.'
+          ? 'Verification code sent successfully.'
           : 'The verification email could not be sent right now. Please try again in a moment.',
         emailSent,
       });
@@ -1172,6 +1172,49 @@ router.post(
 /* ============================================================
  * HEALTH CHECK FOR AUTH ROUTES
  * ============================================================ */
+
+router.get('/me', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required. Please log in again.',
+      });
+    }
+
+    const token = authHeader.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication token is missing.',
+      });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select('-password');
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'User account could not be found.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user: safeUser(user),
+    });
+  } catch (error) {
+    console.error('Fetch current user error:', error);
+    return res.status(401).json({
+      success: false,
+      message: 'Your session has expired or the token is invalid.',
+    });
+  }
+});
 
 router.get(
   '/health',
