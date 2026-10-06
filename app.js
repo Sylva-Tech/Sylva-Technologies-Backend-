@@ -11,6 +11,7 @@ const orderRoutes = require('./routes/orderRoutes');
 const userRoutes = require('./routes/userRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const advertisementRoutes = require('./routes/advertisementRoutes');
+const flipAdvertisementRoutes = require('./routes/flipAdvertisementRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const walletRoutes = require('./routes/walletRoutes');
 const sellerManagementRoutes = require('./routes/sellerManagementRoutes');
@@ -355,6 +356,8 @@ app.use('/api/users', userRoutes);
 app.use('/api/contact', contactRoutes);
 
 app.use('/api/advertisements', advertisementRoutes);
+
+app.use('/api/flip-advertisements', flipAdvertisementRoutes);
 
 app.use('/api/admin', adminRoutes);
 
