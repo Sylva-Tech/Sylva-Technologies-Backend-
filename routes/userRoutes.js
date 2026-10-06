@@ -1,6 +1,9 @@
 const express = require('express');
 
 const User = require('../models/User');
+const Order = require('../models/Order');
+const Notification = require('../models/Notification');
+const VerificationToken = require('../models/VerificationToken');
 
 const {
   protect,
@@ -31,7 +34,7 @@ router.delete('/me', protect, async (req, res) => {
       });
     }
 
-    const deletedUser = await User.findByIdAndDelete(req.user._id);
+    const deletedUser = await User.findById(req.user._id);
 
     if (!deletedUser) {
       return res.status(404).json({
@@ -40,9 +43,17 @@ router.delete('/me', protect, async (req, res) => {
       });
     }
 
+    await Promise.all([
+      User.findByIdAndDelete(req.user._id),
+      Order.deleteMany({ customer: req.user._id }),
+      Order.deleteMany({ customerEmail: req.user.email }),
+      Notification.deleteMany({ user: req.user._id }),
+      VerificationToken.deleteMany({ user: req.user._id }),
+    ]);
+
     return res.json({
       success: true,
-      message: 'Your account has been deleted successfully.',
+      message: 'Your account and all associated records have been deleted successfully.',
     });
   } catch (error) {
     console.error('Delete current user error:', error);
@@ -88,11 +99,17 @@ router.delete('/:id', protect, async (req, res) => {
       });
     }
 
-    await User.findByIdAndDelete(targetId);
+    await Promise.all([
+      User.findByIdAndDelete(targetId),
+      Order.deleteMany({ customer: targetId }),
+      Order.deleteMany({ customerEmail: targetUser.email }),
+      Notification.deleteMany({ user: targetId }),
+      VerificationToken.deleteMany({ user: targetId }),
+    ]);
 
     return res.json({
       success: true,
-      message: 'Customer account deleted successfully.',
+      message: 'Customer account and all associated records were deleted successfully.',
     });
   } catch (error) {
     console.error('Delete user error:', error);

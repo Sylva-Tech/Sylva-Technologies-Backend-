@@ -10,10 +10,11 @@ const orderConfirmationTemplate = ({ customerName, order, orderDate }) => `
         <p>Thank you for shopping with Sylva Technologies. Your order has been placed successfully.</p>
         <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:18px; margin:22px 0;">
           <p><strong>Order number:</strong> ${order.orderNumber}</p>
+          <p><strong>Tracking code:</strong> ${order.trackingCode || order.orderNumber}</p>
           <p><strong>Order date:</strong> ${orderDate}</p>
           <p><strong>Payment method:</strong> ${order.paymentMethod}</p>
           <p><strong>Payment status:</strong> ${order.paymentStatus || 'Pending'}</p>
-          <p><strong>Status:</strong> ${order.status}</p>
+          <p><strong>Status:</strong> ${order.status || 'Placed and being processed'}</p>
         </div>
         <table style="width:100%; border-collapse:collapse; margin:20px 0;">
           <thead>

@@ -42,10 +42,15 @@ const orderSchema = new mongoose.Schema(
       unique: true,
       index: true,
     },
+    trackingCode: {
+      type: String,
+      default: '',
+      index: true,
+    },
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      default: null,
       index: true,
     },
     customerName: {

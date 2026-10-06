@@ -47,11 +47,15 @@ const getFromEmail = (type = 'verification') => {
 
     orders:
       process.env.EMAIL_FROM_ORDERS ||
-      'Sylva Technologies <orders@sylvatechnologies.co.ke>',
+      'Sylva Technologies <order@sylvatechnologies.co.ke>',
 
     admin:
       process.env.EMAIL_FROM_ADMIN ||
-      'Sylva Technologies <admin@sylvatechnologies.co.ke>',
+      'Sylva Technologies <sales@sylvatechnologies.co.ke>',
+
+    sales:
+      process.env.EMAIL_FROM_SALES ||
+      'Sylva Technologies <sales@sylvatechnologies.co.ke>',
 
     support:
       process.env.EMAIL_FROM_SUPPORT ||
@@ -774,7 +778,7 @@ const sendOrderConfirmationEmail = async ({
       `Order Confirmation - ${order.orderNumber}`,
     html,
     text:
-      `Thank you ${customerName} for shopping with Sylva Technologies. Your order ${order.orderNumber} has been placed successfully.`,
+      `Thank you ${customerName} for shopping with Sylva Technologies. Your order ${order.orderNumber} has been placed successfully and is now being processed. Tracking code: ${order.trackingCode || order.orderNumber}.`,
     sender: 'orders',
   });
 };
@@ -799,13 +803,13 @@ const sendAdminOrderNotificationEmail =
       });
 
     return sendMail({
-      to,
+      to: to || process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke',
       subject:
         `New order received - ${order.orderNumber}`,
       html,
       text:
-        `A new order ${order.orderNumber} has been placed by ${customer.name}.`,
-      sender: 'admin',
+        `A new order ${order.orderNumber} has been placed by ${customer.name}. Tracking code: ${order.trackingCode || order.orderNumber}. Payment: ${order.paymentMethod}. Delivery: ${order.customerDetails?.deliveryLocation || order.customerDetails?.address || 'N/A'}.`,
+      sender: 'sales',
     });
   };
 

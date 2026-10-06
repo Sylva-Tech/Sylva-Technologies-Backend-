@@ -6,6 +6,7 @@ const adminOrderNotificationTemplate = ({ order, customer }) => `
       </div>
       <div style="padding:32px;">
         <p><strong>Order number:</strong> ${order.orderNumber}</p>
+        <p><strong>Tracking code:</strong> ${order.trackingCode || order.orderNumber}</p>
         <p><strong>Customer:</strong> ${customer.name}</p>
         <p><strong>Email:</strong> ${customer.email}</p>
         <p><strong>Phone:</strong> ${customer.phone || 'N/A'}</p>
@@ -13,6 +14,7 @@ const adminOrderNotificationTemplate = ({ order, customer }) => `
         <p><strong>Total:</strong> KES ${Number(order.total || 0).toLocaleString()}</p>
         <p><strong>Payment method:</strong> ${order.paymentMethod}</p>
         <p><strong>Payment status:</strong> ${order.paymentStatus || 'Pending'}</p>
+        <p><strong>Payment reference:</strong> ${order.paymentReference || 'N/A'}</p>
         <table style="width:100%; border-collapse:collapse; margin-top:20px;">
           <thead>
             <tr>

@@ -9,6 +9,10 @@ const {
   adminOnly,
   requireVerified,
 } = require('../middleware/authMiddleware');
+const {
+  sendOrderConfirmationEmail,
+  sendAdminOrderNotificationEmail,
+} = require('../services/emailService');
 
 const router = express.Router();
 
@@ -271,12 +275,7 @@ router.get('/:id', protect, async (req, res) => {
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| CREATE ORDER
-|--------------------------------------------------------------------------
-*/
-router.post('/', protect, requireVerified, async (req, res) => {
+const createOrderFromRequest = async ({ req, res, user, requireVerification = false }) => {
   try {
     const {
       items,
@@ -320,6 +319,13 @@ router.post('/', protect, requireVerified, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'A valid order total is required.',
+      });
+    }
+
+    if (requireVerification && user && !user.isVerified) {
+      return res.status(403).json({
+        success: false,
+        message: 'Verification required. Please verify your account before continuing.',
       });
     }
 
@@ -373,11 +379,8 @@ router.post('/', protect, requireVerified, async (req, res) => {
         name: product.name,
         quantity,
         price: unitPrice,
-
-        // Required by the Order model
         unitPrice,
         subtotal,
-
         image:
           Array.isArray(product.images) && product.images.length > 0
             ? product.images[0]
@@ -386,7 +389,6 @@ router.post('/', protect, requireVerified, async (req, res) => {
     }
 
     const today = new Date();
-
     const datePart =
       `${today.getFullYear()}` +
       `${String(today.getMonth() + 1).padStart(2, '0')}` +
@@ -410,12 +412,13 @@ router.post('/', protect, requireVerified, async (req, res) => {
     const orderNumber =
       `ST-${datePart}-${String(orderCount + 1).padStart(4, '0')}`;
 
+    const customerEmail = customerDetails.email || user?.email || '';
     const order = await Order.create({
       orderNumber,
-      customer: req.user._id,
+      trackingCode: orderNumber,
+      customer: user?._id || null,
       customerName: customerDetails.fullName,
-      customerEmail:
-        customerDetails.email || req.user.email || '',
+      customerEmail,
       customerPhone: customerDetails.phone,
       items: preparedItems,
       deliveryFee: Number(deliveryFee || 0),
@@ -480,6 +483,38 @@ router.post('/', protect, requireVerified, async (req, res) => {
         'name slug price images stock'
       );
 
+    try {
+      if (customerEmail) {
+        await sendOrderConfirmationEmail({
+          to: customerEmail,
+          customerName: customerDetails.fullName,
+          order: {
+            ...populatedOrder.toObject(),
+            orderNumber: populatedOrder.orderNumber,
+            trackingCode: populatedOrder.trackingCode || populatedOrder.orderNumber,
+          },
+          orderDate: new Date(populatedOrder.createdAt).toLocaleString(),
+        });
+      }
+
+      const adminAddress = process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke';
+      await sendAdminOrderNotificationEmail({
+        to: adminAddress,
+        order: {
+          ...populatedOrder.toObject(),
+          orderNumber: populatedOrder.orderNumber,
+          trackingCode: populatedOrder.trackingCode || populatedOrder.orderNumber,
+        },
+        customer: {
+          name: customerDetails.fullName,
+          email: customerEmail,
+          phone: customerDetails.phone,
+        },
+      });
+    } catch (emailError) {
+      console.error('Order email notification failed:', emailError);
+    }
+
     return res.status(201).json({
       success: true,
       message: 'Order created successfully.',
@@ -493,6 +528,24 @@ router.post('/', protect, requireVerified, async (req, res) => {
       message: 'Unable to create the order.',
     });
   }
+};
+
+router.post('/guest', async (req, res) => {
+  return createOrderFromRequest({
+    req,
+    res,
+    user: null,
+    requireVerification: false,
+  });
+});
+
+router.post('/', protect, requireVerified, async (req, res) => {
+  return createOrderFromRequest({
+    req,
+    res,
+    user: req.user,
+    requireVerification: true,
+  });
 });
 
 /*
