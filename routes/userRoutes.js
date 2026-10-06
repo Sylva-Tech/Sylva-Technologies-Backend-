@@ -15,6 +15,95 @@ const cloudinary = require('../config/cloudinary');
 
 const router = express.Router();
 
+router.delete('/me', protect, async (req, res) => {
+  try {
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required.',
+      });
+    }
+
+    if (req.user.role === 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin accounts cannot be deleted from this endpoint.',
+      });
+    }
+
+    const deletedUser = await User.findByIdAndDelete(req.user._id);
+
+    if (!deletedUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User account not found.',
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Your account has been deleted successfully.',
+    });
+  } catch (error) {
+    console.error('Delete current user error:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Unable to delete your account.',
+    });
+  }
+});
+
+router.delete('/:id', protect, async (req, res) => {
+  try {
+    const targetId = req.params.id;
+
+    if (!targetId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required.',
+      });
+    }
+
+    if (req.user.role !== 'admin' && req.user._id.toString() !== targetId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not allowed to delete this account.',
+      });
+    }
+
+    const targetUser = await User.findById(targetId);
+
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User account not found.',
+      });
+    }
+
+    if (targetUser.role === 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin accounts cannot be deleted here.',
+      });
+    }
+
+    await User.findByIdAndDelete(targetId);
+
+    return res.json({
+      success: true,
+      message: 'Customer account deleted successfully.',
+    });
+  } catch (error) {
+    console.error('Delete user error:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Unable to delete this account.',
+    });
+  }
+});
+
 /*
 |--------------------------------------------------------------------------
 | ADMIN - LOAD ALL USERS
