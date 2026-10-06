@@ -258,6 +258,82 @@ router.post('/register', async (req, res) => {
   }
 });
 
+router.post(
+  '/resend-verification-code',
+  async (req, res) => {
+    try {
+      const { email } = req.body;
+      const normalizedEmail = normalizeEmail(email);
+
+      if (!normalizedEmail) {
+        return res.status(400).json({
+          message: 'Email is required.',
+        });
+      }
+
+      const user = await User.findOne({ email: normalizedEmail });
+
+      if (!user) {
+        return res.status(404).json({
+          message: 'User account not found.',
+        });
+      }
+
+      if (user.isVerified) {
+        return res.status(200).json({
+          message: 'Your account is already verified.',
+        });
+      }
+
+      const rawVerificationToken = generateSecureToken();
+      const verificationTokenHash = hashToken(rawVerificationToken);
+      const verificationCode = generateVerificationCode();
+      const verificationCodeHash = hashToken(verificationCode);
+      const verificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: { $in: ['verification', 'verification-code'] },
+      });
+
+      await VerificationToken.create({
+        user: user._id,
+        purpose: 'verification',
+        tokenHash: verificationTokenHash,
+        expiresAt: verificationExpiresAt,
+        method: 'email',
+      });
+
+      await VerificationToken.create({
+        user: user._id,
+        purpose: 'verification-code',
+        tokenHash: verificationCodeHash,
+        expiresAt: verificationExpiresAt,
+        method: 'email',
+      });
+
+      const verifyLink = `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(rawVerificationToken)}&email=${encodeURIComponent(normalizedEmail)}`;
+
+      await sendVerificationCodeAndLinkEmail({
+        to: normalizedEmail,
+        name: user.name,
+        otp: verificationCode,
+        verifyLink,
+        expiresInMinutes: 24 * 60,
+      });
+
+      return res.status(200).json({
+        message: 'Check your email inbox for a verification code, then enter it below to continue.',
+      });
+    } catch (error) {
+      console.error('Resend verification code error:', error);
+      return res.status(500).json({
+        message: 'Unable to send a new verification code right now.',
+      });
+    }
+  }
+);
+
 /* ============================================================
  * LOGIN
  * POST /api/auth/login
