@@ -328,16 +328,14 @@ router.post(
 
       return res.status(200).json({
         message: emailSent
-          ? 'Check your email inbox for a verification code, then enter it below to continue.'
-          : 'Your verification code is ready. Please use the code shown in your secure checkout step to continue.',
-        verificationCode,
+          ? 'A verification email has been sent to your inbox. Please check your email and enter the 6-digit code below to continue.'
+          : 'The verification email could not be sent right now. Please try again in a moment.',
         emailSent,
       });
     } catch (error) {
       console.error('Resend verification code error:', error);
       return res.status(200).json({
-        message: 'Your verification code is ready. Please use the code in the checkout form to continue.',
-        verificationCode: verificationCode || generateVerificationCode(),
+        message: 'The verification email could not be sent right now. Please try again in a moment.',
         emailSent: false,
       });
     }
