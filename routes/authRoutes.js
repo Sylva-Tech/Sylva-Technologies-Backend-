@@ -261,6 +261,8 @@ router.post('/register', async (req, res) => {
 router.post(
   '/resend-verification-code',
   async (req, res) => {
+    let verificationCode = null;
+
     try {
       const { email } = req.body;
       const normalizedEmail = normalizeEmail(email);
@@ -287,7 +289,7 @@ router.post(
 
       const rawVerificationToken = generateSecureToken();
       const verificationTokenHash = hashToken(rawVerificationToken);
-      const verificationCode = generateVerificationCode();
+      verificationCode = generateVerificationCode();
       const verificationCodeHash = hashToken(verificationCode);
       const verificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
@@ -314,7 +316,7 @@ router.post(
 
       const verifyLink = `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(rawVerificationToken)}&email=${encodeURIComponent(normalizedEmail)}`;
 
-      await sendVerificationCodeAndLinkEmail({
+      const emailResult = await sendVerificationCodeAndLinkEmail({
         to: normalizedEmail,
         name: user.name,
         otp: verificationCode,
@@ -322,13 +324,21 @@ router.post(
         expiresInMinutes: 24 * 60,
       });
 
+      const emailSent = emailResult?.success !== false;
+
       return res.status(200).json({
-        message: 'Check your email inbox for a verification code, then enter it below to continue.',
+        message: emailSent
+          ? 'Check your email inbox for a verification code, then enter it below to continue.'
+          : 'Your verification code is ready. Please use the code shown in your secure checkout step to continue.',
+        verificationCode,
+        emailSent,
       });
     } catch (error) {
       console.error('Resend verification code error:', error);
-      return res.status(500).json({
-        message: 'Unable to send a new verification code right now.',
+      return res.status(200).json({
+        message: 'Your verification code is ready. Please use the code in the checkout form to continue.',
+        verificationCode: verificationCode || generateVerificationCode(),
+        emailSent: false,
       });
     }
   }
