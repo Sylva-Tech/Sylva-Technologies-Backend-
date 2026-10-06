@@ -11,6 +11,8 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Name is required'],
       trim: true,
+      minlength: [2, 'Name must be at least 2 characters'],
+      maxlength: [100, 'Name cannot exceed 100 characters'],
     },
 
     email: {
@@ -19,12 +21,14 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       trim: true,
+      maxlength: [150, 'Email cannot exceed 150 characters'],
       index: true,
     },
 
     phone: {
       type: String,
       trim: true,
+      maxlength: [30, 'Phone number is too long'],
       index: true,
     },
 
@@ -38,51 +42,34 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ['customer', 'admin', 'seller'],
       default: 'customer',
+      index: true,
     },
 
     address: {
       type: String,
       default: '',
       trim: true,
+      maxlength: [300, 'Address cannot exceed 300 characters'],
     },
 
     /* ==========================================
      * SELLER APPLICATION STATUS
-     * ==========================================
-     *
-     * This controls the seller application itself.
-     *
-     * none     = normal customer / no application
-     * pending  = application submitted and awaiting review
-     * approved = application approved
-     * rejected = application rejected and may be resubmitted
-     *
-     * IMPORTANT:
-     * sellerStatus is intentionally separate from
-     * accountStatus and storeStatus.
      * ========================================== */
 
     sellerStatus: {
       type: String,
-      enum: ['none', 'pending', 'approved', 'rejected'],
+      enum: [
+        'none',
+        'pending',
+        'approved',
+        'rejected',
+      ],
       default: 'none',
       index: true,
     },
 
     /* ==========================================
      * SELLER OPERATIONAL ACCOUNT STATUS
-     * ==========================================
-     *
-     * This controls whether an approved seller
-     * is allowed to operate.
-     *
-     * active    = seller account operating normally
-     * warning   = seller receives a warning but
-     *             can continue operating
-     * suspended = temporarily restricted
-     * banned    = permanently/indefinitely restricted
-     *
-     * This does NOT replace sellerStatus.
      * ========================================== */
 
     accountStatus: {
@@ -105,6 +92,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '',
       trim: true,
+      maxlength: [
+        500,
+        'Warning reason cannot exceed 500 characters',
+      ],
     },
 
     warnedAt: {
@@ -120,17 +111,6 @@ const userSchema = new mongoose.Schema(
 
     /* ==========================================
      * SELLER STORE STATUS
-     * ==========================================
-     *
-     * active   = seller storefront is operational
-     * inactive = storefront is not operational
-     *
-     * A seller should normally only have an active
-     * store when:
-     *
-     * sellerStatus === 'approved'
-     *
-     * and accountStatus is active or warning.
      * ========================================== */
 
     storeStatus: {
@@ -148,6 +128,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '',
       trim: true,
+      maxlength: [
+        500,
+        'Suspension reason cannot exceed 500 characters',
+      ],
     },
 
     suspendedAt: {
@@ -169,6 +153,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '',
       trim: true,
+      maxlength: [
+        500,
+        'Ban reason cannot exceed 500 characters',
+      ],
     },
 
     bannedAt: {
@@ -193,13 +181,6 @@ const userSchema = new mongoose.Schema(
 
     /* ==========================================
      * SELLER PROFILE
-     * ==========================================
-     *
-     * Sensitive seller information and private
-     * verification documents are stored here.
-     *
-     * These fields must NOT be returned by normal
-     * public APIs.
      * ========================================== */
 
     sellerProfile: {
@@ -211,6 +192,10 @@ const userSchema = new mongoose.Schema(
         type: String,
         default: '',
         trim: true,
+        maxlength: [
+          150,
+          'Official name cannot exceed 150 characters',
+        ],
       },
 
       idType: {
@@ -229,6 +214,10 @@ const userSchema = new mongoose.Schema(
         type: String,
         default: '',
         trim: true,
+        maxlength: [
+          50,
+          'ID number cannot exceed 50 characters',
+        ],
       },
 
       dateOfBirth: {
@@ -239,18 +228,27 @@ const userSchema = new mongoose.Schema(
       /* ------------------------------------------
        * PRIVATE IDENTIFICATION DOCUMENTS
        *
-       * These should contain private Cloudinary
-       * references only.
+       * These contain private Cloudinary
+       * references and must never be exposed
+       * through normal public APIs.
        * ------------------------------------------ */
 
       idFrontDocument: {
         type: String,
         default: '',
+        maxlength: [
+          500,
+          'Document reference is too long',
+        ],
       },
 
       idBackDocument: {
         type: String,
         default: '',
+        maxlength: [
+          500,
+          'Document reference is too long',
+        ],
       },
 
       /* ------------------------------------------
@@ -261,6 +259,10 @@ const userSchema = new mongoose.Schema(
         type: String,
         default: '',
         trim: true,
+        maxlength: [
+          150,
+          'Store name cannot exceed 150 characters',
+        ],
       },
 
       storeEmail: {
@@ -268,24 +270,40 @@ const userSchema = new mongoose.Schema(
         default: '',
         lowercase: true,
         trim: true,
+        maxlength: [
+          150,
+          'Store email cannot exceed 150 characters',
+        ],
       },
 
       storePhone: {
         type: String,
         default: '',
         trim: true,
+        maxlength: [
+          30,
+          'Store phone number is too long',
+        ],
       },
 
       mpesaPhone: {
         type: String,
         default: '',
         trim: true,
+        maxlength: [
+          30,
+          'M-Pesa phone number is too long',
+        ],
       },
 
       kraPin: {
         type: String,
         default: '',
         trim: true,
+        maxlength: [
+          30,
+          'KRA PIN is too long',
+        ],
       },
 
       /* ------------------------------------------
@@ -295,12 +313,20 @@ const userSchema = new mongoose.Schema(
       kraPinDocument: {
         type: String,
         default: '',
+        maxlength: [
+          500,
+          'KRA document reference is too long',
+        ],
       },
 
       storeLocation: {
         type: String,
         default: '',
         trim: true,
+        maxlength: [
+          250,
+          'Store location cannot exceed 250 characters',
+        ],
       },
 
       /* ------------------------------------------
@@ -321,6 +347,10 @@ const userSchema = new mongoose.Schema(
         type: String,
         default: '',
         trim: true,
+        maxlength: [
+          500,
+          'Rejection reason cannot exceed 500 characters',
+        ],
       },
     },
 
@@ -328,10 +358,20 @@ const userSchema = new mongoose.Schema(
      * SELLER / CUSTOMER WALLET
      * ==========================================
      *
-     * This model stores wallet balances and transaction
-     * history server-side. Payout and settlement actions are
-     * validated on the backend before any balance changes are
-     * applied.
+     * availableBalance:
+     * Money currently available for withdrawal.
+     *
+     * pendingBalance:
+     * Money temporarily locked in pending operations,
+     * such as payout requests.
+     *
+     * totalBalance:
+     * availableBalance + pendingBalance
+     *
+     * IMPORTANT:
+     * Wallet changes must always be performed by
+     * backend-controlled routes/services.
+     * Never trust balances sent by the frontend.
      * ========================================== */
 
     wallet: {
@@ -339,18 +379,25 @@ const userSchema = new mongoose.Schema(
         type: String,
         default: 'KES',
         trim: true,
+        maxlength: 10,
       },
 
       availableBalance: {
         type: Number,
         default: 0,
-        min: 0,
+        min: [
+          0,
+          'Available balance cannot be negative',
+        ],
       },
 
       pendingBalance: {
         type: Number,
         default: 0,
-        min: 0,
+        min: [
+          0,
+          'Pending balance cannot be negative',
+        ],
       },
 
       lastUpdatedAt: {
@@ -358,30 +405,58 @@ const userSchema = new mongoose.Schema(
         default: null,
       },
 
+      /* ==========================================
+       * WALLET TRANSACTIONS
+       * ========================================== */
+
       transactions: [
         {
           _id: {
             type: mongoose.Schema.Types.ObjectId,
-            default: () => new mongoose.Types.ObjectId(),
+            default: () =>
+              new mongoose.Types.ObjectId(),
           },
+
+          /* ----------------------------------------
+           * CREDIT / DEBIT
+           * ---------------------------------------- */
 
           type: {
             type: String,
-            enum: ['credit', 'debit'],
+            enum: [
+              'credit',
+              'debit',
+            ],
             default: 'credit',
           },
+
+          /* ----------------------------------------
+           * MONEY AMOUNT
+           * ---------------------------------------- */
 
           amount: {
             type: Number,
             default: 0,
-            min: 0,
+            min: [
+              0,
+              'Transaction amount cannot be negative',
+            ],
           },
+
+          /* ----------------------------------------
+           * TRANSACTION CATEGORY
+           * ---------------------------------------- */
 
           category: {
             type: String,
             default: 'manual_adjustment',
             trim: true,
+            maxlength: 100,
           },
+
+          /* ----------------------------------------
+           * TRANSACTION STATUS
+           * ---------------------------------------- */
 
           status: {
             type: String,
@@ -396,17 +471,37 @@ const userSchema = new mongoose.Schema(
             default: 'completed',
           },
 
+          /* ----------------------------------------
+           * DESCRIPTION
+           * ---------------------------------------- */
+
           description: {
             type: String,
             default: '',
             trim: true,
+            maxlength: [
+              500,
+              'Transaction description cannot exceed 500 characters',
+            ],
           },
+
+          /* ----------------------------------------
+           * UNIQUE / HUMAN-READABLE REFERENCE
+           * ---------------------------------------- */
 
           reference: {
             type: String,
             default: '',
             trim: true,
+            maxlength: [
+              150,
+              'Transaction reference cannot exceed 150 characters',
+            ],
           },
+
+          /* ----------------------------------------
+           * OPTIONAL RELATED ORDER
+           * ---------------------------------------- */
 
           relatedOrder: {
             type: mongoose.Schema.Types.ObjectId,
@@ -414,15 +509,56 @@ const userSchema = new mongoose.Schema(
             default: null,
           },
 
+          /* ----------------------------------------
+           * FLEXIBLE INTERNAL METADATA
+           * ----------------------------------------
+           *
+           * Examples:
+           *
+           * payoutMethod
+           * destination
+           * sellerId
+           * requestedAt
+           * adminReviewedBy
+           * adminDecision
+           * rejectionReason
+           *
+           * Do not expose sensitive metadata through
+           * public/customer endpoints.
+           * ---------------------------------------- */
+
           metadata: {
             type: mongoose.Schema.Types.Mixed,
             default: {},
           },
 
+          /* ----------------------------------------
+           * TRANSACTION CREATION TIME
+           * ---------------------------------------- */
+
           createdAt: {
             type: Date,
             default: Date.now,
           },
+
+          /* ----------------------------------------
+           * TRANSACTION PROCESSING TIME
+           * ----------------------------------------
+           *
+           * Used when:
+           * - payout is approved
+           * - payout is rejected
+           * - another pending transaction is processed
+           * ---------------------------------------- */
+
+          processedAt: {
+            type: Date,
+            default: null,
+          },
+
+          /* ----------------------------------------
+           * LAST TRANSACTION UPDATE
+           * ---------------------------------------- */
 
           updatedAt: {
             type: Date,
@@ -489,7 +625,10 @@ const userSchema = new mongoose.Schema(
 
     verificationMethod: {
       type: String,
-      enum: ['email', 'sms'],
+      enum: [
+        'email',
+        'sms',
+      ],
       default: 'email',
     },
 
@@ -518,6 +657,7 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
   },
+
   {
     timestamps: true,
   }
@@ -527,88 +667,208 @@ const userSchema = new mongoose.Schema(
  * PASSWORD HASHING
  * ========================================== */
 
-userSchema.pre('save', async function () {
-  if (!this.isModified('password')) {
-    return;
+userSchema.pre(
+  'save',
+  async function () {
+    if (!this.isModified('password')) {
+      return;
+    }
+
+    const salt =
+      await bcrypt.genSalt(10);
+
+    this.password =
+      await bcrypt.hash(
+        this.password,
+        salt
+      );
   }
-
-  const salt = await bcrypt.genSalt(10);
-
-  this.password = await bcrypt.hash(
-    this.password,
-    salt
-  );
-});
+);
 
 /* ==========================================
  * PASSWORD VERIFICATION
  * ========================================== */
 
-userSchema.methods.matchPassword = async function (
-  enteredPassword
-) {
-  return bcrypt.compare(
-    enteredPassword,
-    this.password
-  );
-};
+userSchema.methods.matchPassword =
+  async function (enteredPassword) {
+    return bcrypt.compare(
+      enteredPassword,
+      this.password
+    );
+  };
 
 /* ==========================================
  * ACCOUNT LOCK CHECK
  * ========================================== */
 
-userSchema.methods.isLocked = function () {
-  return (
-    !!this.lockUntil &&
-    this.lockUntil > Date.now()
-  );
-};
+userSchema.methods.isLocked =
+  function () {
+    return (
+      !!this.lockUntil &&
+      this.lockUntil > Date.now()
+    );
+  };
 
 /* ==========================================
  * SELLER OPERATIONAL CHECK
  * ==========================================
  *
- * Returns true when the seller:
+ * A seller is operational when:
  *
- * 1. Has an approved seller application
- * 2. Has an active account OR warning status
- * 3. Has an active store
+ * 1. role === seller
+ * 2. sellerStatus === approved
+ * 3. accountStatus === active/warning
+ * 4. storeStatus === active
  *
- * A warning does NOT prevent normal seller
- * operations.
+ * Warning does NOT prevent seller operations.
  *
  * Suspended and banned sellers return false.
  * ========================================== */
 
-userSchema.methods.isActiveSeller = function () {
-  return (
-    this.role === 'seller' &&
-    this.sellerStatus === 'approved' &&
-    ['active', 'warning'].includes(
-      this.accountStatus
-    ) &&
-    this.storeStatus === 'active'
-  );
-};
+userSchema.methods.isActiveSeller =
+  function () {
+    return (
+      this.role === 'seller' &&
+      this.sellerStatus ===
+        'approved' &&
+      [
+        'active',
+        'warning',
+      ].includes(
+        this.accountStatus
+      ) &&
+      this.storeStatus ===
+        'active'
+    );
+  };
 
 /* ==========================================
  * SELLER ACCOUNT RESTRICTION CHECK
  * ========================================== */
 
-userSchema.methods.isSellerRestricted = function () {
-  return (
-    this.accountStatus === 'suspended' ||
-    this.accountStatus === 'banned'
-  );
-};
+userSchema.methods.isSellerRestricted =
+  function () {
+    return (
+      this.accountStatus ===
+        'suspended' ||
+      this.accountStatus ===
+        'banned'
+    );
+  };
 
 /* ==========================================
  * SELLER WARNING CHECK
  * ========================================== */
 
-userSchema.methods.isSellerWarned = function () {
-  return this.accountStatus === 'warning';
-};
+userSchema.methods.isSellerWarned =
+  function () {
+    return (
+      this.accountStatus ===
+      'warning'
+    );
+  };
+
+/* ==========================================
+ * SELLER APPLICATION CHECKS
+ * ========================================== */
+
+userSchema.methods.hasPendingSellerApplication =
+  function () {
+    return (
+      this.sellerStatus ===
+      'pending'
+    );
+  };
+
+userSchema.methods.isApprovedSeller =
+  function () {
+    return (
+      this.role === 'seller' &&
+      this.sellerStatus ===
+        'approved'
+    );
+  };
+
+userSchema.methods.canResubmitSellerApplication =
+  function () {
+    return (
+      this.sellerStatus ===
+      'rejected'
+    );
+  };
+
+/* ==========================================
+ * WALLET HELPERS
+ * ========================================== */
+
+userSchema.methods.getAvailableWalletBalance =
+  function () {
+    return Number(
+      (
+        this.wallet
+          ?.availableBalance ||
+        0
+      ).toFixed(2)
+    );
+  };
+
+userSchema.methods.getPendingWalletBalance =
+  function () {
+    return Number(
+      (
+        this.wallet
+          ?.pendingBalance ||
+        0
+      ).toFixed(2)
+    );
+  };
+
+userSchema.methods.getTotalWalletBalance =
+  function () {
+    return Number(
+      (
+        this.getAvailableWalletBalance() +
+        this.getPendingWalletBalance()
+      ).toFixed(2)
+    );
+  };
+
+/* ==========================================
+ * WALLET INTEGRITY CHECK
+ * ==========================================
+ *
+ * Returns false if wallet balances are invalid.
+ *
+ * This does NOT calculate the balance from
+ * transactions. It only checks that the stored
+ * balances themselves are valid.
+ * ========================================== */
+
+userSchema.methods.hasValidWallet =
+  function () {
+    const available =
+      Number(
+        this.wallet
+          ?.availableBalance
+      );
+
+    const pending =
+      Number(
+        this.wallet
+          ?.pendingBalance
+      );
+
+    return (
+      Number.isFinite(
+        available
+      ) &&
+      Number.isFinite(
+        pending
+      ) &&
+      available >= 0 &&
+      pending >= 0
+    );
+  };
 
 /* ==========================================
  * MODEL EXPORT
