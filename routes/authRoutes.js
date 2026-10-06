@@ -7,7 +7,7 @@ const User = require('../models/User');
 const VerificationToken = require('../models/VerificationToken');
 
 const {
-  sendVerificationLinkEmail,
+  sendVerificationCodeAndLinkEmail,
   sendPasswordResetCodeAndLinkEmail,
 } = require('../services/emailService');
 
@@ -66,6 +66,13 @@ const generateResetCode = () => {
     .randomInt(0, 1000000)
     .toString()
     .padStart(PASSWORD_RESET_CODE_LENGTH, '0');
+};
+
+const generateVerificationCode = () => {
+  return crypto
+    .randomInt(0, 1000000)
+    .toString()
+    .padStart(6, '0');
 };
 
 /**
@@ -175,15 +182,14 @@ router.post('/register', async (req, res) => {
       isVerified: false,
     });
 
-    /*
-     * Create email verification token.
-     */
     const rawVerificationToken =
       generateSecureToken();
-
     const verificationTokenHash =
       hashToken(rawVerificationToken);
-
+    const verificationCode =
+      generateVerificationCode();
+    const verificationCodeHash =
+      hashToken(verificationCode);
     const verificationExpiresAt =
       new Date(
         Date.now() +
@@ -192,13 +198,21 @@ router.post('/register', async (req, res) => {
 
     await VerificationToken.deleteMany({
       user: user._id,
-      purpose: 'verification',
+      purpose: { $in: ['verification', 'verification-code'] },
     });
 
     await VerificationToken.create({
       user: user._id,
       purpose: 'verification',
       tokenHash: verificationTokenHash,
+      expiresAt: verificationExpiresAt,
+      method: 'email',
+    });
+
+    await VerificationToken.create({
+      user: user._id,
+      purpose: 'verification-code',
+      tokenHash: verificationCodeHash,
       expiresAt: verificationExpiresAt,
       method: 'email',
     });
@@ -210,13 +224,11 @@ router.post('/register', async (req, res) => {
         normalizedEmail
       )}`;
 
-    /*
-     * Email failure should not destroy the account.
-     */
     try {
-      await sendVerificationLinkEmail({
+      await sendVerificationCodeAndLinkEmail({
         to: normalizedEmail,
         name: user.name,
+        otp: verificationCode,
         verifyLink,
         expiresInMinutes: 24 * 60,
       });
@@ -229,9 +241,9 @@ router.post('/register', async (req, res) => {
 
     return res.status(201).json({
       message:
-        'Account created successfully. Please check your email to verify your account.',
+        'Verification code and link have been sent to your email. Please check your inbox and verify your account before continuing.',
       user: safeUser(user),
-      token: createJwt(user),
+      verificationCode,
     });
   } catch (error) {
     console.error(
@@ -975,13 +987,16 @@ router.get(
       }
 
       user.isVerified = true;
-
       await user.save();
 
       verificationToken.usedAt =
         new Date();
-
       await verificationToken.save();
+
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'verification-code',
+      });
 
       return res.status(200).json({
         message:
@@ -996,6 +1011,75 @@ router.get(
       return res.status(500).json({
         message:
           'Unable to verify your email right now.',
+      });
+    }
+  }
+);
+
+router.post(
+  '/verify-email-code',
+  async (req, res) => {
+    try {
+      const { email, code } = req.body;
+      const normalizedEmail = normalizeEmail(email);
+
+      if (!normalizedEmail || !code) {
+        return res.status(400).json({
+          message: 'Email and verification code are required.',
+        });
+      }
+
+      const user = await User.findOne({ email: normalizedEmail });
+
+      if (!user) {
+        return res.status(404).json({
+          message: 'User account not found.',
+        });
+      }
+
+      const verificationCodeHash = hashToken(String(code).trim());
+      const verificationToken = await VerificationToken.findOne({
+        user: user._id,
+        purpose: 'verification-code',
+        tokenHash: verificationCodeHash,
+      });
+
+      if (!verificationToken) {
+        return res.status(400).json({
+          message: 'Invalid or expired verification code.',
+        });
+      }
+
+      if (verificationToken.usedAt) {
+        return res.status(400).json({
+          message: 'This verification code has already been used.',
+        });
+      }
+
+      if (!verificationToken.expiresAt || verificationToken.expiresAt <= new Date()) {
+        return res.status(400).json({
+          message: 'This verification code has expired.',
+        });
+      }
+
+      user.isVerified = true;
+      await user.save();
+
+      verificationToken.usedAt = new Date();
+      await verificationToken.save();
+
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'verification',
+      });
+
+      return res.status(200).json({
+        message: 'Email verified successfully. Please log in to continue.',
+      });
+    } catch (error) {
+      console.error('Email verification code error:', error);
+      return res.status(500).json({
+        message: 'Unable to verify your email right now.',
       });
     }
   }

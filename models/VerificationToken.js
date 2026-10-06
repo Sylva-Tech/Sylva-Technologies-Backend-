@@ -14,6 +14,7 @@ const verificationTokenSchema = new mongoose.Schema(
       type: String,
       enum: [
         'verification',
+        'verification-code',
         'password-reset',
         'password-reset-code',
         'password-reset-verified',

@@ -215,6 +215,80 @@ const sendPasswordResetEmail = async ({
 /**
  * Verification email using a secure link.
  */
+const sendVerificationCodeAndLinkEmail = async ({
+  to,
+  name,
+  otp,
+  verifyLink,
+  expiresInMinutes,
+}) => {
+  const safeName = name || 'Customer';
+
+  const html = `
+    <div
+      style="
+        font-family:Arial,sans-serif;
+        background:#f4f7fb;
+        padding:24px;
+        color:#1a1a1a;
+      "
+    >
+      <div
+        style="
+          max-width:620px;
+          margin:0 auto;
+          background:#ffffff;
+          border-radius:12px;
+          overflow:hidden;
+          border:1px solid #e5e7eb;
+        "
+      >
+        <div
+          style="
+            background:linear-gradient(135deg,#0f172a,#1d4ed8);
+            padding:24px 32px;
+            color:#fff;
+          "
+        >
+          <h2 style="margin:0;font-size:26px;">
+            Sylva Technologies
+          </h2>
+        </div>
+
+        <div style="padding:32px;">
+          <h3 style="margin-top:0; font-size:22px;">Verify your email address</h3>
+          <p>Hello <strong>${safeName}</strong>,</p>
+          <p>Your verification code is:</p>
+          <div style="background:#eff6ff; border:2px dashed #2563eb; border-radius:10px; text-align:center; padding:20px; margin:24px 0;">
+            <span style="font-size:32px; font-weight:bold; letter-spacing:8px; color:#1d4ed8;">${otp}</span>
+          </div>
+          <p>Enter this code on the verification page, or click the button below to verify directly.</p>
+          <p style="text-align:center;">
+            <a href="${verifyLink}" style="display:inline-block; background:#1d4ed8; color:#fff; padding:12px 20px; border-radius:8px; text-decoration:none;">
+              Verify My Email
+            </a>
+          </p>
+          <p>This code and link expire in ${expiresInMinutes} minutes.</p>
+          <p>If the button does not work, copy and paste this link:</p>
+          <p style="word-break:break-all;">${verifyLink}</p>
+        </div>
+
+        <div style="background:#f8fafc; color:#475569; padding:18px 32px; font-size:12px; border-top:1px solid #e5e7eb;">
+          © 2026 Sylva Technologies. All rights reserved.
+        </div>
+      </div>
+    </div>
+  `;
+
+  return sendMail({
+    to,
+    subject: 'Verify your Sylva Technologies email',
+    html,
+    text: `Hello ${safeName}, your Sylva Technologies verification code is ${otp}. Visit ${verifyLink} to verify your account. The code expires in ${expiresInMinutes} minutes.`,
+    sender: 'verification',
+  });
+};
+
 const sendVerificationLinkEmail = async ({
   to,
   name,
@@ -854,6 +928,7 @@ module.exports = {
   // Account verification
   sendVerificationEmail,
   sendVerificationLinkEmail,
+  sendVerificationCodeAndLinkEmail,
 
   // Password reset
   sendPasswordResetEmail,
