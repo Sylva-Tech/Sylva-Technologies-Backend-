@@ -207,22 +207,19 @@ router.get(
 
       const lowStock =
         await Product.countDocuments({
-          stock: {
+          stock: mongoose.trusted({
             $lt: Number(
               process.env
                 .LOW_STOCK_THRESHOLD ||
                 5
             ),
-          },
+          }),
         });
 
-      const paidFilter = {
+      const paidFilter = mongoose.trusted({
         paymentStatus: 'Paid',
-
-        status: {
-          $ne: 'Cancelled',
-        },
-      };
+        status: { $ne: 'Cancelled' },
+      });
 
       const revenueAgg =
         await Order.aggregate([
@@ -256,9 +253,9 @@ router.get(
       const monthFilter = {
         ...paidFilter,
 
-        createdAt: {
+        createdAt: mongoose.trusted({
           $gte: monthStart,
-        },
+        }),
       };
 
       const monthAgg =
@@ -356,22 +353,13 @@ router.get(
        * This avoids the CastError currently
        * occurring with the sellerStatus field.
        */
-      let filter = {
+      let filter = mongoose.trusted({
         $or: [
-          {
-            sellerStatus:
-              'pending',
-          },
-          {
-            sellerStatus:
-              'approved',
-          },
-          {
-            sellerStatus:
-              'rejected',
-          },
+          { sellerStatus: 'pending' },
+          { sellerStatus: 'approved' },
+          { sellerStatus: 'rejected' },
         ],
-      };
+      });
 
       /*
        * For a specific status, use a
@@ -518,27 +506,28 @@ router.get(
        * to prevent the same sellerStatus
        * casting problem.
        */
-      const seller =
-        await User.findOne({
-          _id: req.params.id,
+      const sellerFilter = {
+        _id: req.params.id,
+        $or: [
+          { sellerStatus: 'pending' },
+          { sellerStatus: 'approved' },
+          { sellerStatus: 'rejected' },
+        ],
+      };
 
-          $or: [
-            {
-              sellerStatus:
-                'pending',
-            },
-            {
-              sellerStatus:
-                'approved',
-            },
-            {
-              sellerStatus:
-                'rejected',
-            },
-          ],
-        }).select(
-          '-password'
-        );
+      // Validate ID
+      if (!mongoose.isValidObjectId(req.params.id)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid seller ID.',
+        });
+      }
+
+      // Wrap only the server-authored operator portion
+      const seller = await User.findOne({
+        _id: sellerFilter._id,
+        ...mongoose.trusted({ $or: sellerFilter.$or }),
+      }).select('-password');
 
       if (!seller) {
         return res.status(404).json({
@@ -1177,5 +1166,6 @@ router.get(
 );
 
 module.exports = router;
+
 
 

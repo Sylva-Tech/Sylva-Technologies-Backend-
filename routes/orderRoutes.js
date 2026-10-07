@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 
+const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Product = require('../models/Product');
@@ -696,62 +697,44 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
 
     const successfullyDeducted = [];
 
+    // Use a MongoDB transaction to atomically decrement stock for all items.
+    const session = await mongoose.startSession();
+
     try {
+      session.startTransaction();
+
       for (const item of preparedItems) {
-        const stockUpdate =
-          await Product.updateOne(
-            {
-              _id: item.product,
-              stock: {
-                $gte: item.quantity,
-              },
-            },
-            {
-              $inc: {
-                stock: -item.quantity,
-              },
-            }
-          );
-
-        if (
-          stockUpdate.modifiedCount !== 1
-        ) {
-          throw new Error(
-            `Stock could not be deducted for product ${item.product}.`
-          );
-        }
-
-        successfullyDeducted.push(item);
-      }
-    } catch (stockError) {
-      /*
-      |--------------------------------------------------------------------------
-      | ROLLBACK STOCK
-      |--------------------------------------------------------------------------
-      */
-
-      for (const item of successfullyDeducted) {
-        await Product.updateOne(
+        const stockUpdate = await Product.updateOne(
           {
             _id: item.product,
+            stock: mongoose.trusted({ $gte: item.quantity }),
           },
           {
-            $inc: {
-              stock: item.quantity,
-            },
-          }
+            $inc: { stock: -item.quantity },
+          },
+          { session }
         );
+
+        if (!stockUpdate || stockUpdate.modifiedCount !== 1) {
+          throw new Error(`Insufficient stock for product ${item.product}`);
+        }
       }
 
-      /*
-      |--------------------------------------------------------------------------
-      | DELETE THE FAILED ORDER
-      |--------------------------------------------------------------------------
-      */
+      // Commit transaction
+      await session.commitTransaction();
+      session.endSession();
+    } catch (stockError) {
+      // Abort transaction and roll back
+      try {
+        await session.abortTransaction();
+      } catch (e) {
+        /* ignore */
+      }
 
-      await Order.findByIdAndDelete(
-        order._id
-      );
+      session.endSession();
+
+      // Remove the created order since inventory update failed
+      await Order.findByIdAndDelete(order._id);
 
       return res.status(400).json({
         success: false,

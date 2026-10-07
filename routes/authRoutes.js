@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const VerificationToken = require('../models/VerificationToken');
 
@@ -528,6 +529,13 @@ router.post(
         email,
       } = req.body;
 
+      // Harden input: email must be a string to avoid NoSQL injection
+      if (typeof email !== 'string') {
+        return res.status(400).json({
+          message: 'Email must be a string.',
+        });
+      }
+
       const normalizedEmail =
         normalizeEmail(email);
 
@@ -685,6 +693,19 @@ router.post(
         code,
         token: linkToken,
       } = req.body;
+
+      // Harden input types
+      if (typeof email !== 'string') {
+        return res.status(400).json({
+          message: 'Email must be a string.',
+        });
+      }
+
+      if (typeof code !== 'string') {
+        return res.status(400).json({
+          message: 'Reset code must be a string.',
+        });
+      }
 
       const normalizedEmail =
         normalizeEmail(email);
@@ -926,6 +947,12 @@ router.post(
         });
       }
 
+      if (typeof token !== 'string') {
+        return res.status(400).json({
+          message: 'Password reset token must be a string.',
+        });
+      }
+
       if (!password) {
         return res.status(400).json({
           message:
@@ -1032,12 +1059,12 @@ router.post(
        */
       await VerificationToken.deleteMany({
         user: user._id,
-        purpose: {
+        purpose: mongoose.trusted({
           $in: [
             'password-reset',
             'password-reset-code',
           ],
-        },
+        }),
       });
 
       return res.status(200).json({

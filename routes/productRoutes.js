@@ -251,15 +251,21 @@ router.get('/', async (req, res) => {
      * In-stock products.
      */
     if (inStock === 'true') {
-      filter.stock = {
-        $gt: 0,
-      };
+      filter.stock = mongoose.trusted({ $gt: 0 });
     }
 
     /*
      * Search by name, brand or SKU.
      */
     if (search) {
+      if (typeof search !== 'string') {
+        return res.status(400).json({
+          products: [],
+          page: safePage,
+          totalPages: 0,
+          totalProducts: 0,
+        });
+      }
       filter.$or = [
         {
           name: {
@@ -982,9 +988,7 @@ router.put(
         const skuExists =
           await Product.findOne({
             sku: newSku,
-            _id: {
-              $ne: product._id,
-            },
+              _id: mongoose.trusted({ $ne: product._id }),
           });
 
         if (skuExists) {

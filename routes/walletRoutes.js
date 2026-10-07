@@ -1064,20 +1064,17 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
-      const sellers =
-        await User.find({
+      const sellers = await User.find(
+        mongoose.trusted({
           role: 'seller',
-
           'wallet.transactions': {
             $elemMatch: {
-              category:
-                'payout_request',
-
-              status:
-                'pending',
+              category: 'payout_request',
+              status: 'pending',
             },
           },
         })
+      )
           .select(
             'name email phone sellerProfile wallet'
           )
