@@ -4,11 +4,13 @@ const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Product = require('../models/Product');
+
 const {
   protect,
   adminOnly,
   requireVerified,
 } = require('../middleware/authMiddleware');
+
 const {
   sendOrderConfirmationEmail,
   sendAdminOrderNotificationEmail,
@@ -35,6 +37,7 @@ const PAYMENT_STATUSES = [
 
 const roundMoney = (value) => {
   const normalized = Number(value || 0);
+
   if (!Number.isFinite(normalized)) {
     return 0;
   }
@@ -42,9 +45,18 @@ const roundMoney = (value) => {
   return Number(normalized.toFixed(2));
 };
 
+/*
+|--------------------------------------------------------------------------
+| APPLY SELLER SETTLEMENT
+|--------------------------------------------------------------------------
+*/
+
 const applySellerSettlement = async (order) => {
   if (!order || !Array.isArray(order.items)) {
-    return { settled: false, count: 0 };
+    return {
+      settled: false,
+      count: 0,
+    };
   }
 
   const commissionRate = Number(
@@ -67,12 +79,15 @@ const applySellerSettlement = async (order) => {
     }
 
     const sellerId = product.seller.toString();
+
     const grossAmount = roundMoney(
       Number(item.subtotal || 0)
     );
+
     const commission = roundMoney(
       grossAmount * commissionRate
     );
+
     const netAmount = roundMoney(
       grossAmount - commission
     );
@@ -88,15 +103,19 @@ const applySellerSettlement = async (order) => {
     }
 
     const current = groupedSettlements.get(sellerId);
+
     current.grossAmount = roundMoney(
       current.grossAmount + grossAmount
     );
+
     current.commission = roundMoney(
       current.commission + commission
     );
+
     current.netAmount = roundMoney(
       current.netAmount + netAmount
     );
+
     current.products.push({
       productId: product._id,
       productName: product.name,
@@ -109,7 +128,9 @@ const applySellerSettlement = async (order) => {
   let settledCount = 0;
 
   for (const settlement of groupedSettlements.values()) {
-    const seller = await User.findById(settlement.sellerId);
+    const seller = await User.findById(
+      settlement.sellerId
+    );
 
     if (!seller) {
       continue;
@@ -123,13 +144,17 @@ const applySellerSettlement = async (order) => {
     };
 
     wallet.currency = wallet.currency || 'KES';
+
     wallet.availableBalance = roundMoney(
       Number(wallet.availableBalance || 0) +
         Number(settlement.netAmount || 0)
     );
+
     wallet.lastUpdatedAt = new Date();
 
-    wallet.transactions = Array.isArray(wallet.transactions)
+    wallet.transactions = Array.isArray(
+      wallet.transactions
+    )
       ? wallet.transactions
       : [];
 
@@ -152,7 +177,9 @@ const applySellerSettlement = async (order) => {
     });
 
     seller.wallet = wallet;
+
     await seller.save();
+
     settledCount += 1;
   }
 
@@ -167,10 +194,14 @@ const applySellerSettlement = async (order) => {
 | GET ALL ORDERS - ADMIN
 |--------------------------------------------------------------------------
 */
+
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
     const orders = await Order.find()
-      .populate('customer', 'name email phone')
+      .populate(
+        'customer',
+        'name email phone'
+      )
       .populate(
         'items.product',
         'name slug price images stock'
@@ -196,6 +227,7 @@ router.get('/', protect, adminOnly, async (req, res) => {
 | GET MY ORDERS - CUSTOMER
 |--------------------------------------------------------------------------
 */
+
 router.get('/my-orders', protect, async (req, res) => {
   try {
     const orders = await Order.find({
@@ -226,9 +258,14 @@ router.get('/my-orders', protect, async (req, res) => {
 | GET SINGLE ORDER
 |--------------------------------------------------------------------------
 */
+
 router.get('/:id', protect, async (req, res) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (
+      !mongoose.Types.ObjectId.isValid(
+        req.params.id
+      )
+    ) {
       return res.status(400).json({
         success: false,
         message: 'Invalid order ID.',
@@ -236,7 +273,10 @@ router.get('/:id', protect, async (req, res) => {
     }
 
     const order = await Order.findById(req.params.id)
-      .populate('customer', 'name email phone')
+      .populate(
+        'customer',
+        'name email phone'
+      )
       .populate(
         'items.product',
         'name slug price images stock'
@@ -249,15 +289,19 @@ router.get('/:id', protect, async (req, res) => {
       });
     }
 
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin =
+      req.user.role === 'admin';
+
     const isOwner =
       order.customer &&
-      order.customer._id.toString() === req.user._id.toString();
+      order.customer._id.toString() ===
+        req.user._id.toString();
 
     if (!isAdmin && !isOwner) {
       return res.status(403).json({
         success: false,
-        message: 'You are not authorized to view this order.',
+        message:
+          'You are not authorized to view this order.',
       });
     }
 
@@ -266,7 +310,10 @@ router.get('/:id', protect, async (req, res) => {
       data: order,
     });
   } catch (error) {
-    console.error('Get single order error:', error);
+    console.error(
+      'Get single order error:',
+      error
+    );
 
     return res.status(500).json({
       success: false,
@@ -275,179 +322,416 @@ router.get('/:id', protect, async (req, res) => {
   }
 });
 
-const createOrderFromRequest = async ({ req, res, user, requireVerification = false }) => {
+/*
+|--------------------------------------------------------------------------
+| CREATE ORDER
+|--------------------------------------------------------------------------
+|
+| The backend calculates:
+|
+|   item subtotal = database product price × quantity
+|   order subtotal = sum of item subtotals
+|   total = order subtotal + delivery fee
+|
+| The frontend does NOT control the final order total.
+|
+|--------------------------------------------------------------------------
+*/
+
+const createOrderFromRequest = async ({
+  req,
+  res,
+  user,
+  requireVerification = false,
+}) => {
   try {
     const {
       items,
       deliveryFee = 0,
-      total,
       customerDetails,
       paymentMethod = 'Cash on Delivery',
       paymentReference = '',
       notes = '',
     } = req.body;
 
-    if (!Array.isArray(items) || items.length === 0) {
+    /*
+    |--------------------------------------------------------------------------
+    | BASIC VALIDATION
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      !Array.isArray(items) ||
+      items.length === 0
+    ) {
       return res.status(400).json({
         success: false,
-        message: 'Your order must contain at least one product.',
+        message:
+          'Your order must contain at least one product.',
       });
     }
 
     if (!customerDetails?.fullName) {
       return res.status(400).json({
         success: false,
-        message: 'Customer name is required.',
+        message:
+          'Customer name is required.',
       });
     }
 
     if (!customerDetails?.phone) {
       return res.status(400).json({
         success: false,
-        message: 'Customer phone number is required.',
+        message:
+          'Customer phone number is required.',
       });
     }
 
     if (!customerDetails?.deliveryLocation) {
       return res.status(400).json({
         success: false,
-        message: 'Delivery location is required.',
+        message:
+          'Delivery location is required.',
       });
     }
 
-    if (!Number.isFinite(Number(total)) || Number(total) < 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'A valid order total is required.',
-      });
-    }
+    /*
+    |--------------------------------------------------------------------------
+    | VERIFIED ACCOUNT CHECK
+    |--------------------------------------------------------------------------
+    */
 
-    if (requireVerification && user && !user.isVerified) {
+    if (
+      requireVerification &&
+      user &&
+      !user.isVerified
+    ) {
       return res.status(403).json({
         success: false,
-        message: 'Verification required. Please verify your account before continuing.',
+        message:
+          'Verification required. Please verify your account before continuing.',
       });
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | DELIVERY FEE
+    |--------------------------------------------------------------------------
+    */
+
+    const normalizedDeliveryFee =
+      Number(deliveryFee || 0);
+
+    if (
+      !Number.isFinite(
+        normalizedDeliveryFee
+      ) ||
+      normalizedDeliveryFee < 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'A valid delivery fee is required.',
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | PREPARE ORDER ITEMS
+    |--------------------------------------------------------------------------
+    */
 
     const preparedItems = [];
 
     for (const item of items) {
-      if (!item.product || !mongoose.Types.ObjectId.isValid(item.product)) {
+      /*
+      |--------------------------------------------------------------------------
+      | VALIDATE PRODUCT ID
+      |--------------------------------------------------------------------------
+      */
+
+      if (
+        !item.product ||
+        !mongoose.Types.ObjectId.isValid(
+          item.product
+        )
+      ) {
         return res.status(400).json({
           success: false,
-          message: 'One of the products in the order is invalid.',
+          message:
+            'One of the products in the order is invalid.',
         });
       }
 
-      const quantity = Number(item.quantity);
+      /*
+      |--------------------------------------------------------------------------
+      | VALIDATE QUANTITY
+      |--------------------------------------------------------------------------
+      */
 
-      if (!Number.isInteger(quantity) || quantity <= 0) {
+      const quantity = Number(
+        item.quantity
+      );
+
+      if (
+        !Number.isInteger(quantity) ||
+        quantity <= 0
+      ) {
         return res.status(400).json({
           success: false,
-          message: 'Product quantity must be a positive whole number.',
+          message:
+            'Product quantity must be a positive whole number.',
         });
       }
 
-      const product = await Product.findById(item.product);
+      /*
+      |--------------------------------------------------------------------------
+      | FETCH PRODUCT FROM DATABASE
+      |--------------------------------------------------------------------------
+      */
+
+      const product =
+        await Product.findById(
+          item.product
+        );
 
       if (!product) {
         return res.status(404).json({
           success: false,
-          message: 'One of the selected products no longer exists.',
+          message:
+            'One of the selected products no longer exists.',
         });
       }
+
+      /*
+      |--------------------------------------------------------------------------
+      | CHECK PRODUCT STATUS
+      |--------------------------------------------------------------------------
+      */
 
       if (product.isActive === false) {
         return res.status(400).json({
           success: false,
-          message: `${product.name} is currently unavailable.`,
+          message:
+            `${product.name} is currently unavailable.`,
         });
       }
 
-      if (Number(product.stock || 0) < quantity) {
+      /*
+      |--------------------------------------------------------------------------
+      | CHECK STOCK
+      |--------------------------------------------------------------------------
+      */
+
+      if (
+        Number(product.stock || 0) <
+        quantity
+      ) {
         return res.status(400).json({
           success: false,
-          message: `Insufficient stock for ${product.name}.`,
+          message:
+            `Insufficient stock for ${product.name}.`,
         });
       }
 
-      const unitPrice = Number(product.price || 0);
-      const subtotal = roundMoney(unitPrice * quantity);
+      /*
+      |--------------------------------------------------------------------------
+      | USE DATABASE PRICE
+      |--------------------------------------------------------------------------
+      */
+
+      const unitPrice = Number(
+        product.price || 0
+      );
+
+      if (
+        !Number.isFinite(unitPrice) ||
+        unitPrice < 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `Invalid price configured for ${product.name}.`,
+        });
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | CALCULATE ITEM SUBTOTAL
+      |--------------------------------------------------------------------------
+      */
+
+      const subtotal = roundMoney(
+        unitPrice * quantity
+      );
 
       preparedItems.push({
         product: product._id,
         name: product.name,
         quantity,
-        price: unitPrice,
         unitPrice,
         subtotal,
         image:
-          Array.isArray(product.images) && product.images.length > 0
+          Array.isArray(product.images) &&
+          product.images.length > 0
             ? product.images[0]
             : '',
       });
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | CALCULATE ORDER SUBTOTAL
+    |--------------------------------------------------------------------------
+    */
+
+    const orderSubtotal = roundMoney(
+      preparedItems.reduce(
+        (sum, item) =>
+          sum +
+          Number(item.subtotal || 0),
+        0
+      )
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | CALCULATE FINAL ORDER TOTAL
+    |--------------------------------------------------------------------------
+    */
+
+    const orderTotal = roundMoney(
+      orderSubtotal +
+        normalizedDeliveryFee
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | GENERATE ORDER NUMBER
+    |--------------------------------------------------------------------------
+    */
+
     const today = new Date();
+
     const datePart =
       `${today.getFullYear()}` +
-      `${String(today.getMonth() + 1).padStart(2, '0')}` +
-      `${String(today.getDate()).padStart(2, '0')}`;
+      `${String(
+        today.getMonth() + 1
+      ).padStart(2, '0')}` +
+      `${String(
+        today.getDate()
+      ).padStart(2, '0')}`;
 
-    const orderCount = await Order.countDocuments({
-      createdAt: {
-        $gte: new Date(
-          today.getFullYear(),
-          today.getMonth(),
-          today.getDate()
-        ),
-        $lt: new Date(
-          today.getFullYear(),
-          today.getMonth(),
-          today.getDate() + 1
-        ),
-      },
-    });
+    const orderCount =
+      await Order.countDocuments({
+        createdAt: {
+          $gte: new Date(
+            today.getFullYear(),
+            today.getMonth(),
+            today.getDate()
+          ),
+          $lt: new Date(
+            today.getFullYear(),
+            today.getMonth(),
+            today.getDate() + 1
+          ),
+        },
+      });
 
     const orderNumber =
-      `ST-${datePart}-${String(orderCount + 1).padStart(4, '0')}`;
+      `ST-${datePart}-${String(
+        orderCount + 1
+      ).padStart(4, '0')}`;
 
-    const customerEmail = customerDetails.email || user?.email || '';
+    /*
+    |--------------------------------------------------------------------------
+    | CUSTOMER EMAIL
+    |--------------------------------------------------------------------------
+    */
+
+    const customerEmail =
+      customerDetails.email ||
+      user?.email ||
+      '';
+
+    /*
+    |--------------------------------------------------------------------------
+    | CREATE ORDER
+    |--------------------------------------------------------------------------
+    */
+
     const order = await Order.create({
       orderNumber,
       trackingCode: orderNumber,
-      customer: user?._id || null,
-      customerName: customerDetails.fullName,
+
+      customer:
+        user?._id || null,
+
+      customerName:
+        customerDetails.fullName,
+
       customerEmail,
-      customerPhone: customerDetails.phone,
+
+      customerPhone:
+        customerDetails.phone,
+
       items: preparedItems,
-      deliveryFee: Number(deliveryFee || 0),
-      total: Number(total),
+
+      /*
+      |--------------------------------------------------------------------------
+      | IMPORTANT:
+      | These values are calculated by the backend.
+      |--------------------------------------------------------------------------
+      */
+
+      subtotal: orderSubtotal,
+
+      deliveryFee:
+        normalizedDeliveryFee,
+
+      total: orderTotal,
+
       customerDetails,
+
       paymentMethod,
+
       paymentReference,
+
       paymentStatus: 'Pending',
+
       status: 'Pending',
+
       notes,
     });
+
+    /*
+    |--------------------------------------------------------------------------
+    | DEDUCT STOCK
+    |--------------------------------------------------------------------------
+    */
 
     const successfullyDeducted = [];
 
     try {
       for (const item of preparedItems) {
-        const stockUpdate = await Product.updateOne(
-          {
-            _id: item.product,
-            stock: { $gte: item.quantity },
-          },
-          {
-            $inc: {
-              stock: -item.quantity,
+        const stockUpdate =
+          await Product.updateOne(
+            {
+              _id: item.product,
+              stock: {
+                $gte: item.quantity,
+              },
             },
-          }
-        );
+            {
+              $inc: {
+                stock: -item.quantity,
+              },
+            }
+          );
 
-        if (stockUpdate.modifiedCount !== 1) {
+        if (
+          stockUpdate.modifiedCount !== 1
+        ) {
           throw new Error(
             `Stock could not be deducted for product ${item.product}.`
           );
@@ -456,9 +740,17 @@ const createOrderFromRequest = async ({ req, res, user, requireVerification = fa
         successfullyDeducted.push(item);
       }
     } catch (stockError) {
+      /*
+      |--------------------------------------------------------------------------
+      | ROLLBACK STOCK
+      |--------------------------------------------------------------------------
+      */
+
       for (const item of successfullyDeducted) {
         await Product.updateOne(
-          { _id: item.product },
+          {
+            _id: item.product,
+          },
           {
             $inc: {
               stock: item.quantity,
@@ -467,7 +759,15 @@ const createOrderFromRequest = async ({ req, res, user, requireVerification = fa
         );
       }
 
-      await Order.findByIdAndDelete(order._id);
+      /*
+      |--------------------------------------------------------------------------
+      | DELETE THE FAILED ORDER
+      |--------------------------------------------------------------------------
+      */
+
+      await Order.findByIdAndDelete(
+        order._id
+      );
 
       return res.status(400).json({
         success: false,
@@ -476,59 +776,128 @@ const createOrderFromRequest = async ({ req, res, user, requireVerification = fa
       });
     }
 
-    const populatedOrder = await Order.findById(order._id)
-      .populate('customer', 'name email phone')
-      .populate(
-        'items.product',
-        'name slug price images stock'
-      );
+    /*
+    |--------------------------------------------------------------------------
+    | POPULATE CREATED ORDER
+    |--------------------------------------------------------------------------
+    */
+
+    const populatedOrder =
+      await Order.findById(order._id)
+        .populate(
+          'customer',
+          'name email phone'
+        )
+        .populate(
+          'items.product',
+          'name slug price images stock'
+        );
+
+    /*
+    |--------------------------------------------------------------------------
+    | SEND ORDER EMAILS
+    |--------------------------------------------------------------------------
+    */
 
     try {
       if (customerEmail) {
         await sendOrderConfirmationEmail({
           to: customerEmail,
-          customerName: customerDetails.fullName,
+
+          customerName:
+            customerDetails.fullName,
+
           order: {
             ...populatedOrder.toObject(),
-            orderNumber: populatedOrder.orderNumber,
-            trackingCode: populatedOrder.trackingCode || populatedOrder.orderNumber,
+
+            orderNumber:
+              populatedOrder.orderNumber,
+
+            trackingCode:
+              populatedOrder.trackingCode ||
+              populatedOrder.orderNumber,
           },
-          orderDate: new Date(populatedOrder.createdAt).toLocaleString(),
+
+          orderDate:
+            new Date(
+              populatedOrder.createdAt
+            ).toLocaleString(),
         });
       }
 
-      const adminAddress = process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke';
+      const adminAddress =
+        process.env.SALES_EMAIL ||
+        'sales@sylvatechnologies.co.ke';
+
       await sendAdminOrderNotificationEmail({
         to: adminAddress,
+
         order: {
           ...populatedOrder.toObject(),
-          orderNumber: populatedOrder.orderNumber,
-          trackingCode: populatedOrder.trackingCode || populatedOrder.orderNumber,
+
+          orderNumber:
+            populatedOrder.orderNumber,
+
+          trackingCode:
+            populatedOrder.trackingCode ||
+            populatedOrder.orderNumber,
         },
+
         customer: {
-          name: customerDetails.fullName,
-          email: customerEmail,
-          phone: customerDetails.phone,
+          name:
+            customerDetails.fullName,
+
+          email:
+            customerEmail,
+
+          phone:
+            customerDetails.phone,
         },
       });
     } catch (emailError) {
-      console.error('Order email notification failed:', emailError);
+      /*
+      |--------------------------------------------------------------------------
+      | EMAIL FAILURE SHOULD NOT CANCEL THE ORDER
+      |--------------------------------------------------------------------------
+      */
+
+      console.error(
+        'Order email notification failed:',
+        emailError
+      );
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | SUCCESS
+    |--------------------------------------------------------------------------
+    */
 
     return res.status(201).json({
       success: true,
-      message: 'Order created successfully.',
+      message:
+        'Order created successfully.',
       data: populatedOrder,
     });
   } catch (error) {
-    console.error('Create order error:', error);
+    console.error(
+      'Create order error:',
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      message: 'Unable to create the order.',
+      message:
+        'Unable to create the order.',
     });
   }
 };
+
+/*
+|--------------------------------------------------------------------------
+| CREATE GUEST ORDER
+|--------------------------------------------------------------------------
+*/
 
 router.post('/guest', async (req, res) => {
   return createOrderFromRequest({
@@ -539,257 +908,394 @@ router.post('/guest', async (req, res) => {
   });
 });
 
-router.post('/', protect, requireVerified, async (req, res) => {
-  return createOrderFromRequest({
-    req,
-    res,
-    user: req.user,
-    requireVerification: true,
-  });
-});
+/*
+|--------------------------------------------------------------------------
+| CREATE AUTHENTICATED ORDER
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  '/',
+  protect,
+  requireVerified,
+  async (req, res) => {
+    return createOrderFromRequest({
+      req,
+      res,
+      user: req.user,
+      requireVerification: true,
+    });
+  }
+);
 
 /*
 |--------------------------------------------------------------------------
 | UPDATE ORDER STATUS - ADMIN
 |--------------------------------------------------------------------------
 */
-router.patch('/:id/status', protect, adminOnly, async (req, res) => {
-  try {
-    const { status } = req.body;
 
-    if (!ORDER_STATUSES.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid order status.',
-      });
-    }
+router.patch(
+  '/:id/status',
+  protect,
+  adminOnly,
+  async (req, res) => {
+    try {
+      const { status } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid order ID.',
-      });
-    }
+      if (
+        !ORDER_STATUSES.includes(status)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid order status.',
+        });
+      }
 
-    const order = await Order.findById(req.params.id);
+      if (
+        !mongoose.Types.ObjectId.isValid(
+          req.params.id
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid order ID.',
+        });
+      }
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found.',
-      });
-    }
-
-    const previousStatus = order.status;
-
-    if (previousStatus === status) {
-      const unchangedOrder = await Order.findById(order._id)
-        .populate('customer', 'name email phone')
-        .populate(
-          'items.product',
-          'name slug price images stock'
+      const order =
+        await Order.findById(
+          req.params.id
         );
+
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message:
+            'Order not found.',
+        });
+      }
+
+      const previousStatus =
+        order.status;
+
+      if (
+        previousStatus === status
+      ) {
+        const unchangedOrder =
+          await Order.findById(
+            order._id
+          )
+            .populate(
+              'customer',
+              'name email phone'
+            )
+            .populate(
+              'items.product',
+              'name slug price images stock'
+            );
+
+        return res.json({
+          success: true,
+          message:
+            'Order status is already set to this value.',
+          data: unchangedOrder,
+        });
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | RESTORE STOCK WHEN CANCELLED
+      |--------------------------------------------------------------------------
+      */
+
+      if (
+        status === 'Cancelled' &&
+        previousStatus !== 'Cancelled'
+      ) {
+        for (const item of order.items) {
+          if (!item.product) {
+            continue;
+          }
+
+          await Product.updateOne(
+            {
+              _id: item.product,
+            },
+            {
+              $inc: {
+                stock: Number(
+                  item.quantity || 0
+                ),
+              },
+            }
+          );
+        }
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | UPDATE ONLY STATUS
+      |--------------------------------------------------------------------------
+      */
+
+      await Order.updateOne(
+        {
+          _id: order._id,
+        },
+        {
+          $set: {
+            status,
+          },
+        }
+      );
+
+      const updated =
+        await Order.findById(
+          order._id
+        )
+          .populate(
+            'customer',
+            'name email phone'
+          )
+          .populate(
+            'items.product',
+            'name slug price images stock'
+          );
 
       return res.json({
         success: true,
-        message: 'Order status is already set to this value.',
-        data: unchangedOrder,
+        message:
+          `Order status updated to ${status}.`,
+        data: updated,
       });
-    }
-
-    /*
-     * Restore stock when an active order is cancelled.
-     */
-    if (
-      status === 'Cancelled' &&
-      previousStatus !== 'Cancelled'
-    ) {
-      for (const item of order.items) {
-        if (!item.product) continue;
-
-        await Product.updateOne(
-          { _id: item.product },
-          {
-            $inc: {
-              stock: Number(item.quantity || 0),
-            },
-          }
-        );
-      }
-    }
-
-    /*
-     * Update only the status field.
-     * This avoids validating unrelated legacy order fields
-     * such as items.unitPrice.
-     */
-    await Order.updateOne(
-      { _id: order._id },
-      {
-        $set: {
-          status,
-        },
-      }
-    );
-
-    const updated = await Order.findById(order._id)
-      .populate('customer', 'name email phone')
-      .populate(
-        'items.product',
-        'name slug price images stock'
+    } catch (error) {
+      console.error(
+        'Update order status error:',
+        error
       );
 
-    return res.json({
-      success: true,
-      message: `Order status updated to ${status}.`,
-      data: updated,
-    });
-  } catch (error) {
-    console.error('Update order status error:', error);
-
-    return res.status(500).json({
-      success: false,
-      message: 'Unable to update order status.',
-    });
+      return res.status(500).json({
+        success: false,
+        message:
+          'Unable to update order status.',
+      });
+    }
   }
-});
+);
 
 /*
 |--------------------------------------------------------------------------
 | UPDATE PAYMENT STATUS - ADMIN
 |--------------------------------------------------------------------------
 */
-router.patch('/:id/payment-status', protect, adminOnly, async (req, res) => {
-  try {
-    const { paymentStatus } = req.body;
 
-    if (!PAYMENT_STATUSES.includes(paymentStatus)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid payment status.',
-      });
-    }
+router.patch(
+  '/:id/payment-status',
+  protect,
+  adminOnly,
+  async (req, res) => {
+    try {
+      const { paymentStatus } =
+        req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid order ID.',
-      });
-    }
+      if (
+        !PAYMENT_STATUSES.includes(
+          paymentStatus
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid payment status.',
+        });
+      }
 
-    const order = await Order.findById(req.params.id);
+      if (
+        !mongoose.Types.ObjectId.isValid(
+          req.params.id
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid order ID.',
+        });
+      }
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found.',
-      });
-    }
+      const order =
+        await Order.findById(
+          req.params.id
+        );
 
-    const isFirstPaymentConfirmation =
-      paymentStatus === 'Paid' &&
-      order.paymentStatus !== 'Paid';
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message:
+            'Order not found.',
+        });
+      }
 
-    order.paymentStatus = paymentStatus;
+      const isFirstPaymentConfirmation =
+        paymentStatus === 'Paid' &&
+        order.paymentStatus !== 'Paid';
 
-    if (paymentStatus === 'Paid') {
-      order.status =
-        order.status === 'Pending'
-          ? 'Confirmed'
-          : order.status;
+      order.paymentStatus =
+        paymentStatus;
 
-      if (isFirstPaymentConfirmation) {
-        const settlementResult = await applySellerSettlement(order);
+      if (
+        paymentStatus === 'Paid'
+      ) {
+        order.status =
+          order.status === 'Pending'
+            ? 'Confirmed'
+            : order.status;
 
-        if (settlementResult.settled) {
-          console.info(
-            'Seller settlements applied for order:',
-            order.orderNumber,
-            settlementResult.count
-          );
+        if (
+          isFirstPaymentConfirmation
+        ) {
+          const settlementResult =
+            await applySellerSettlement(
+              order
+            );
+
+          if (
+            settlementResult.settled
+          ) {
+            console.info(
+              'Seller settlements applied for order:',
+              order.orderNumber,
+              settlementResult.count
+            );
+          }
         }
       }
-    }
 
-    await order.save();
+      await order.save();
 
-    const updated = await Order.findById(order._id)
-      .populate('customer', 'name email phone')
-      .populate(
-        'items.product',
-        'name slug price images stock'
+      const updated =
+        await Order.findById(
+          order._id
+        )
+          .populate(
+            'customer',
+            'name email phone'
+          )
+          .populate(
+            'items.product',
+            'name slug price images stock'
+          );
+
+      return res.json({
+        success: true,
+        message:
+          `Payment status updated to ${paymentStatus}.`,
+        data: updated,
+      });
+    } catch (error) {
+      console.error(
+        'Update payment status error:',
+        error
       );
 
-    return res.json({
-      success: true,
-      message: `Payment status updated to ${paymentStatus}.`,
-      data: updated,
-    });
-  } catch (error) {
-    console.error('Update payment status error:', error);
-
-    return res.status(500).json({
-      success: false,
-      message: 'Unable to update payment status.',
-    });
+      return res.status(500).json({
+        success: false,
+        message:
+          'Unable to update payment status.',
+      });
+    }
   }
-});
+);
 
 /*
 |--------------------------------------------------------------------------
 | DELETE ORDER - ADMIN
 |--------------------------------------------------------------------------
 */
-router.delete('/:id', protect, adminOnly, async (req, res) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid order ID.',
-      });
-    }
 
-    const order = await Order.findById(req.params.id);
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found.',
-      });
-    }
-
-    /*
-     * If the order is still active, restore stock before deleting it.
-     */
-    if (order.status !== 'Cancelled') {
-      for (const item of order.items) {
-        if (!item.product) continue;
-
-        await Product.updateOne(
-          { _id: item.product },
-          {
-            $inc: {
-              stock: Number(item.quantity || 0),
-            },
-          }
-        );
+router.delete(
+  '/:id',
+  protect,
+  adminOnly,
+  async (req, res) => {
+    try {
+      if (
+        !mongoose.Types.ObjectId.isValid(
+          req.params.id
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid order ID.',
+        });
       }
+
+      const order =
+        await Order.findById(
+          req.params.id
+        );
+
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message:
+            'Order not found.',
+        });
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | RESTORE STOCK BEFORE DELETE
+      |--------------------------------------------------------------------------
+      */
+
+      if (
+        order.status !== 'Cancelled'
+      ) {
+        for (const item of order.items) {
+          if (!item.product) {
+            continue;
+          }
+
+          await Product.updateOne(
+            {
+              _id: item.product,
+            },
+            {
+              $inc: {
+                stock: Number(
+                  item.quantity || 0
+                ),
+              },
+            }
+          );
+        }
+      }
+
+      await Order.findByIdAndDelete(
+        order._id
+      );
+
+      return res.json({
+        success: true,
+        message:
+          'Order deleted successfully.',
+      });
+    } catch (error) {
+      console.error(
+        'Delete order error:',
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          'Unable to delete order.',
+      });
     }
-
-    await Order.findByIdAndDelete(order._id);
-
-    return res.json({
-      success: true,
-      message: 'Order deleted successfully.',
-    });
-  } catch (error) {
-    console.error('Delete order error:', error);
-
-    return res.status(500).json({
-      success: false,
-      message: 'Unable to delete order.',
-    });
   }
-});
+);
 
 module.exports = router;

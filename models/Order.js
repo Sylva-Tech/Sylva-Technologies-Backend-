@@ -7,112 +7,254 @@ const orderItemSchema = new mongoose.Schema(
       ref: 'Product',
       required: true,
     },
+
     name: {
       type: String,
       required: true,
+      trim: true,
     },
+
     image: {
       type: String,
       default: '',
     },
+
     quantity: {
       type: Number,
       required: true,
       min: 1,
     },
+
     unitPrice: {
       type: Number,
       required: true,
       min: 0,
     },
+
     subtotal: {
       type: Number,
       required: true,
       min: 0,
     },
   },
-  { _id: false }
+  {
+    _id: true,
+  }
 );
 
 const orderSchema = new mongoose.Schema(
   {
+    /*
+    |--------------------------------------------------------------------------
+    | ORDER IDENTIFICATION
+    |--------------------------------------------------------------------------
+    */
+
     orderNumber: {
       type: String,
       required: true,
       unique: true,
       index: true,
+      trim: true,
     },
+
     trackingCode: {
       type: String,
       default: '',
       index: true,
+      trim: true,
     },
+
+    /*
+    |--------------------------------------------------------------------------
+    | CUSTOMER
+    |--------------------------------------------------------------------------
+    */
+
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       default: null,
       index: true,
     },
+
     customerName: {
       type: String,
       default: '',
+      trim: true,
     },
+
     customerEmail: {
       type: String,
       default: '',
+      trim: true,
+      lowercase: true,
     },
+
     customerPhone: {
       type: String,
       default: '',
+      trim: true,
     },
-    items: [orderItemSchema],
+
+    /*
+    |--------------------------------------------------------------------------
+    | ORDER ITEMS
+    |--------------------------------------------------------------------------
+    */
+
+    items: {
+      type: [orderItemSchema],
+      required: true,
+      validate: {
+        validator: function (items) {
+          return Array.isArray(items) && items.length > 0;
+        },
+        message:
+          'An order must contain at least one product.',
+      },
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | ORDER TOTALS
+    |--------------------------------------------------------------------------
+    |
+    | These values are calculated by the backend.
+    |
+    | subtotal = sum of all item subtotals
+    | deliveryFee = delivery charge
+    | total = subtotal + deliveryFee
+    |
+    |--------------------------------------------------------------------------
+    */
+
     subtotal: {
       type: Number,
       required: true,
       min: 0,
     },
+
     deliveryFee: {
       type: Number,
       default: 0,
       min: 0,
     },
+
     total: {
       type: Number,
       required: true,
       min: 0,
     },
+
+    /*
+    |--------------------------------------------------------------------------
+    | CUSTOMER DELIVERY DETAILS
+    |--------------------------------------------------------------------------
+    */
+
     customerDetails: {
-      fullName: String,
-      phone: String,
-      email: String,
-      county: String,
-      deliveryLocation: String,
-      address: String,
-      notes: String,
+      fullName: {
+        type: String,
+        trim: true,
+      },
+
+      phone: {
+        type: String,
+        trim: true,
+      },
+
+      email: {
+        type: String,
+        trim: true,
+        lowercase: true,
+      },
+
+      county: {
+        type: String,
+        trim: true,
+      },
+
+      deliveryLocation: {
+        type: String,
+        trim: true,
+      },
+
+      address: {
+        type: String,
+        trim: true,
+      },
+
+      notes: {
+        type: String,
+        trim: true,
+      },
     },
+
+    /*
+    |--------------------------------------------------------------------------
+    | PAYMENT
+    |--------------------------------------------------------------------------
+    */
+
     paymentMethod: {
       type: String,
-      enum: ['Cash on Delivery', 'M-Pesa', 'PayPal', 'WhatsApp Order'],
+      enum: [
+        'Cash on Delivery',
+        'M-Pesa',
+        'PayPal',
+        'WhatsApp Order',
+      ],
       default: 'Cash on Delivery',
     },
+
     paymentReference: {
       type: String,
       trim: true,
       default: '',
     },
+
     paymentStatus: {
       type: String,
-      enum: ['Pending', 'Paid', 'Failed', 'Refunded'],
+      enum: [
+        'Pending',
+        'Paid',
+        'Failed',
+        'Refunded',
+      ],
       default: 'Pending',
     },
+
+    /*
+    |--------------------------------------------------------------------------
+    | ORDER STATUS
+    |--------------------------------------------------------------------------
+    */
+
     status: {
       type: String,
-      enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered', 'Cancelled'],
+      enum: [
+        'Pending',
+        'Confirmed',
+        'Processing',
+        'Ready for Delivery',
+        'Shipped',
+        'Delivered',
+        'Cancelled',
+      ],
       default: 'Pending',
     },
+
+    /*
+    |--------------------------------------------------------------------------
+    | NOTES
+    |--------------------------------------------------------------------------
+    */
+
     notes: {
       type: String,
       default: '',
+      trim: true,
     },
   },
   {
@@ -120,8 +262,33 @@ const orderSchema = new mongoose.Schema(
   }
 );
 
-orderSchema.index({ customer: 1, createdAt: -1 });
-orderSchema.index({ status: 1, createdAt: -1 });
-orderSchema.index({ paymentStatus: 1, createdAt: -1 });
+/*
+|--------------------------------------------------------------------------
+| INDEXES
+|--------------------------------------------------------------------------
+*/
 
-module.exports = mongoose.model('Order', orderSchema);
+orderSchema.index({
+  customer: 1,
+  createdAt: -1,
+});
+
+orderSchema.index({
+  status: 1,
+  createdAt: -1,
+});
+
+orderSchema.index({
+  paymentStatus: 1,
+  createdAt: -1,
+});
+
+/*
+|--------------------------------------------------------------------------
+| MODEL
+|----------------------------------------------------------------
+----------
+*/
+
+module.exports =
+  mongoose.model('Order', orderSchema);
