@@ -1,41 +1,27 @@
-{
-  "name": "backend",
+﻿{
+  "name": "sylva-technologies-backend",
   "version": "1.0.0",
-  "description": "Sylva Technologies backend API",
+  "description": "Backend API for Sylva Technologies",
   "main": "server.js",
   "scripts": {
-    "dev": "nodemon server.js",
     "start": "node server.js",
-    "seed": "node scripts/seed.js",
-    "restore:sample": "node scripts/restoreSampleProducts.js",
-    "seed:admin": "node scripts/seedAdmin.js",
-    "test": "echo \"No tests configured yet\""
+    "dev": "nodemon server.js"
   },
-  "keywords": [
-    "express",
-    "mongodb",
-    "ecommerce",
-    "sylva"
-  ],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "bcryptjs": "^3.0.3",
-    "cloudinary": "^2.11.0",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "express-rate-limit": "^8.7.0",
-    "helmet": "^8.3.0",
-    "jsonwebtoken": "^9.0.3",
-    "mongoose": "^9.10.1",
-    "mongoose-sequence": "^6.0.1",
-    "multer": "^2.4.0",
-    "nodemailer": "^10.0.10",
+    "bcryptjs": "^3.0.2",
+    "cloudinary": "^2.8.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.2.1",
+    "googleapis": "^183.0.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^9.0.0",
+    "multer": "^2.0.2",
     "resend": "^6.31.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.10"
   }
 }

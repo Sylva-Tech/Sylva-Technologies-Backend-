@@ -6,6 +6,10 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 
 const {
+  syncGoogleSheetProducts,
+} = require('../services/googleSheetProductSync');
+
+const {
   protect,
   adminOnly,
 } = require('../middleware/authMiddleware');
@@ -1164,7 +1168,57 @@ router.get(
     }
   }
 );
+/*
+|--------------------------------------------------------------------------
+| SYNC PRODUCTS FROM GOOGLE SHEET
+|--------------------------------------------------------------------------
+| POST /api/admin/products/sync-google-sheet
+|--------------------------------------------------------------------------
+*/
 
+router.post(
+  '/products/sync-google-sheet',
+  protect,
+  adminOnly,
+  async (req, res) => {
+    try {
+      const result =
+        await syncGoogleSheetProducts();
+
+      if (!result?.success) {
+        return res.status(400).json({
+          success: false,
+          message:
+            result?.message ||
+            'Google Sheet product sync failed.',
+          data: result,
+        });
+      }
+
+      return res.json({
+        success: true,
+        message:
+          'Google Sheet products synchronized successfully.',
+        data: result,
+      });
+    } catch (error) {
+      console.error(
+        'Google Sheet product sync error:',
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          'Unable to synchronize products from Google Sheet.',
+        error:
+          process.env.NODE_ENV === 'development'
+            ? error.message
+            : undefined,
+      });
+    }
+  }
+);
 module.exports = router;
 
 
