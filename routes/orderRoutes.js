@@ -613,35 +613,19 @@ const createOrderFromRequest = async ({
 
     const today = new Date();
 
-    const datePart =
-      `${today.getFullYear()}` +
-      `${String(
-        today.getMonth() + 1
-      ).padStart(2, '0')}` +
-      `${String(
-        today.getDate()
-      ).padStart(2, '0')}`;
+const datePart =
+  `${today.getFullYear()}` +
+  `${String(today.getMonth() + 1).padStart(2, '0')}` +
+  `${String(today.getDate()).padStart(2, '0')}`;
 
-    const orderCount =
-      await Order.countDocuments({
-        createdAt: {
-          $gte: new Date(
-            today.getFullYear(),
-            today.getMonth(),
-            today.getDate()
-          ),
-          $lt: new Date(
-            today.getFullYear(),
-            today.getMonth(),
-            today.getDate() + 1
-          ),
-        },
-      });
+// Generate a unique order number without querying createdAt.
+// This avoids date-range casting issues and remains unique even
+// when multiple customers place orders at nearly the same time.
+const uniquePart = `${Date.now()}${Math.floor(
+  Math.random() * 1000
+)}`.slice(-7);
 
-    const orderNumber =
-      `ST-${datePart}-${String(
-        orderCount + 1
-      ).padStart(4, '0')}`;
+const orderNumber = `ST-${datePart}-${uniquePart}`;
 
     /*
     |--------------------------------------------------------------------------
