@@ -68,6 +68,9 @@ const generateResetCode = () => {
     .padStart(PASSWORD_RESET_CODE_LENGTH, '0');
 };
 
+/**
+ * Generate a six-digit email verification code.
+ */
 const generateVerificationCode = () => {
   return crypto
     .randomInt(0, 1000000)
@@ -92,8 +95,7 @@ const createJwt = (user) => {
     },
     secret,
     {
-      expiresIn:
-        process.env.JWT_EXPIRES_IN || '7d',
+      expiresIn: process.env.JWT_EXPIRES_IN || '7d',
     }
   );
 };
@@ -130,13 +132,11 @@ router.post('/register', async (req, res) => {
       confirmPassword,
     } = req.body;
 
-    const normalizedEmail =
-      normalizeEmail(email);
+    const normalizedEmail = normalizeEmail(email);
 
     if (!name || !normalizedEmail || !password) {
       return res.status(400).json({
-        message:
-          'Name, email and password are required.',
+        message: 'Name, email and password are required.',
       });
     }
 
@@ -151,15 +151,13 @@ router.post('/register', async (req, res) => {
 
     if (password.length < 6) {
       return res.status(400).json({
-        message:
-          'Password must be at least 6 characters.',
+        message: 'Password must be at least 6 characters.',
       });
     }
 
-    const existingUser =
-      await User.findOne({
-        email: normalizedEmail,
-      });
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+    });
 
     if (existingUser) {
       return res.status(409).json({
@@ -171,9 +169,7 @@ router.post('/register', async (req, res) => {
     const user = await User.create({
       name: String(name).trim(),
       email: normalizedEmail,
-      phone: phone
-        ? String(phone).trim()
-        : '',
+      phone: phone ? String(phone).trim() : '',
       password,
       role: 'customer',
       sellerStatus: 'none',
@@ -184,23 +180,40 @@ router.post('/register', async (req, res) => {
 
     const rawVerificationToken =
       generateSecureToken();
+
     const verificationTokenHash =
       hashToken(rawVerificationToken);
+
     const verificationCode =
       generateVerificationCode();
+
     const verificationCodeHash =
       hashToken(verificationCode);
-    const verificationExpiresAt =
-      new Date(
-        Date.now() +
-          24 * 60 * 60 * 1000
-      );
+
+    const verificationExpiresAt = new Date(
+      Date.now() + 24 * 60 * 60 * 1000
+    );
+
+    /*
+     * Remove previous verification credentials.
+     *
+     * These are intentionally separate deleteMany()
+     * operations to avoid the Render/Mongoose CastError
+     * encountered with $in on the purpose field.
+     */
+    await VerificationToken.deleteMany({
+      user: user._id,
+      purpose: 'verification',
+    });
 
     await VerificationToken.deleteMany({
       user: user._id,
-      purpose: { $in: ['verification', 'verification-code'] },
+      purpose: 'verification-code',
     });
 
+    /*
+     * Store verification link token.
+     */
     await VerificationToken.create({
       user: user._id,
       purpose: 'verification',
@@ -209,6 +222,9 @@ router.post('/register', async (req, res) => {
       method: 'email',
     });
 
+    /*
+     * Store verification code.
+     */
     await VerificationToken.create({
       user: user._id,
       purpose: 'verification-code',
@@ -218,11 +234,9 @@ router.post('/register', async (req, res) => {
     });
 
     const verifyLink =
-      `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(
-        rawVerificationToken
-      )}&email=${encodeURIComponent(
-        normalizedEmail
-      )}`;
+      `${getFrontendUrl()}/verify-email` +
+      `?token=${encodeURIComponent(rawVerificationToken)}` +
+      `&email=${encodeURIComponent(normalizedEmail)}`;
 
     try {
       await sendVerificationCodeAndLinkEmail({
@@ -243,13 +257,15 @@ router.post('/register', async (req, res) => {
       message:
         'Verification code and link have been sent to your email. Please check your inbox and verify your account before continuing.',
       user: safeUser(user),
+
+      /*
+       * Kept temporarily to preserve your existing
+       * registration response behavior.
+       */
       verificationCode,
     });
   } catch (error) {
-    console.error(
-      'Register error:',
-      error
-    );
+    console.error('Register error:', error);
 
     return res.status(500).json({
       message:
@@ -258,6 +274,12 @@ router.post('/register', async (req, res) => {
   }
 });
 
+/* ============================================================
+ * RESEND EMAIL VERIFICATION CODE
+ *
+ * POST /api/auth/resend-verification-code
+ * ============================================================ */
+
 router.post(
   '/resend-verification-code',
   async (req, res) => {
@@ -265,7 +287,9 @@ router.post(
 
     try {
       const { email } = req.body;
-      const normalizedEmail = normalizeEmail(email);
+
+      const normalizedEmail =
+        normalizeEmail(email);
 
       if (!normalizedEmail) {
         return res.status(400).json({
@@ -273,7 +297,9 @@ router.post(
         });
       }
 
-      const user = await User.findOne({ email: normalizedEmail });
+      const user = await User.findOne({
+        email: normalizedEmail,
+      });
 
       if (!user) {
         return res.status(404).json({
@@ -287,17 +313,50 @@ router.post(
         });
       }
 
-      const rawVerificationToken = generateSecureToken();
-      const verificationTokenHash = hashToken(rawVerificationToken);
-      verificationCode = generateVerificationCode();
-      const verificationCodeHash = hashToken(verificationCode);
-      const verificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      const rawVerificationToken =
+        generateSecureToken();
 
+      const verificationTokenHash =
+        hashToken(rawVerificationToken);
+
+      verificationCode =
+        generateVerificationCode();
+
+      const verificationCodeHash =
+        hashToken(verificationCode);
+
+      const verificationExpiresAt = new Date(
+        Date.now() + 24 * 60 * 60 * 1000
+      );
+
+      /*
+       * Remove old verification link token.
+       *
+       * IMPORTANT:
+       * Do not change these back to:
+       *
+       * purpose: {
+       *   $in: ['verification', 'verification-code']
+       * }
+       *
+       * because that was producing the Render CastError.
+       */
       await VerificationToken.deleteMany({
         user: user._id,
-        purpose: { $in: ['verification', 'verification-code'] },
+        purpose: 'verification',
       });
 
+      /*
+       * Remove old verification code token.
+       */
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'verification-code',
+      });
+
+      /*
+       * Create new verification link token.
+       */
       await VerificationToken.create({
         user: user._id,
         purpose: 'verification',
@@ -306,6 +365,9 @@ router.post(
         method: 'email',
       });
 
+      /*
+       * Create new verification code token.
+       */
       await VerificationToken.create({
         user: user._id,
         purpose: 'verification-code',
@@ -314,17 +376,22 @@ router.post(
         method: 'email',
       });
 
-      const verifyLink = `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(rawVerificationToken)}&email=${encodeURIComponent(normalizedEmail)}`;
+      const verifyLink =
+        `${getFrontendUrl()}/verify-email` +
+        `?token=${encodeURIComponent(rawVerificationToken)}` +
+        `&email=${encodeURIComponent(normalizedEmail)}`;
 
-      const emailResult = await sendVerificationCodeAndLinkEmail({
-        to: normalizedEmail,
-        name: user.name,
-        otp: verificationCode,
-        verifyLink,
-        expiresInMinutes: 24 * 60,
-      });
+      const emailResult =
+        await sendVerificationCodeAndLinkEmail({
+          to: normalizedEmail,
+          name: user.name,
+          otp: verificationCode,
+          verifyLink,
+          expiresInMinutes: 24 * 60,
+        });
 
-      const emailSent = emailResult?.success !== false;
+      const emailSent =
+        emailResult?.success !== false;
 
       return res.status(200).json({
         message: emailSent
@@ -333,9 +400,14 @@ router.post(
         emailSent,
       });
     } catch (error) {
-      console.error('Resend verification code error:', error);
+      console.error(
+        'Resend verification code error:',
+        error
+      );
+
       return res.status(200).json({
-        message: 'The verification email could not be sent right now. Please try again in a moment.',
+        message:
+          'The verification email could not be sent right now. Please try again in a moment.',
         emailSent: false,
       });
     }
@@ -364,10 +436,9 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const user =
-      await User.findOne({
-        email: normalizedEmail,
-      });
+    const user = await User.findOne({
+      email: normalizedEmail,
+    });
 
     if (!user) {
       return res.status(401).json({
@@ -401,6 +472,7 @@ router.post('/login', async (req, res) => {
           new Date(
             Date.now() + 15 * 60 * 1000
           );
+
         user.loginAttempts = 0;
       }
 
@@ -483,20 +555,20 @@ router.post(
       /*
        * Remove old password-reset tokens.
        */
-    await VerificationToken.deleteMany({
-  user: user._id,
-  purpose: 'password-reset',
-});
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'password-reset',
+      });
 
-await VerificationToken.deleteMany({
-  user: user._id,
-  purpose: 'password-reset-code',
-});
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'password-reset-code',
+      });
 
-await VerificationToken.deleteMany({
-  user: user._id,
-  purpose: 'password-reset-verified',
-});
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'password-reset-verified',
+      });
 
       /*
        * Generate secure link token.
@@ -554,11 +626,9 @@ await VerificationToken.deleteMany({
        * Link sent in email.
        */
       const resetLink =
-        `${getFrontendUrl()}/reset-password?token=${encodeURIComponent(
-          resetToken
-        )}&email=${encodeURIComponent(
-          normalizedEmail
-        )}`;
+        `${getFrontendUrl()}/reset-password` +
+        `?token=${encodeURIComponent(resetToken)}` +
+        `&email=${encodeURIComponent(normalizedEmail)}`;
 
       await sendPasswordResetCodeAndLinkEmail({
         to: normalizedEmail,
@@ -661,7 +731,6 @@ router.post(
        * because that was causing your Render
        * CastError.
        */
-
       const codeHash =
         hashToken(normalizedCode);
 
@@ -692,9 +761,6 @@ router.post(
 
       /*
        * Check expiry in JavaScript.
-       *
-       * This is the direct fix for your
-       * Cast-to-date error.
        */
       if (
         !verificationToken.expiresAt ||
@@ -730,9 +796,6 @@ router.post(
 
       /*
        * Create a NEW short-lived verified reset token.
-       *
-       * This is what the frontend stores in:
-       * sylva_password_reset_token
        */
       const verifiedResetToken =
         generateSecureToken();
@@ -1071,10 +1134,12 @@ router.get(
       }
 
       user.isVerified = true;
+
       await user.save();
 
       verificationToken.usedAt =
         new Date();
+
       await verificationToken.save();
 
       await VerificationToken.deleteMany({
@@ -1100,56 +1165,89 @@ router.get(
   }
 );
 
+/* ============================================================
+ * VERIFY EMAIL CODE
+ *
+ * POST /api/auth/verify-email-code
+ * ============================================================ */
+
 router.post(
   '/verify-email-code',
   async (req, res) => {
     try {
-      const { email, code } = req.body;
-      const normalizedEmail = normalizeEmail(email);
+      const {
+        email,
+        code,
+      } = req.body;
+
+      const normalizedEmail =
+        normalizeEmail(email);
 
       if (!normalizedEmail || !code) {
         return res.status(400).json({
-          message: 'Email and verification code are required.',
+          message:
+            'Email and verification code are required.',
         });
       }
 
-      const user = await User.findOne({ email: normalizedEmail });
+      const user =
+        await User.findOne({
+          email: normalizedEmail,
+        });
 
       if (!user) {
         return res.status(404).json({
-          message: 'User account not found.',
+          message:
+            'User account not found.',
         });
       }
 
-      const verificationCodeHash = hashToken(String(code).trim());
-      const verificationToken = await VerificationToken.findOne({
-        user: user._id,
-        purpose: 'verification-code',
-        tokenHash: verificationCodeHash,
-      });
+      const verificationCodeHash =
+        hashToken(
+          String(code).trim()
+        );
+
+      const verificationToken =
+        await VerificationToken.findOne({
+          user: user._id,
+          purpose:
+            'verification-code',
+          tokenHash:
+            verificationCodeHash,
+        });
 
       if (!verificationToken) {
         return res.status(400).json({
-          message: 'Invalid or expired verification code.',
+          message:
+            'Invalid or expired verification code.',
         });
       }
 
       if (verificationToken.usedAt) {
         return res.status(400).json({
-          message: 'This verification code has already been used.',
+          message:
+            'This verification code has already been used.',
         });
       }
 
-      if (!verificationToken.expiresAt || verificationToken.expiresAt <= new Date()) {
+      if (
+        !verificationToken.expiresAt ||
+        verificationToken.expiresAt <=
+          new Date()
+      ) {
         return res.status(400).json({
-          message: 'This verification code has expired.',
+          message:
+            'This verification code has expired.',
         });
       }
 
       user.isVerified = true;
+
       await user.save();
 
-      verificationToken.usedAt = new Date();
+      verificationToken.usedAt =
+        new Date();
+
       await verificationToken.save();
 
       await VerificationToken.deleteMany({
@@ -1158,12 +1256,18 @@ router.post(
       });
 
       return res.status(200).json({
-        message: 'Email verified successfully. Please log in to continue.',
+        message:
+          'Email verified successfully. Please log in to continue.',
       });
     } catch (error) {
-      console.error('Email verification code error:', error);
+      console.error(
+        'Email verification code error:',
+        error
+      );
+
       return res.status(500).json({
-        message: 'Unable to verify your email right now.',
+        message:
+          'Unable to verify your email right now.',
       });
     }
   }
@@ -1173,48 +1277,72 @@ router.post(
  * HEALTH CHECK FOR AUTH ROUTES
  * ============================================================ */
 
-router.get('/me', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
+router.get(
+  '/me',
+  async (req, res) => {
+    try {
+      const authHeader =
+        req.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      if (
+        !authHeader ||
+        !authHeader.startsWith('Bearer ')
+      ) {
+        return res.status(401).json({
+          success: false,
+          message:
+            'Authentication required. Please log in again.',
+        });
+      }
+
+      const token =
+        authHeader.split(' ')[1];
+
+      if (!token) {
+        return res.status(401).json({
+          success: false,
+          message:
+            'Authentication token is missing.',
+        });
+      }
+
+      const decoded =
+        jwt.verify(
+          token,
+          process.env.JWT_SECRET
+        );
+
+      const user =
+        await User.findById(
+          decoded.id
+        ).select('-password');
+
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          message:
+            'User account could not be found.',
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        user: safeUser(user),
+      });
+    } catch (error) {
+      console.error(
+        'Fetch current user error:',
+        error
+      );
+
       return res.status(401).json({
         success: false,
-        message: 'Authentication required. Please log in again.',
+        message:
+          'Your session has expired or the token is invalid.',
       });
     }
-
-    const token = authHeader.split(' ')[1];
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication token is missing.',
-      });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('-password');
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'User account could not be found.',
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      user: safeUser(user),
-    });
-  } catch (error) {
-    console.error('Fetch current user error:', error);
-    return res.status(401).json({
-      success: false,
-      message: 'Your session has expired or the token is invalid.',
-    });
   }
-});
+);
 
 router.get(
   '/health',
