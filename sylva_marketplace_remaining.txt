@@ -1,0 +1,775 @@
+
+============================================================
+FILE: backend\models\Product.js
+============================================================
+
+const mongoose = require('mongoose');
+
+const productSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: [true, 'Product name is required'],
+      trim: true,
+    },
+
+    slug: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+
+    sku: {
+      type: String,
+      required: [true, 'SKU is required'],
+      unique: true,
+      trim: true,
+      uppercase: true,
+    },
+
+    brand: {
+      type: String,
+      required: [true, 'Brand is required'],
+      trim: true,
+    },
+
+    category: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Category',
+      required: [true, 'Category is required'],
+    },
+
+    subcategory: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    description: {
+      type: String,
+      required: [true, 'Description is required'],
+      trim: true,
+    },
+
+    shortDescription: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    /*
+     * Seller who owns this product.
+     *
+     * Admin-created products can have seller = null.
+     */
+    seller: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+
+    price: {
+      type: Number,
+      required: [true, 'Product price is required'],
+      min: 0,
+    },
+
+    oldPrice: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    discount: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+
+    images: {
+      type: [String],
+      default: [],
+    },
+
+    stock: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    condition: {
+      type: String,
+      enum: ['New', 'Refurbished', 'Used'],
+      default: 'New',
+    },
+
+    warranty: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    specifications: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+
+    featured: {
+      type: Boolean,
+      default: false,
+    },
+
+    isNew: {
+      type: Boolean,
+      default: false,
+    },
+
+    flashSale: {
+      type: Boolean,
+      default: false,
+    },
+
+    offer: {
+      type: Boolean,
+      default: false,
+    },
+
+    offerMessage: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    offerStartDate: {
+      type: Date,
+      default: null,
+    },
+
+    offerEndDate: {
+      type: Date,
+      default: null,
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+  },
+  {
+    timestamps: true,
+    suppressReservedKeysWarning: true,
+  }
+);
+
+/*
+ * Product indexes.
+ */
+productSchema.index({
+  slug: 1,
+  sku: 1,
+});
+
+productSchema.index({
+  category: 1,
+  brand: 1,
+});
+
+productSchema.index({
+  seller: 1,
+  createdAt: -1,
+});
+
+productSchema.index({
+  name: 'text',
+  brand: 'text',
+  sku: 'text',
+});
+
+module.exports = mongoose.model('Product', productSchema);
+
+============================================================
+FILE: backend\server.js
+============================================================
+
+require('dotenv').config();
+
+const app = require('./app');
+const connectDB = require('./config/db');
+
+const PORT = process.env.PORT || 5000;
+
+const startServer = async () => {
+  try {
+    const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
+    if (mongoUri) {
+      await connectDB();
+    } else {
+      console.warn('MONGO_URI/MONGODB_URI is not set. The API will start without MongoDB until the environment is configured.');
+    }
+
+    app.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error.message);
+    process.exit(1);
+  }
+};
+
+startServer();
+
+
+============================================================
+FILE: backend\app.js
+============================================================
+
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const mongoose = require('mongoose');
+
+const authRoutes = require('./routes/authRoutes');
+const productRoutes = require('./routes/productRoutes');
+const categoryRoutes = require('./routes/categoryRoutes');
+const orderRoutes = require('./routes/orderRoutes');
+const userRoutes = require('./routes/userRoutes');
+const contactRoutes = require('./routes/contactRoutes');
+const advertisementRoutes = require('./routes/advertisementRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+
+const app = express();
+
+/*
+|--------------------------------------------------------------------------
+| TRUST PROXY
+|--------------------------------------------------------------------------
+*/
+
+app.set('trust proxy', 1);
+
+/*
+|--------------------------------------------------------------------------
+| CORS CONFIGURATION
+|--------------------------------------------------------------------------
+*/
+
+const allowedOrigins = [
+  ...(process.env.CLIENT_URL || '')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/$/, ''))
+    .filter(Boolean),
+
+  // Production frontend
+  'https://sylva-technologies-frontend.vercel.app',
+  'https://sylva-technologies-frontend-jucbjftlx.vercel.app',
+
+  // Local development
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'http://localhost:4173',
+
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5174',
+  'http://127.0.0.1:5175',
+  'http://127.0.0.1:4173',
+];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests without an Origin header
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    const cleanOrigin = origin.replace(/\/$/, '');
+
+    // Allow configured origins
+    if (allowedOrigins.includes(cleanOrigin)) {
+      return callback(null, true);
+    }
+
+    // Allow local development
+    const localOriginRegex =
+      /^https?:\/\/(localhost|127\.0\.0\.1):(3000|4173|5173|5174|5175)$/;
+
+    if (localOriginRegex.test(cleanOrigin)) {
+      return callback(null, true);
+    }
+
+    console.warn(`CORS blocked origin: ${origin}`);
+
+    return callback(new Error('Not allowed by CORS'));
+  },
+
+  credentials: true,
+
+  methods: [
+    'GET',
+    'POST',
+    'PUT',
+    'PATCH',
+    'DELETE',
+    'OPTIONS',
+  ],
+
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Accept',
+    'Origin',
+    'X-Requested-With',
+  ],
+
+  optionsSuccessStatus: 204,
+};
+
+/*
+|--------------------------------------------------------------------------
+| SECURITY HEADERS
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+  })
+);
+
+/*
+|--------------------------------------------------------------------------
+| CORS
+|--------------------------------------------------------------------------
+*/
+
+app.use(cors(corsOptions));
+
+/*
+|--------------------------------------------------------------------------
+| RATE LIMITING
+|--------------------------------------------------------------------------
+*/
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+
+  message: {
+    success: false,
+    message: 'Too many requests. Please try again later.',
+  },
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+
+  message: {
+    success: false,
+    message:
+      'Too many authentication attempts. Please slow down and try again later.',
+  },
+});
+
+/*
+|--------------------------------------------------------------------------
+| BODY PARSING
+|--------------------------------------------------------------------------
+*/
+
+app.use(express.json({ limit: '10mb' }));
+
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: '10mb',
+  })
+);
+
+/*
+|--------------------------------------------------------------------------
+| API RATE LIMITERS
+|--------------------------------------------------------------------------
+*/
+
+app.use('/api', apiLimiter);
+app.use('/api/auth', authLimiter);
+
+/*
+|--------------------------------------------------------------------------
+| ROOT ROUTE
+|--------------------------------------------------------------------------
+*/
+
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Sylva Technologies API is running',
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| HEALTH CHECK
+|--------------------------------------------------------------------------
+*/
+
+app.get('/api/health', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Sylva Technologies API is running',
+
+    database:
+      mongoose.connection.readyState === 1
+        ? 'connected'
+        : 'disconnected',
+
+    environment: process.env.NODE_ENV || 'development',
+
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| API ROUTES
+|--------------------------------------------------------------------------
+*/
+
+app.use('/api/auth', authRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/categories', categoryRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/contact', contactRoutes);
+app.use('/api/advertisements', advertisementRoutes);
+app.use('/api/admin', adminRoutes);
+
+/*
+|--------------------------------------------------------------------------
+| 404 HANDLER
+|--------------------------------------------------------------------------
+*/
+
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'The requested endpoint was not found.',
+    path: req.originalUrl,
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| GLOBAL ERROR HANDLER
+|--------------------------------------------------------------------------
+*/
+
+app.use((error, req, res, next) => {
+  console.error('Unhandled API error:', error);
+
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  // CORS error
+  if (error.message === 'Not allowed by CORS') {
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied by CORS policy.',
+    });
+  }
+
+  // Invalid JSON
+  if (error.type === 'entity.parse.failed') {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid JSON data received.',
+    });
+  }
+
+  // Payload too large
+  if (error.type === 'entity.too.large') {
+    return res.status(413).json({
+      success: false,
+      message: 'The submitted data is too large.',
+    });
+  }
+
+  const status = error.status || error.statusCode || 500;
+
+  res.status(status).json({
+    success: false,
+    message:
+      status >= 500
+        ? 'Something went wrong. Please try again.'
+        : error.message || 'Please check the information you sent.',
+  });
+});
+
+module.exports = app;
+
+
+============================================================
+FILE: backend\index.js
+============================================================
+
+FILE NOT FOUND
+
+============================================================
+FILE: Frontend\src\App.jsx
+============================================================
+
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Header from './components/Header';
+import Footer from './components/Footer';
+import ProtectedRoute from './components/ProtectedRoute';
+import { AuthProvider } from './context/AuthContext';
+import HomePage from './pages/HomePage';
+import ShopPage from './pages/ShopPage';
+import CartPage from './pages/CartPage';
+import ProductDetailPage from './pages/ProductDetailPage';
+import AuthPage from './pages/AuthPage';
+import AdminLoginPage from './pages/AdminLoginPage';
+import AdminDashboardPage from './pages/AdminDashboardPage';
+import AdminProductsPage from './pages/AdminProductsPage';
+import AdminProductFormPage from './pages/AdminProductFormPage';
+import AdminImportPage from './pages/AdminImportPage';
+import AdminAdsPage from './pages/AdminAdsPage';
+import AdminOrdersPage from './pages/AdminOrdersPage';
+import ProfilePage from './pages/ProfilePage';
+import CheckoutPage from './pages/CheckoutPage';
+import InformationPage from './pages/InformationPage';
+import ContactPage from './pages/ContactPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import VerifyEmailPage from './pages/VerifyEmailPage';
+import { CartProvider } from './context/CartContext';
+import ChatWidget from './components/ChatWidget';
+import SellPage from './pages/SellPage';
+import SellerRegisterPage from './pages/SellerRegisterPage';
+import SellerLoginPage from './pages/SellerLoginPage';
+import SellerDashboardPage from './pages/SellerDashboardPage';
+import './App.css';
+
+function App() {
+  return (
+    <AuthProvider>
+      <CartProvider>
+        <Router>
+          <div className="app-shell">
+            <Header />
+
+            <main className="page-content">
+              <Routes>
+                {/* Public pages */}
+                <Route path="/" element={<HomePage />} />
+                <Route path="/shop" element={<ShopPage />} />
+                <Route path="/categories" element={<ShopPage />} />
+                <Route path="/deals" element={<ShopPage />} />
+
+                <Route
+                  path="/about"
+                  element={<InformationPage type="about" />}
+                />
+
+                <Route
+                  path="/privacy"
+                  element={<InformationPage type="privacy" />}
+                />
+
+                <Route
+                  path="/terms"
+                  element={<InformationPage type="terms" />}
+                />
+
+                <Route path="/contact" element={<ContactPage />} />
+
+                <Route
+                  path="/product/:slug"
+                  element={<ProductDetailPage />}
+                />
+
+                {/* Seller marketplace */}
+                <Route path="/sell" element={<SellPage />} />
+
+               <Route
+  path="/seller/login"
+  element={<SellerLoginPage />}
+/>
+
+                <Route
+                  path="/seller/register"
+                  element={<SellerRegisterPage />}
+                />
+                <Route
+  path="/seller/dashboard"
+  element={
+    <ProtectedRoute sellerOnly>
+      <SellerDashboardPage />
+    </ProtectedRoute>
+  }
+/>
+
+                {/* Cart */}
+                <Route path="/cart" element={<CartPage />} />
+
+                {/* Customer checkout */}
+                <Route
+                  path="/checkout"
+                  element={
+                    <ProtectedRoute>
+                      <CheckoutPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                {/* Customer authentication */}
+                <Route
+                  path="/login"
+                  element={<AuthPage mode="login" />}
+                />
+
+                <Route
+                  path="/register"
+                  element={<AuthPage mode="register" />}
+                />
+
+                <Route
+                  path="/forgot-password"
+                  element={<ForgotPasswordPage />}
+                />
+
+                <Route
+                  path="/verify-email"
+                  element={<VerifyEmailPage />}
+                />
+
+                {/* Customer profile */}
+                <Route
+                  path="/profile"
+                  element={
+                    <ProtectedRoute>
+                      <ProfilePage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                {/* Admin */}
+                <Route
+                  path="/admin/login"
+                  element={<AdminLoginPage />}
+                />
+
+                <Route
+                  path="/admin"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminDashboardPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/products"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminProductsPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/products/new"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminProductFormPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/products/import"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminImportPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/products/:id/edit"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminProductFormPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/ads"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminAdsPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/orders"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminOrdersPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                {/* Fallback */}
+                <Route path="*" element={<HomePage />} />
+              </Routes>
+            </main>
+
+            <Footer />
+            <ChatWidget />
+          </div>
+        </Router>
+      </CartProvider>
+    </AuthProvider>
+  );
+}
+
+export default App;
+
+============================================================
+FILE: Frontend\src\pages\AdminDashboard.jsx
+============================================================
+
+FILE NOT FOUND
+
+============================================================
+FILE: Frontend\src\pages\AdminSellers.jsx
+============================================================
+
+FILE NOT FOUND
+
+============================================================
+FILE: Frontend\src\pages\AdminProductApprovals.jsx
+============================================================
+
+FILE NOT FOUND
+
+============================================================
+FILE: Frontend\src\pages\AdminOrders.jsx
+============================================================
+
+FILE NOT FOUND

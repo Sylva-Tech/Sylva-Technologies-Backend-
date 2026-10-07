@@ -30,7 +30,6 @@ function ContactPage() {
       <div className="contact-layout">
         <div className="contact-details">
           <h2>Visit or reach us</h2>
-          <p>Bihi Towers, Moi Avenue</p>
           <p>sylvatechnologies@outlook.com</p>
           <p>0700 932 014</p>
           <p className="contact-note">For faster assistance, include the product name, order number or device details relevant to your question.</p>

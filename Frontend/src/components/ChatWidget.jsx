@@ -5,7 +5,7 @@ import { useCart } from '../context/CartContext';
 import { fetchProducts } from '../services/api';
 import './ChatWidget.css';
 
-const WHATSAPP_NUMBER = '254700932014';
+const WHATSAPP_NUMBER = import.meta.env.VITE_WHATSAPP_NUMBER || '254709932014';
 
 const buildWhatsAppLink = ({ product, cartItems = [] }) => {
   const items = cartItems.length

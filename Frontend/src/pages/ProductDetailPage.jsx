@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { MessageCircle } from 'lucide-react';
 import ProductCard from '../components/ProductCard';
 import { fetchProductBySlug, fetchProducts } from '../services/api';
 import { useCart } from '../context/CartContext';
@@ -10,6 +11,7 @@ function ProductDetailPage() {
   const [product, setProduct] = useState(null);
   const [relatedProducts, setRelatedProducts] = useState([]);
   const [quantity, setQuantity] = useState(1);
+  const [selectedImage, setSelectedImage] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -34,14 +36,15 @@ function ProductDetailPage() {
 
   const images = product.images?.length ? product.images : ['https://images.unsplash.com/photo-1525547719571-a2d4ac8945e2?auto=format&fit=crop&w=1200&q=80'];
   const hasDiscount = Number(product.oldPrice || 0) > Number(product.price || 0);
-  const whatsappText = encodeURIComponent(`Hello Sylva Technologies, I want to order ${product.name} (${quantity}). Price: KSh ${Number(product.price || 0).toLocaleString()}.`);
+  const productUrl = `${window.location.origin}/product/${product.slug}`;
+  const whatsappText = encodeURIComponent(`Hello Sylva Technologies, I would like to inquire about ${product.name}. Product: ${productUrl}`);
 
   return (
     <section className="container section-block product-detail-page">
       <div className="detail-grid">
         <div className="detail-gallery">
-          <div className="detail-image"><img src={images[0]} alt={product.name} /></div>
-          <div className="detail-thumbnails">{images.map((image) => <img key={image} src={image} alt="" />)}</div>
+          <div className="detail-image"><img src={images[selectedImage]} alt={product.name} /></div>
+          <div className="detail-thumbnails">{images.map((image, index) => <button type="button" key={image} className={index === selectedImage ? 'active' : ''} onClick={() => setSelectedImage(index)} aria-label={`View product image ${index + 1}`}><img src={image} alt="" /></button>)}</div>
         </div>
 
         <div className="detail-content">
@@ -84,9 +87,14 @@ function ProductDetailPage() {
             <button className="primary-btn" onClick={() => addToCart(product, quantity)} disabled={!Number(product.stock || 0)}>
               Add to Cart
             </button>
-            <a className="secondary-btn" href={`https://wa.me/254700932014?text=${whatsappText}`} target="_blank" rel="noreferrer">
-              Order via WhatsApp
+            <a className="whatsapp-order-btn" href={`https://wa.me/${import.meta.env.VITE_WHATSAPP_NUMBER || '254709932014'}?text=${whatsappText}`} target="_blank" rel="noreferrer">
+              <MessageCircle size={17} /> Order via WhatsApp
             </a>
+          </div>
+          <div className="detail-payment-note">
+            <span>Secure checkout available with</span>
+            <strong className="paypal-wordmark">PayPal</strong>
+            <span>and M-Pesa</span>
           </div>
         </div>
       </div>

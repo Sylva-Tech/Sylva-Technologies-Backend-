@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { Heart, MessageCircle, ShoppingCart } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 
 const brandImageFallbacks = {
@@ -33,16 +34,17 @@ function ProductCard({ product }) {
     ? Math.round(((Number(product.oldPrice) - Number(product.price)) / Number(product.oldPrice)) * 100)
     : Number(product.discount || 0);
 
-  const whatsappText = encodeURIComponent(
-    `Hello Sylva Technologies, I am interested in ${product.name} for KSh ${Number(product.price || 0).toLocaleString()}. Please share availability.`
-  );
+  const whatsappText = encodeURIComponent(`Hello Sylva Technologies, I would like to inquire about ${product.name}`);
   const shortDescription = product.shortDescription || product.description || 'Quality technology, ready for your setup.';
   const stockLabel = Number(product.stock || 0) > 0 ? 'In Stock' : 'Out of Stock';
+  const rating = Number(product.rating || 0);
+  const reviewCount = Number(product.reviewCount || product.reviewsCount || 0);
 
   return (
     <article className="product-card">
       <div className="product-image-wrap">
         {discountPercent > 0 && <span className="product-badge">{discountPercent}% OFF</span>}
+        <button type="button" className="wishlist-button" aria-label={`Add ${product.name} to wishlist`}><Heart size={15} /></button>
         <img src={imageUrl} alt={product.name} className="product-image" />
       </div>
 
@@ -58,19 +60,22 @@ function ProductCard({ product }) {
         <span className={`stock-status ${Number(product.stock || 0) > 0 ? 'in-stock' : 'out-of-stock'}`}>
           {Number(product.stock || 0) > 0 ? '✓' : '•'} {stockLabel}
         </span>
+        <span className="product-rating" aria-label={`${rating || 0} out of 5 stars, ${reviewCount} reviews`}>
+          {'★'.repeat(Math.max(0, Math.min(5, Math.round(rating))))}{'☆'.repeat(Math.max(0, 5 - Math.round(rating)))} <small>({reviewCount})</small>
+        </span>
 
         <div className="product-actions">
           <button className="primary-btn small-btn" onClick={() => addToCart(product)} disabled={!Number(product.stock || 0)}>
-            Add to Cart
+            Add to Cart <ShoppingCart size={13} />
           </button>
           <Link to={`/product/${product.slug}`} className="secondary-btn small-btn">View Details</Link>
           <a
-            href={`https://wa.me/254700932014?text=${whatsappText}`}
+            href={`https://wa.me/${import.meta.env.VITE_WHATSAPP_NUMBER || '254709932014'}?text=${whatsappText}`}
             target="_blank"
             rel="noreferrer"
             className="secondary-btn small-btn whatsapp-btn"
           >
-            WhatsApp
+            <MessageCircle size={13} /> Order via WhatsApp
           </a>
         </div>
       </div>

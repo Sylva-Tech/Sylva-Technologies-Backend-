@@ -53,6 +53,10 @@ function CartPage() {
             <span>Total</span>
             <strong>KSh {subtotal.toLocaleString()}</strong>
           </div>
+          <div className="cart-payment-badge">
+            <span>Pay securely with</span>
+            <strong className="paypal-wordmark">PayPal</strong>
+          </div>
           <Link to="/checkout" className="primary-btn full-btn checkout-link">Checkout</Link>
           <button className="secondary-btn full-btn" onClick={clearCart}>Clear Cart</button>
         </aside>
