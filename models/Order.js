@@ -197,16 +197,17 @@ const orderSchema = new mongoose.Schema(
     |--------------------------------------------------------------------------
     */
 
-    paymentMethod: {
-      type: String,
-      enum: [
-        'Cash on Delivery',
-        'M-Pesa',
-        'PayPal',
-        'WhatsApp Order',
-      ],
-      default: 'Cash on Delivery',
-    },
+   paymentMethod: {
+  type: String,
+  enum: [
+    'Cash on Delivery',
+    'M-Pesa',
+    'PayPal',
+    'WhatsApp Order',
+    'Paystack',
+  ],
+  default: 'Cash on Delivery',
+},
 
     paymentReference: {
       type: String,

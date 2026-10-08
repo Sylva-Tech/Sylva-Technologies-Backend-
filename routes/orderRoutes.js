@@ -6,6 +6,12 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 
 const {
+  initializeTransaction,
+  verifyTransaction,
+} = require('../services/paystackService');
+
+const {
+
   protect,
   adminOnly,
   requireVerified,
@@ -759,6 +765,120 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
           'name slug price images stock'
         );
 
+        /*
+|--------------------------------------------------------------------------
+| INITIALIZE PAYSTACK PAYMENT
+|--------------------------------------------------------------------------
+*/
+
+let paystackPayment = null;
+
+if (paymentMethod === 'Paystack') {
+  try {
+    const paystackReference = order.orderNumber;
+
+    const callbackUrl =
+      `${process.env.CLIENT_URL || 'http://localhost:5173'}` +
+      `/payment/callback?reference=${encodeURIComponent(
+        paystackReference
+      )}`;
+
+    const paystackResponse =
+      await initializeTransaction({
+        email: customerEmail,
+        amount: orderTotal,
+        reference: paystackReference,
+        callbackUrl,
+        metadata: {
+          orderId: order._id.toString(),
+          orderNumber: order.orderNumber,
+          trackingCode:
+            order.trackingCode ||
+            order.orderNumber,
+          customerName:
+            customerDetails.fullName,
+          customerPhone:
+            customerDetails.phone,
+        },
+      });
+
+    if (
+      !paystackResponse ||
+      !paystackResponse.status ||
+      !paystackResponse.data?.authorization_url
+    ) {
+      throw new Error(
+        paystackResponse?.message ||
+          'Paystack did not return a payment authorization URL.'
+      );
+    }
+
+    order.paymentReference =
+      paystackResponse.data.reference ||
+      paystackReference;
+
+    await order.save();
+
+    populatedOrder.paymentReference =
+      order.paymentReference;
+
+    paystackPayment = {
+      authorization_url:
+        paystackResponse.data.authorization_url,
+
+      access_code:
+        paystackResponse.data.access_code,
+
+      reference:
+        paystackResponse.data.reference ||
+        paystackReference,
+    };
+
+    console.info(
+      'Paystack payment initialized:',
+      order.orderNumber
+    );
+  } catch (paystackError) {
+    console.error(
+      'Paystack initialization error:',
+      paystackError.response?.data ||
+        paystackError.message
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | RESTORE STOCK IF PAYSTACK INITIALIZATION FAILS
+    |--------------------------------------------------------------------------
+    */
+
+    try {
+      for (const item of preparedItems) {
+        await Product.updateOne(
+          { _id: item.product },
+          {
+            $inc: {
+              stock: item.quantity,
+            },
+          }
+        );
+      }
+
+      await Order.findByIdAndDelete(order._id);
+    } catch (rollbackError) {
+      console.error(
+        'Paystack rollback error:',
+        rollbackError
+      );
+    }
+
+    return res.status(502).json({
+      success: false,
+      message:
+        'Unable to initialize Paystack payment. Please try again.',
+    });
+  }
+}
+
     /*
     |--------------------------------------------------------------------------
     | SEND ORDER EMAILS
@@ -839,12 +959,16 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
     |--------------------------------------------------------------------------
     */
 
-    return res.status(201).json({
-      success: true,
-      message:
-        'Order created successfully.',
-      data: populatedOrder,
-    });
+ return res.status(201).json({
+  success: true,
+  message:
+    paymentMethod === 'Paystack'
+      ? 'Order created. Continue to Paystack to complete your payment.'
+      : 'Order created successfully.',
+  data: populatedOrder,
+  payment: paystackPayment,
+});
+
   } catch (error) {
     console.error(
       'Create order error:',
