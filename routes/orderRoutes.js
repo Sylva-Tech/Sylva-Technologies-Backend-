@@ -42,6 +42,8 @@ const PAYMENT_STATUSES = [
   'Failed',
   'Refunded',
   'Refund Pending',
+  'Refund Processing',
+  'Refund Failed',
 ];
 
 const roundMoney = (value) => {
@@ -263,7 +265,7 @@ const confirmPaidOrder = async (order, transaction) => {
   validateSuccessfulTransaction(transaction, order);
 
   // A late Paystack success after cancellation must be refunded, not settled to a seller.
-  if (order.status === 'Cancelled' && ['Refund Pending', 'Refunded'].includes(order.paymentStatus)) {
+  if (order.status === 'Cancelled' && ['Refund Pending', 'Refund Processing', 'Refund Failed', 'Refunded'].includes(order.paymentStatus)) {
     return order;
   }
 
@@ -307,7 +309,7 @@ const confirmPaidOrder = async (order, transaction) => {
       if (
         order &&
         order.status === 'Cancelled' &&
-        !['Refund Pending', 'Refunded'].includes(order.paymentStatus)
+        !['Refund Pending', 'Refund Processing', 'Refund Failed', 'Refunded'].includes(order.paymentStatus)
       ) {
         return confirmPaidOrder(order, transaction);
       }
@@ -1137,11 +1139,25 @@ router.post('/paystack/webhook', async (req, res) => {
           await confirmPaidOrder(order, verification.data);
         }
       }
-    } else if (event === 'refund.processed' && data.transaction?.reference) {
-      await Order.updateOne(
-        { paymentReference: String(data.transaction.reference), paymentStatus: 'Refund Pending' },
-        { $set: { paymentStatus: 'Refunded' } }
-      );
+    } else if (
+      ['refund.pending', 'refund.processing', 'refund.processed', 'refund.failed'].includes(event)
+    ) {
+      const transactionReference = data.transaction_reference || data.transaction?.reference;
+      if (transactionReference) {
+        const refundStatus = {
+          'refund.pending': 'Refund Pending',
+          'refund.processing': 'Refund Processing',
+          'refund.processed': 'Refunded',
+          'refund.failed': 'Refund Failed',
+        }[event];
+        await Order.updateOne(
+          {
+            paymentReference: String(transactionReference),
+            paymentStatus: { $in: ['Refund Pending', 'Refund Processing', 'Refund Failed'] },
+          },
+          { $set: { paymentStatus: refundStatus } }
+        );
+      }
     }
 
     return res.status(200).json({ received: true });
@@ -1236,8 +1252,8 @@ router.post('/:id/cancel', protect, async (req, res) => {
       return res.json({ success: true, message: 'This order is already cancelled.', data: order });
     }
 
-    if (['Processing', 'Ready for Delivery', 'Shipped', 'Delivered'].includes(order.status)) {
-      return res.status(409).json({ success: false, message: 'This order can no longer be cancelled online. Please contact support.' });
+    if (['Shipped', 'Delivered'].includes(order.status)) {
+      return res.status(409).json({ success: false, message: 'This order has already been shipped or delivered. Please contact support for assistance.' });
     }
 
     const windowStart = order.paidAt || order.createdAt;
@@ -1337,6 +1353,16 @@ router.patch(
 
       const previousStatus =
         order.status;
+
+      if (
+        ['Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered'].includes(status) &&
+        order.paymentStatus !== 'Paid'
+      ) {
+        return res.status(409).json({
+          success: false,
+          message: 'This order cannot move forward until Paystack payment is verified.',
+        });
+      }
 
       if (
         previousStatus === status
