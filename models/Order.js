@@ -244,6 +244,8 @@ const orderSchema = new mongoose.Schema(
         'Failed',
         'Refunded',
         'Refund Pending',
+        'Refund Processing',
+        'Refund Failed',
       ],
       default: 'Pending',
     },
