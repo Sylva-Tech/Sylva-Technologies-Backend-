@@ -262,10 +262,28 @@ const validateSuccessfulTransaction = (transaction, order) => {
 const confirmPaidOrder = async (order, transaction) => {
   validateSuccessfulTransaction(transaction, order);
 
+  // A late Paystack success after cancellation must be refunded, not settled to a seller.
+  if (order.status === 'Cancelled') {
+    const refund = await refundTransaction({
+      reference: order.paymentReference || order.orderNumber,
+      amount: order.total,
+      customerNote: 'Payment completed after the order was cancelled.',
+    });
+    if (!refund?.status) {
+      throw new Error('Payment arrived after cancellation, but Paystack did not accept the automatic refund. Please contact support.');
+    }
+    order.paymentStatus = 'Refund Pending';
+    order.paidAt = order.paidAt || new Date();
+    order.refundReference = String(refund.data?.id || refund.data?.reference || '');
+    await order.save();
+    return order;
+  }
+
   const wasAlreadyPaid = order.paymentStatus === 'Paid';
+  let newlyConfirmed = false;
   if (!wasAlreadyPaid) {
     const updated = await Order.findOneAndUpdate(
-      { _id: order._id, paymentStatus: { $ne: 'Paid' } },
+      { _id: order._id, paymentStatus: { $ne: 'Paid' }, status: { $ne: 'Cancelled' } },
       {
         $set: {
           paymentStatus: 'Paid',
@@ -278,22 +296,15 @@ const confirmPaidOrder = async (order, transaction) => {
     );
 
     if (updated) {
-      order.paymentStatus = updated.paymentStatus;
-      order.paidAt = updated.paidAt;
-      order.cancellationDeadline = updated.cancellationDeadline;
-      order.status = updated.status;
+      newlyConfirmed = true;
+      order = updated;
     } else {
-      await order.reload?.();
       order = await Order.findById(order._id);
     }
   }
 
-  // Settlement references are checked in applySellerSettlement to keep webhook retries idempotent.
-  if (order.paymentStatus === 'Paid' && order.status !== 'Cancelled') {
-    await applySellerSettlement(order);
-  }
-
-  if (!wasAlreadyPaid && order.paymentStatus === 'Paid') {
+  // Seller funds remain unsettled until fulfillment reaches Delivered.
+  if (newlyConfirmed && order.paymentStatus === 'Paid') {
     await sendPaidOrderEmails(order);
   }
 
@@ -1362,6 +1373,17 @@ router.patch(
           },
         }
       );
+
+      if (
+        status === 'Delivered' &&
+        previousStatus !== 'Delivered' &&
+        order.paymentStatus === 'Paid'
+      ) {
+        const settlementResult = await applySellerSettlement(order);
+        if (settlementResult.settled) {
+          console.info('Seller settlement applied after delivery:', order.orderNumber);
+        }
+      }
 
       const updated =
         await Order.findById(
