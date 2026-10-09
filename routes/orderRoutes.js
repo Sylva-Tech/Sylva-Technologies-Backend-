@@ -263,6 +263,10 @@ const confirmPaidOrder = async (order, transaction) => {
   validateSuccessfulTransaction(transaction, order);
 
   // A late Paystack success after cancellation must be refunded, not settled to a seller.
+  if (order.status === 'Cancelled' && ['Refund Pending', 'Refunded'].includes(order.paymentStatus)) {
+    return order;
+  }
+
   if (order.status === 'Cancelled') {
     const refund = await refundTransaction({
       reference: order.paymentReference || order.orderNumber,
@@ -283,7 +287,7 @@ const confirmPaidOrder = async (order, transaction) => {
   let newlyConfirmed = false;
   if (!wasAlreadyPaid) {
     const updated = await Order.findOneAndUpdate(
-      { _id: order._id, paymentStatus: { $ne: 'Paid' }, status: { $ne: 'Cancelled' } },
+      { _id: order._id, paymentStatus: mongoose.trusted({ $ne: 'Paid' }), status: mongoose.trusted({ $ne: 'Cancelled' }) },
       {
         $set: {
           paymentStatus: 'Paid',
