@@ -304,6 +304,13 @@ const confirmPaidOrder = async (order, transaction) => {
       order = updated;
     } else {
       order = await Order.findById(order._id);
+      if (
+        order &&
+        order.status === 'Cancelled' &&
+        !['Refund Pending', 'Refunded'].includes(order.paymentStatus)
+      ) {
+        return confirmPaidOrder(order, transaction);
+      }
     }
   }
 
