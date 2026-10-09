@@ -914,9 +914,19 @@ if (paymentMethod === 'Paystack') {
   try {
     const paystackReference = order.orderNumber;
 
+    const frontendBaseUrl = (
+      process.env.FRONTEND_URL ||
+      process.env.CLIENT_URL ||
+      (process.env.NODE_ENV === 'production'
+        ? 'https://www.sylvatechnologies.co.ke'
+        : 'http://localhost:5173')
+    )
+      .split(',')[0]
+      .trim()
+      .replace(/\/$/, '');
+
     const callbackUrl =
-      `${process.env.CLIENT_URL || 'http://localhost:5173'}` +
-      `/payment/callback?reference=${encodeURIComponent(
+      `${frontendBaseUrl}/payment/callback?reference=${encodeURIComponent(
         paystackReference
       )}`;
 
@@ -1324,6 +1334,12 @@ router.patch(
       if (
         previousStatus === status
       ) {
+        // Allow an admin retry to finish seller settlement if a previous delivery update
+        // saved the order status but settlement failed part-way through.
+        if (status === 'Delivered' && order.paymentStatus === 'Paid') {
+          await applySellerSettlement(order);
+        }
+
         const unchangedOrder =
           await Order.findById(
             order._id
