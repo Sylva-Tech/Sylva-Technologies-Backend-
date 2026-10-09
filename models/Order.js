@@ -215,6 +215,27 @@ const orderSchema = new mongoose.Schema(
       default: '',
     },
 
+    paidAt: {
+      type: Date,
+      default: null,
+    },
+
+    cancellationDeadline: {
+      type: Date,
+      default: null,
+    },
+
+    cancellationRequestedAt: {
+      type: Date,
+      default: null,
+    },
+
+    refundReference: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
     paymentStatus: {
       type: String,
       enum: [
@@ -222,6 +243,7 @@ const orderSchema = new mongoose.Schema(
         'Paid',
         'Failed',
         'Refunded',
+        'Refund Pending',
       ],
       default: 'Pending',
     },
