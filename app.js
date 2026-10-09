@@ -185,6 +185,12 @@ app.use(
   express.json({
     limit: '10mb',
     strict: true,
+    verify: (req, res, buffer) => {
+      // Paystack signs the exact request bytes, so preserve them before JSON parsing.
+      if (req.originalUrl.split('?')[0] === '/api/orders/paystack/webhook') {
+        req.rawBody = Buffer.from(buffer);
+      }
+    },
   })
 );
 
