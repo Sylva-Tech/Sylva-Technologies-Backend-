@@ -39,39 +39,32 @@ const getFromEmail = (type = 'verification') => {
   const senders = {
     verification:
       process.env.EMAIL_FROM_VERIFICATION ||
-      process.env.EMAIL_FROM ||
       'Sylva Technologies <verification@sylvatechnologies.co.ke>',
 
     passwordReset:
       process.env.EMAIL_FROM_PASSWORD_RESET ||
-      process.env.EMAIL_FROM ||
       'Sylva Technologies <resetpassword@sylvatechnologies.co.ke>',
 
     orders:
       process.env.EMAIL_FROM_ORDERS ||
-      process.env.EMAIL_FROM ||
       'Sylva Technologies <order@sylvatechnologies.co.ke>',
 
     admin:
       process.env.EMAIL_FROM_ADMIN ||
       process.env.EMAIL_FROM_SALES ||
-      process.env.EMAIL_FROM ||
       'Sylva Technologies <sales@sylvatechnologies.co.ke>',
 
     sales:
       process.env.EMAIL_FROM_SALES ||
       process.env.EMAIL_FROM_ADMIN ||
-      process.env.EMAIL_FROM ||
       'Sylva Technologies <sales@sylvatechnologies.co.ke>',
 
     support:
       process.env.EMAIL_FROM_SUPPORT ||
-      process.env.EMAIL_FROM ||
       'Sylva Technologies <support@sylvatechnologies.co.ke>',
 
     sellers:
       process.env.EMAIL_FROM_SELLERS ||
-      process.env.EMAIL_FROM ||
       'Sylva Technologies <sellers@sylvatechnologies.co.ke>',
   };
 
