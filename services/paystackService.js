@@ -77,7 +77,47 @@ async function verifyTransaction(reference) {
   return response.data;
 }
 
+/**
+ * Request a full or partial refund through Paystack.
+ * Amount is expressed in naira/KES before conversion to the minor unit.
+ */
+async function refundTransaction({ reference, amount, customerNote }) {
+  if (!reference) {
+    throw new Error('Payment reference is required for a refund.');
+  }
+
+  const payload = {
+    transaction: reference,
+    currency: 'KES',
+  };
+
+  if (amount !== undefined && amount !== null) {
+    const minorAmount = Math.round(Number(amount) * 100);
+    if (!Number.isFinite(minorAmount) || minorAmount <= 0) {
+      throw new Error('A valid refund amount is required.');
+    }
+    payload.amount = minorAmount;
+  }
+
+  if (customerNote) {
+    payload.customer_note = String(customerNote).slice(0, 200);
+    payload.merchant_note = 'Customer cancellation within the five-minute cancellation window.';
+  }
+
+  const response = await axios.post(
+    `${PAYSTACK_BASE_URL}/refund`,
+    payload,
+    {
+      headers: getPaystackHeaders(),
+      timeout: 30000,
+    }
+  );
+
+  return response.data;
+}
+
 module.exports = {
   initializeTransaction,
   verifyTransaction,
+  refundTransaction,
 };

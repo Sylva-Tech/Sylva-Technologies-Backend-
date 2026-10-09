@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 
 const Order = require('../models/Order');
@@ -8,6 +9,7 @@ const Product = require('../models/Product');
 const {
   initializeTransaction,
   verifyTransaction,
+  refundTransaction,
 } = require('../services/paystackService');
 
 const {
@@ -39,6 +41,9 @@ const PAYMENT_STATUSES = [
   'Paid',
   'Failed',
   'Refunded',
+  'Refund Pending',
+  'Refund Processing',
+  'Refund Failed',
 ];
 
 const roundMoney = (value) => {
@@ -151,18 +156,21 @@ const applySellerSettlement = async (order) => {
 
     wallet.currency = wallet.currency || 'KES';
 
+    // A repeated Paystack webhook must never credit the same order twice.
+    const settlementReference = `order:${order.orderNumber}`;
+    wallet.transactions = Array.isArray(wallet.transactions)
+      ? wallet.transactions
+      : [];
+    if (wallet.transactions.some((tx) => tx.reference === settlementReference)) {
+      continue;
+    }
+
     wallet.availableBalance = roundMoney(
       Number(wallet.availableBalance || 0) +
         Number(settlement.netAmount || 0)
     );
 
     wallet.lastUpdatedAt = new Date();
-
-    wallet.transactions = Array.isArray(
-      wallet.transactions
-    )
-      ? wallet.transactions
-      : [];
 
     wallet.transactions.unshift({
       _id: new mongoose.Types.ObjectId(),
@@ -193,6 +201,137 @@ const applySellerSettlement = async (order) => {
     settled: settledCount > 0,
     count: settledCount,
   };
+};
+
+
+/*
+|--------------------------------------------------------------------------
+| PAYMENT CONFIRMATION HELPERS
+|--------------------------------------------------------------------------
+*/
+
+const sendPaidOrderEmails = async (order) => {
+  try {
+    const populatedOrder = await Order.findById(order._id)
+      .populate('customer', 'name email phone')
+      .populate('items.product', 'name slug price images stock');
+
+    if (!populatedOrder) return;
+
+    const email = populatedOrder.customerEmail || populatedOrder.customerDetails?.email;
+    if (email) {
+      await sendOrderConfirmationEmail({
+        to: email,
+        customerName: populatedOrder.customerName || populatedOrder.customerDetails?.fullName || 'Customer',
+        order: populatedOrder.toObject(),
+        orderDate: new Date(populatedOrder.createdAt).toLocaleString('en-KE'),
+      });
+    }
+
+    await sendAdminOrderNotificationEmail({
+      to: process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke',
+      order: populatedOrder.toObject(),
+      customer: {
+        name: populatedOrder.customerName || populatedOrder.customerDetails?.fullName || 'Customer',
+        email: populatedOrder.customerEmail || populatedOrder.customerDetails?.email || '',
+        phone: populatedOrder.customerPhone || populatedOrder.customerDetails?.phone || '',
+      },
+    });
+  } catch (error) {
+    console.error('Paid order email notification failed:', error.message);
+  }
+};
+
+const validateSuccessfulTransaction = (transaction, order) => {
+  if (!transaction || transaction.status !== 'success') {
+    throw new Error('Paystack has not confirmed a successful payment.');
+  }
+
+  if (String(transaction.reference || '') !== String(order.paymentReference || order.orderNumber)) {
+    throw new Error('Payment reference does not match this order.');
+  }
+
+  const expectedMinorAmount = Math.round(Number(order.total || 0) * 100);
+  if (Number(transaction.amount) !== expectedMinorAmount) {
+    throw new Error('The verified payment amount does not match the order total.');
+  }
+
+  if (String(transaction.currency || '').toUpperCase() !== 'KES') {
+    throw new Error('The verified payment currency does not match KES.');
+  }
+};
+
+const confirmPaidOrder = async (order, transaction) => {
+  validateSuccessfulTransaction(transaction, order);
+
+  // A late Paystack success after cancellation must be refunded, not settled to a seller.
+  if (order.status === 'Cancelled' && ['Refund Pending', 'Refund Processing', 'Refund Failed', 'Refunded'].includes(order.paymentStatus)) {
+    return order;
+  }
+
+  if (order.status === 'Cancelled') {
+    const refund = await refundTransaction({
+      reference: order.paymentReference || order.orderNumber,
+      amount: order.total,
+      customerNote: 'Payment completed after the order was cancelled.',
+    });
+    if (!refund?.status) {
+      throw new Error('Payment arrived after cancellation, but Paystack did not accept the automatic refund. Please contact support.');
+    }
+    order.paymentStatus = 'Refund Pending';
+    order.paidAt = order.paidAt || new Date();
+    order.refundReference = String(refund.data?.id || refund.data?.reference || '');
+    await order.save();
+    return order;
+  }
+
+  const wasAlreadyPaid = order.paymentStatus === 'Paid';
+  let newlyConfirmed = false;
+  if (!wasAlreadyPaid) {
+    const updated = await Order.findOneAndUpdate(
+      { _id: order._id, paymentStatus: mongoose.trusted({ $ne: 'Paid' }), status: mongoose.trusted({ $ne: 'Cancelled' }) },
+      {
+        $set: {
+          paymentStatus: 'Paid',
+          paidAt: new Date(),
+          cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000),
+          status: order.status === 'Pending' ? 'Confirmed' : order.status,
+        },
+      },
+      { new: true }
+    );
+
+    if (updated) {
+      newlyConfirmed = true;
+      order = updated;
+    } else {
+      order = await Order.findById(order._id);
+      if (
+        order &&
+        order.status === 'Cancelled' &&
+        !['Refund Pending', 'Refund Processing', 'Refund Failed', 'Refunded'].includes(order.paymentStatus)
+      ) {
+        return confirmPaidOrder(order, transaction);
+      }
+    }
+  }
+
+  // Seller funds remain unsettled until fulfillment reaches Delivered.
+  if (newlyConfirmed && order.paymentStatus === 'Paid') {
+    await sendPaidOrderEmails(order);
+  }
+
+  return order;
+};
+
+const restoreOrderStock = async (order) => {
+  for (const item of order.items || []) {
+    if (!item.product) continue;
+    await Product.updateOne(
+      { _id: item.product },
+      { $inc: { stock: Number(item.quantity || 0) } }
+    );
+  }
 };
 
 /*
@@ -374,6 +513,13 @@ const createOrderFromRequest = async ({
         success: false,
         message:
           'Your order must contain at least one product.',
+      });
+    }
+
+    if (paymentMethod !== 'Paystack') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only Paystack online payments are currently accepted.',
       });
     }
 
@@ -777,9 +923,19 @@ if (paymentMethod === 'Paystack') {
   try {
     const paystackReference = order.orderNumber;
 
+    const frontendBaseUrl = (
+      process.env.FRONTEND_URL ||
+      process.env.CLIENT_URL ||
+      (process.env.NODE_ENV === 'production'
+        ? 'https://www.sylvatechnologies.co.ke'
+        : 'http://localhost:5173')
+    )
+      .split(',')[0]
+      .trim()
+      .replace(/\/$/, '');
+
     const callbackUrl =
-      `${process.env.CLIENT_URL || 'http://localhost:5173'}` +
-      `/payment/callback?reference=${encodeURIComponent(
+      `${frontendBaseUrl}/payment/callback?reference=${encodeURIComponent(
         paystackReference
       )}`;
 
@@ -879,79 +1035,7 @@ if (paymentMethod === 'Paystack') {
   }
 }
 
-    /*
-    |--------------------------------------------------------------------------
-    | SEND ORDER EMAILS
-    |--------------------------------------------------------------------------
-    */
-
-    try {
-      if (customerEmail) {
-        await sendOrderConfirmationEmail({
-          to: customerEmail,
-
-          customerName:
-            customerDetails.fullName,
-
-          order: {
-            ...populatedOrder.toObject(),
-
-            orderNumber:
-              populatedOrder.orderNumber,
-
-            trackingCode:
-              populatedOrder.trackingCode ||
-              populatedOrder.orderNumber,
-          },
-
-          orderDate:
-            new Date(
-              populatedOrder.createdAt
-            ).toLocaleString(),
-        });
-      }
-
-      const adminAddress =
-        process.env.SALES_EMAIL ||
-        'sales@sylvatechnologies.co.ke';
-
-      await sendAdminOrderNotificationEmail({
-        to: adminAddress,
-
-        order: {
-          ...populatedOrder.toObject(),
-
-          orderNumber:
-            populatedOrder.orderNumber,
-
-          trackingCode:
-            populatedOrder.trackingCode ||
-            populatedOrder.orderNumber,
-        },
-
-        customer: {
-          name:
-            customerDetails.fullName,
-
-          email:
-            customerEmail,
-
-          phone:
-            customerDetails.phone,
-        },
-      });
-    } catch (emailError) {
-      /*
-      |--------------------------------------------------------------------------
-      | EMAIL FAILURE SHOULD NOT CANCEL THE ORDER
-      |--------------------------------------------------------------------------
-      */
-
-      console.error(
-        'Order email notification failed:',
-        emailError
-      );
-    }
+    // Order emails are sent only after Paystack verifies payment.
 
     /*
     |--------------------------------------------------------------------------
@@ -1018,6 +1102,206 @@ router.post(
   }
 );
 
+
+/*
+|--------------------------------------------------------------------------
+| PAYSTACK WEBHOOK
+|--------------------------------------------------------------------------
+| Configure Paystack to POST events to:
+| https://sylva-technologies-backend.onrender.com/api/orders/paystack/webhook
+*/
+
+router.post('/paystack/webhook', async (req, res) => {
+  try {
+    const secret = process.env.PAYSTACK_SECRET_KEY;
+    const signature = req.headers['x-paystack-signature'];
+    if (!secret || !signature || !req.rawBody) {
+      return res.status(401).json({ success: false, message: 'Invalid webhook signature.' });
+    }
+
+    const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex');
+    const suppliedBuffer = Buffer.from(String(signature));
+    const expectedBuffer = Buffer.from(expected);
+    if (suppliedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(suppliedBuffer, expectedBuffer)) {
+      return res.status(401).json({ success: false, message: 'Invalid webhook signature.' });
+    }
+
+    const event = req.body?.event;
+    const data = req.body?.data || {};
+
+    if (event === 'charge.success' && data.reference) {
+      const order = await Order.findOne({
+        $or: [{ paymentReference: String(data.reference) }, { orderNumber: String(data.reference) }],
+      });
+      if (order && order.paymentMethod === 'Paystack') {
+        const verification = await verifyTransaction(data.reference);
+        if (verification?.status && verification.data) {
+          await confirmPaidOrder(order, verification.data);
+        }
+      }
+    } else if (
+      ['refund.pending', 'refund.processing', 'refund.processed', 'refund.failed'].includes(event)
+    ) {
+      const transactionReference = data.transaction_reference || data.transaction?.reference;
+      if (transactionReference) {
+        const refundStatus = {
+          'refund.pending': 'Refund Pending',
+          'refund.processing': 'Refund Processing',
+          'refund.processed': 'Refunded',
+          'refund.failed': 'Refund Failed',
+        }[event];
+        await Order.updateOne(
+          {
+            paymentReference: String(transactionReference),
+            paymentStatus: { $in: ['Refund Pending', 'Refund Processing', 'Refund Failed'] },
+          },
+          { $set: { paymentStatus: refundStatus } }
+        );
+      }
+    }
+
+    return res.status(200).json({ received: true });
+  } catch (error) {
+    console.error('Paystack webhook processing failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Webhook processing failed.' });
+  }
+});
+
+/*
+|--------------------------------------------------------------------------
+| VERIFY PAYMENT AFTER PAYSTACK REDIRECT
+|--------------------------------------------------------------------------
+*/
+
+router.post('/paystack/verify', protect, async (req, res) => {
+  try {
+    const reference = String(req.body?.reference || '').trim();
+    if (!reference) {
+      return res.status(400).json({ success: false, message: 'Payment reference is required.' });
+    }
+
+    const order = await Order.findOne({
+      $or: [{ paymentReference: reference }, { orderNumber: reference }],
+    });
+
+    if (!order || order.paymentMethod !== 'Paystack') {
+      return res.status(404).json({ success: false, message: 'No Paystack order was found for this reference.' });
+    }
+
+    const isAdmin = req.user.role === 'admin';
+    if (!isAdmin && (!order.customer || String(order.customer) !== String(req.user._id))) {
+      return res.status(403).json({ success: false, message: 'You are not authorized to verify this order.' });
+    }
+
+    const verification = await verifyTransaction(reference);
+    if (!verification?.status || !verification.data) {
+      return res.status(502).json({ success: false, message: 'Paystack could not verify this payment yet.' });
+    }
+
+    if (verification.data.status !== 'success') {
+      return res.status(409).json({
+        success: false,
+        paymentStatus: verification.data.status || 'pending',
+        message: 'Payment has not completed. If you have paid, refresh shortly while Paystack confirms it.',
+        data: { orderNumber: order.orderNumber, paymentStatus: order.paymentStatus, status: order.status },
+      });
+    }
+
+    const updatedOrder = await confirmPaidOrder(order, verification.data);
+    return res.json({
+      success: true,
+      message: 'Payment verified successfully.',
+      data: {
+        _id: updatedOrder._id,
+        orderNumber: updatedOrder.orderNumber,
+        trackingCode: updatedOrder.trackingCode,
+        paymentStatus: updatedOrder.paymentStatus,
+        status: updatedOrder.status,
+        paidAt: updatedOrder.paidAt,
+        cancellationDeadline: updatedOrder.cancellationDeadline,
+        total: updatedOrder.total,
+      },
+    });
+  } catch (error) {
+    console.error('Paystack verification failed:', error.message);
+    return res.status(400).json({ success: false, message: error.message || 'Unable to verify payment.' });
+  }
+});
+
+/*
+|--------------------------------------------------------------------------
+| CUSTOMER CANCELLATION (FIVE-MINUTE WINDOW)
+|--------------------------------------------------------------------------
+*/
+
+router.post('/:id/cancel', protect, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid order ID.' });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
+
+    const isAdmin = req.user.role === 'admin';
+    if (!isAdmin && (!order.customer || String(order.customer) !== String(req.user._id))) {
+      return res.status(403).json({ success: false, message: 'You are not authorized to cancel this order.' });
+    }
+
+    if (order.status === 'Cancelled') {
+      return res.json({ success: true, message: 'This order is already cancelled.', data: order });
+    }
+
+    if (['Shipped', 'Delivered'].includes(order.status)) {
+      return res.status(409).json({ success: false, message: 'This order has already been shipped or delivered. Please contact support for assistance.' });
+    }
+
+    const windowStart = order.paidAt || order.createdAt;
+    const deadline = order.paidAt
+      ? new Date(order.paidAt.getTime() + 5 * 60 * 1000)
+      : new Date(windowStart.getTime() + 5 * 60 * 1000);
+
+    if (!isAdmin && Date.now() > deadline.getTime()) {
+      return res.status(409).json({
+        success: false,
+        message: 'The five-minute cancellation window has expired. Please contact support for assistance.',
+        cancellationDeadline: deadline,
+      });
+    }
+
+    if (order.paymentStatus === 'Paid') {
+      const refund = await refundTransaction({
+        reference: order.paymentReference || order.orderNumber,
+        amount: order.total,
+        customerNote: 'Customer cancellation requested within the five-minute cancellation window.',
+      });
+      if (!refund?.status) {
+        return res.status(502).json({ success: false, message: 'Paystack did not accept the refund request. The order has not been cancelled.' });
+      }
+      order.paymentStatus = 'Refund Pending';
+      order.refundReference = String(refund.data?.id || refund.data?.reference || '');
+    } else if (order.paymentStatus === 'Pending') {
+      order.paymentStatus = 'Failed';
+    }
+
+    order.status = 'Cancelled';
+    order.cancellationRequestedAt = new Date();
+    await order.save();
+    await restoreOrderStock(order);
+
+    return res.json({
+      success: true,
+      message: order.paymentStatus === 'Refund Pending'
+        ? 'Order cancelled. Your refund has been requested and will update when Paystack confirms it.'
+        : 'Order cancelled successfully.',
+      data: order,
+    });
+  } catch (error) {
+    console.error('Customer cancellation failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to cancel this order right now.' });
+  }
+});
+
 /*
 |--------------------------------------------------------------------------
 | UPDATE ORDER STATUS - ADMIN
@@ -1071,8 +1355,24 @@ router.patch(
         order.status;
 
       if (
+        ['Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered'].includes(status) &&
+        order.paymentStatus !== 'Paid'
+      ) {
+        return res.status(409).json({
+          success: false,
+          message: 'This order cannot move forward until Paystack payment is verified.',
+        });
+      }
+
+      if (
         previousStatus === status
       ) {
+        // Allow an admin retry to finish seller settlement if a previous delivery update
+        // saved the order status but settlement failed part-way through.
+        if (status === 'Delivered' && order.paymentStatus === 'Paid') {
+          await applySellerSettlement(order);
+        }
+
         const unchangedOrder =
           await Order.findById(
             order._id
@@ -1100,28 +1400,14 @@ router.patch(
       |--------------------------------------------------------------------------
       */
 
-      if (
-        status === 'Cancelled' &&
-        previousStatus !== 'Cancelled'
-      ) {
-        for (const item of order.items) {
-          if (!item.product) {
-            continue;
-          }
-
-          await Product.updateOne(
-            {
-              _id: item.product,
-            },
-            {
-              $inc: {
-                stock: Number(
-                  item.quantity || 0
-                ),
-              },
-            }
-          );
+      if (status === 'Cancelled' && previousStatus !== 'Cancelled') {
+        if (order.paymentStatus === 'Paid' || order.paymentStatus === 'Refund Pending') {
+          return res.status(409).json({
+            success: false,
+            message: 'Paid orders must use the cancellation/refund workflow so customer funds are not left unrefunded.',
+          });
         }
+        await restoreOrderStock(order);
       }
 
       /*
@@ -1140,6 +1426,17 @@ router.patch(
           },
         }
       );
+
+      if (
+        status === 'Delivered' &&
+        previousStatus !== 'Delivered' &&
+        order.paymentStatus === 'Paid'
+      ) {
+        const settlementResult = await applySellerSettlement(order);
+        if (settlementResult.settled) {
+          console.info('Seller settlement applied after delivery:', order.orderNumber);
+        }
+      }
 
       const updated =
         await Order.findById(
@@ -1224,6 +1521,13 @@ router.patch(
           success: false,
           message:
             'Order not found.',
+        });
+      }
+
+      if (paymentStatus === 'Paid' && order.paymentMethod === 'Paystack') {
+        return res.status(409).json({
+          success: false,
+          message: 'Paystack payments can only be marked paid after successful gateway verification.',
         });
       }
 
