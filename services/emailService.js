@@ -115,6 +115,13 @@ const sendMail = async ({
       await resend.emails.send({
         from: getFromEmail(sender),
         to,
+        ...(sender === 'payment'
+          ? {
+              replyTo:
+                process.env.EMAIL_REPLY_TO_SUPPORT ||
+                'support@sylvatechnologies.co.ke',
+            }
+          : {}),
         // Keep an internal admin copy of business emails. Never copy account
         // verification or password-reset codes/links to another mailbox.
         ...(sender !== 'verification' && sender !== 'passwordReset'
