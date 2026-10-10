@@ -18,6 +18,30 @@ const cloudinary = require('../config/cloudinary');
 
 const router = express.Router();
 
+/*
+|--------------------------------------------------------------------------
+| MARK CUSTOMER ACCOUNT AS REVIEWED BY ADMIN
+|--------------------------------------------------------------------------
+*/
+router.patch('/:id/admin-review', protect, adminOnly, async (req, res) => {
+  try {
+    const user = await User.findOneAndUpdate(
+      { _id: req.params.id, role: 'customer' },
+      { $set: { adminReviewedAt: new Date(), adminReviewedBy: req.user._id } },
+      { new: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Customer account not found.' });
+    }
+
+    return res.json({ success: true, message: 'Customer marked as reviewed.', data: user });
+  } catch (error) {
+    console.error('Mark customer reviewed error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to mark this customer as reviewed.' });
+  }
+});
+
 router.delete('/me', protect, async (req, res) => {
   try {
     if (!req.user || !req.user._id) {
