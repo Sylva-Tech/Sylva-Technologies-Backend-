@@ -229,7 +229,10 @@ const sendPaidOrderEmails = async (order) => {
     }
 
     await sendAdminOrderNotificationEmail({
-      to: process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke',
+      to:
+        process.env.ORDERS_EMAIL ||
+        process.env.SALES_EMAIL ||
+        'sales@sylvatechnologies.co.ke',
       order: populatedOrder.toObject(),
       customer: {
         name: populatedOrder.customerName || populatedOrder.customerDetails?.fullName || 'Customer',
