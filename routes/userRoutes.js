@@ -158,7 +158,7 @@ router.get(
   async (req, res) => {
     try {
       // One-time compatibility backfill: existing accounts predate inbox review tracking.
-      await User.updateMany(
+      await User.collection.updateMany(
         { adminReviewedAt: { $exists: false } },
         { $set: { adminReviewedAt: new Date() } }
       );
