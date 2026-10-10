@@ -157,6 +157,12 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
+      // One-time compatibility backfill: existing accounts predate inbox review tracking.
+      await User.updateMany(
+        { adminReviewedAt: { $exists: false } },
+        { $set: { adminReviewedAt: new Date() } }
+      );
+
       const users = await User.find()
         .select('-password')
         .sort({
