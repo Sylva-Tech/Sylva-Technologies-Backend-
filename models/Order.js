@@ -65,6 +65,18 @@ const orderSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // Admin inbox review is separate from fulfillment/payment status.
+    adminReviewedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    adminReviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+
     /*
     |--------------------------------------------------------------------------
     | CUSTOMER

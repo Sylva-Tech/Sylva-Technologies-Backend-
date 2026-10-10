@@ -45,6 +45,18 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Admin inbox review is separate from account/seller status.
+    adminReviewedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    adminReviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+
     address: {
       type: String,
       default: '',
