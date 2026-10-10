@@ -345,6 +345,12 @@ const restoreOrderStock = async (order) => {
 
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
+    // One-time compatibility backfill: existing orders predate inbox review tracking.
+    await Order.updateMany(
+      { adminReviewedAt: { $exists: false } },
+      { $set: { adminReviewedAt: new Date() } }
+    );
+
     const orders = await Order.find()
       .populate(
         'customer',
