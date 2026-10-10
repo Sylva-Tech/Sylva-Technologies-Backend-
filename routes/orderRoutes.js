@@ -348,7 +348,7 @@ router.get('/', protect, adminOnly, async (req, res) => {
     const orders = await Order.find()
       .populate(
         'customer',
-        'name email phone'
+        'name email phone createdAt adminReviewedAt'
       )
       .populate(
         'items.product',
@@ -367,6 +367,34 @@ router.get('/', protect, adminOnly, async (req, res) => {
       success: false,
       message: 'Unable to retrieve orders.',
     });
+  }
+});
+
+/*
+|--------------------------------------------------------------------------
+| MARK ORDER AS REVIEWED BY ADMIN
+|--------------------------------------------------------------------------
+*/
+router.patch('/:id/admin-review', protect, adminOnly, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid order ID.' });
+    }
+
+    const order = await Order.findByIdAndUpdate(
+      req.params.id,
+      { $set: { adminReviewedAt: new Date(), adminReviewedBy: req.user._id } },
+      { new: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found.' });
+    }
+
+    return res.json({ success: true, message: 'Order marked as reviewed.', data: order });
+  } catch (error) {
+    console.error('Mark order reviewed error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to mark this order as reviewed.' });
   }
 });
 
