@@ -863,11 +863,11 @@ const sendOrderConfirmationEmail = async ({
   return sendMail({
     to,
     subject:
-      `Order Confirmation - ${order.orderNumber}`,
+      `Payment Confirmation & Order Receipt - ${order.orderNumber}`,
     html,
     text:
-      `Thank you ${customerName} for shopping with Sylva Technologies. Your order ${order.orderNumber} has been placed successfully and is now being processed. Tracking code: ${order.trackingCode || order.orderNumber}.`,
-    sender: 'orders',
+      `Hello ${customerName}, your payment for Sylva Technologies order ${order.orderNumber} has been confirmed. Your order is now being processed. Tracking code: ${order.trackingCode || order.orderNumber}. Please reply to support@sylvatechnologies.co.ke if you need assistance.`,
+    sender: 'payment',
   });
 };
 
