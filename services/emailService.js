@@ -49,14 +49,16 @@ const getFromEmail = (type = 'verification') => {
       process.env.EMAIL_FROM_ORDERS ||
       'Sylva Technologies <order@sylvatechnologies.co.ke>',
 
+    payment:
+      process.env.EMAIL_FROM_PAYMENT ||
+      'Sylva Technologies <payment@sylvatechnologies.co.ke>',
+
     admin:
       process.env.EMAIL_FROM_ADMIN ||
-      process.env.EMAIL_FROM_SALES ||
-      'Sylva Technologies <sales@sylvatechnologies.co.ke>',
+      'Sylva Technologies <admin@sylvatechnologies.co.ke>',
 
     sales:
       process.env.EMAIL_FROM_SALES ||
-      process.env.EMAIL_FROM_ADMIN ||
       'Sylva Technologies <sales@sylvatechnologies.co.ke>',
 
     support:
@@ -113,6 +115,16 @@ const sendMail = async ({
       await resend.emails.send({
         from: getFromEmail(sender),
         to,
+        // Keep an internal admin copy of business emails. Never copy account
+        // verification or password-reset codes/links to another mailbox.
+        ...(sender !== 'verification' && sender !== 'passwordReset'
+          ? {
+              bcc: [
+                process.env.ADMIN_EMAIL ||
+                  'admin@sylvatechnologies.co.ke',
+              ],
+            }
+          : {}),
         subject,
         html,
         text,
@@ -879,13 +891,17 @@ const sendAdminOrderNotificationEmail =
       });
 
     return sendMail({
-      to: to || process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke',
+      to:
+        to ||
+        process.env.ORDERS_EMAIL ||
+        process.env.SALES_EMAIL ||
+        'sales@sylvatechnologies.co.ke',
       subject:
         `New order received - ${order.orderNumber}`,
       html,
       text:
         `A new order ${order.orderNumber} has been placed by ${customer.name}. Tracking code: ${order.trackingCode || order.orderNumber}. Payment: ${order.paymentMethod}. Delivery: ${order.customerDetails?.deliveryLocation || order.customerDetails?.address || 'N/A'}.`,
-      sender: 'sales',
+      sender: 'orders',
     });
   };
 
