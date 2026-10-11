@@ -1037,9 +1037,9 @@ router.get(
   requireVerified,
   async (req, res) => {
     try {
-      const sellers = await User.find(
+      const payoutAccounts = await User.find(
         mongoose.trusted({
-          role: 'seller',
+          role: { $in: ['seller', 'customer'] },
           'wallet.transactions': {
             $elemMatch: {
               category: 'payout_request',
@@ -1057,7 +1057,7 @@ router.get(
         [];
 
       for (
-        const seller of sellers
+        const seller of payoutAccounts
       ) {
         const transactions =
           Array.isArray(
