@@ -489,12 +489,12 @@ router.put(
         !idNumber ||
         idNumber.trim().length < 3 ||
         !kraPin ||
-        !/^[A-Za-z]\\d{9}[A-Za-z]$/.test(String(kraPin).trim())
+        !/^[A-Za-z]\d{9}[A-Za-z]$/.test(String(kraPin).trim())
       ) {
         return res.status(400).json({
           success: false,
           message:
-            'Please provide your identification number.',
+            'Please provide a valid identification number and KRA PIN number.',
         });
       }
 
