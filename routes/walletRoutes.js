@@ -1710,8 +1710,27 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
     const shortcode = process.env.MPESA_SHORTCODE;
     const passkey = process.env.MPESA_PASSKEY;
     const callbackUrl = process.env.MPESA_CALLBACK_URL;
-    if (!shortcode || !passkey || !callbackUrl || !/^https:\/\//i.test(callbackUrl)) {
-      return res.status(503).json({ success: false, message: 'M-Pesa STK Push is not fully configured. Please contact support.' });
+    const requiredMpesaSettings = [
+      'MPESA_CONSUMER_KEY',
+      'MPESA_CONSUMER_SECRET',
+      'MPESA_SHORTCODE',
+      'MPESA_PASSKEY',
+      'MPESA_CALLBACK_URL',
+    ];
+    const missingMpesaSettings = requiredMpesaSettings.filter((name) => !String(process.env[name] || '').trim());
+    if (!/^https:\/\//i.test(String(callbackUrl || ''))) {
+      if (!missingMpesaSettings.includes('MPESA_CALLBACK_URL')) missingMpesaSettings.push('MPESA_CALLBACK_URL');
+    }
+    if (missingMpesaSettings.length) {
+      return res.status(503).json({
+        success: false,
+        message: 'M-Pesa STK Push is not fully configured.',
+        data: {
+          missingConfiguration: missingMpesaSettings,
+          requiredCallbackPath: '/api/wallet/topup/stk/callback',
+          environment: process.env.MPESA_ENV === 'sandbox' ? 'sandbox' : 'production',
+        },
+      });
     }
 
     const wallet = ensureWallet(user);
