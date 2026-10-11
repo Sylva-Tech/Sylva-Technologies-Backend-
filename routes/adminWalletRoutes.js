@@ -5,6 +5,23 @@ const User = require('../models/User');
 const { protect, adminOnly, requireVerified } = require('../middleware/authMiddleware');
 const router = express.Router();
 
+async function platformWallet() {
+  let wallet = await AdminWallet.findOne({ key: 'platform' });
+  if (!wallet) wallet = await AdminWallet.create({ key: 'platform', currency: 'KES' });
+  return wallet;
+}
+function safe(wallet) {
+  return {
+    currency: wallet.currency,
+    availableBalance: Number(wallet.availableBalance || 0),
+    pendingBalance: Number(wallet.pendingBalance || 0),
+    totalBalance: Number((Number(wallet.availableBalance || 0) + Number(wallet.pendingBalance || 0)).toFixed(2)),
+    lastUpdatedAt: wallet.lastUpdatedAt,
+    transactions: [...wallet.transactions].sort((a,b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)),
+  };
+}
+
+
 router.get('/', protect, adminOnly, requireVerified, async (req, res) => {
   try {
     let wallet = await AdminWallet.findOne({ key: 'platform' });
