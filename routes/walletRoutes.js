@@ -1659,6 +1659,14 @@ const isApprovedActiveSeller = (user) =>
   user?.role === 'seller' && user?.sellerStatus === 'approved' &&
   user?.isVerified === true && ['active', 'warning'].includes(user?.accountStatus) &&
   user?.storeStatus === 'active';
+const getMpesaTimestamp = () => {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return values.year + values.month + values.day + values.hour + values.minute + values.second;
+};
 const getMpesaAccessToken = async () => {
   const key = process.env.MPESA_CONSUMER_KEY;
   const secret = process.env.MPESA_CONSUMER_SECRET;
@@ -1711,7 +1719,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
 
     try {
       const credentials = await getMpesaAccessToken();
-      const timestamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+      const timestamp = getMpesaTimestamp();
       const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
       const response = await axios.post(credentials.host + '/mpesa/stkpush/v1/processrequest', {
         BusinessShortCode: shortcode, Password: password, Timestamp: timestamp,
