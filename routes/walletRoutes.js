@@ -947,7 +947,7 @@ router.post(
           'pending',
 
         description:
-          'Seller payout request submitted for admin review.',
+          (user.role === 'seller' ? 'Seller' : 'Customer') + ' wallet withdrawal request submitted for admin review.',
 
         reference:
           transactionReference,
