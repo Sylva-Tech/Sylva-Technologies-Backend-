@@ -487,7 +487,9 @@ router.put(
 
       if (
         !idNumber ||
-        idNumber.trim().length < 3
+        idNumber.trim().length < 3 ||
+        !kraPin ||
+        !/^[A-Za-z]\\d{9}[A-Za-z]$/.test(String(kraPin).trim())
       ) {
         return res.status(400).json({
           success: false,
