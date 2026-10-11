@@ -1774,7 +1774,7 @@ router.post('/topup/stk/callback', async (req, res) => {
     if (!checkoutRequestID) return res.status(400).json({ ResultCode: 1, ResultDesc: 'Invalid callback.' });
 
     const seller = await User.findOne({
-      role: 'seller',
+      role: { $in: ['customer', 'seller'] },
       'wallet.transactions': { $elemMatch: {
         category: 'mpesa_topup', status: 'pending',
         'metadata.checkoutRequestID': checkoutRequestID,
