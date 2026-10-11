@@ -1787,6 +1787,32 @@ router.post('/topup/stk/callback', async (req, res) => {
       return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
     }
 
+    // STK query verification before crediting: never trust the callback alone.
+    const shortcode = process.env.MPESA_SHORTCODE;
+    const passkey = process.env.MPESA_PASSKEY;
+    if (!shortcode || !passkey) {
+      return res.status(503).json({ ResultCode: 1, ResultDesc: 'Payment verification is not configured.' });
+    }
+    const credentials = await getMpesaAccessToken();
+    const timestamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+    const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
+    const verification = await axios.post(credentials.host + '/mpesa/stkpushquery/v1/query', {
+      BusinessShortCode: shortcode,
+      Password: password,
+      Timestamp: timestamp,
+      CheckoutRequestID: checkoutRequestID,
+    }, {
+      headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' },
+      timeout: 15000,
+    });
+    if (String(verification.data?.ResultCode) !== '0') {
+      console.warn('M-Pesa STK query has not confirmed a successful payment yet.', {
+        checkoutRequestID,
+        resultCode: verification.data?.ResultCode,
+      });
+      return res.status(503).json({ ResultCode: 1, ResultDesc: 'Payment is not yet confirmed.' });
+    }
+
     const items = callback.CallbackMetadata?.Item || [];
     const field = (name) => items.find((item) => item.Name === name)?.Value;
     const paidAmount = Number(field('Amount'));
