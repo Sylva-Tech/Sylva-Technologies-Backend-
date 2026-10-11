@@ -701,55 +701,16 @@ router.post(
         });
       }
 
-      /*
-       * IMPORTANT:
-       *
-       * isActiveSeller() requires:
-       * role = seller
-       * sellerStatus = approved
-       * accountStatus = active/warning
-       * storeStatus = active
-       */
-      const isActiveSeller =
-        typeof user.isActiveSeller ===
-        'function'
-          ? user.isActiveSeller()
-          : (
-              user.role === 'seller' &&
-              user.sellerStatus ===
-                'approved' &&
-              [
-                'active',
-                'warning',
-              ].includes(
-                user.accountStatus
-              ) &&
-              user.storeStatus ===
-                'active'
-            );
-
-      if (!isActiveSeller) {
-        return res.status(403).json({
-          success: false,
-          message:
-            'Only active and approved sellers can request payouts.',
-        });
+      if (user.isVerified !== true) {
+        return res.status(403).json({ success: false, message: 'Verify your email before requesting a wallet withdrawal.' });
       }
-
-      /*
-       * Explicitly block suspended/banned accounts.
-       */
-      if (
-        user.accountStatus ===
-          'suspended' ||
-        user.accountStatus ===
-          'banned'
-      ) {
-        return res.status(403).json({
-          success: false,
-          message:
-            'Your seller account is not permitted to request payouts.',
-        });
+      const activeSeller = user.role === 'seller' &&
+        user.sellerStatus === 'approved' &&
+        ['active', 'warning'].includes(user.accountStatus) &&
+        user.storeStatus === 'active';
+      const activeCustomer = user.role === 'customer' && user.accountStatus === 'active';
+      if (!activeSeller && !activeCustomer) {
+        return res.status(403).json({ success: false, message: 'Only verified active customers and approved active sellers can request wallet withdrawals.' });
       }
 
       /*
@@ -817,8 +778,7 @@ router.post(
         !payoutDestination
       ) {
         payoutDestination =
-          user.sellerProfile
-            ?.mpesaPhone || '';
+          (user.role === 'seller' ? user.sellerProfile?.mpesaPhone : user.phone) || '';
       }
 
       const destinationValidation =
@@ -1034,7 +994,7 @@ router.post(
         success: true,
 
         message:
-          'Payout request submitted successfully and is awaiting admin processing.',
+          'Withdrawal request submitted successfully and is awaiting payout processing.',
 
         data: {
           wallet:
@@ -1124,7 +1084,8 @@ router.get(
             _id:
               entry._id,
 
-            seller: {
+            account: {
+              role: seller.role,
               _id:
                 seller._id,
 
@@ -1138,12 +1099,19 @@ router.get(
                 seller.phone || '',
 
               storeName:
-                seller.sellerProfile
-                  ?.storeName || '',
+                seller.sellerProfile?.storeName || '',
 
               mpesaPhone:
                 seller.sellerProfile
                   ?.mpesaPhone || '',
+            },
+            seller: {
+              _id: seller._id,
+              name: seller.name || '',
+              email: seller.email || '',
+              phone: seller.phone || '',
+              storeName: seller.sellerProfile?.storeName || '',
+              mpesaPhone: seller.sellerProfile?.mpesaPhone || '',
             },
 
             type:
@@ -1342,18 +1310,8 @@ router.patch(
         });
       }
 
-      /*
-       * Make sure this is a seller.
-       */
-      if (
-        seller.role !==
-        'seller'
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'This payout does not belong to a seller account.',
-        });
+      if (!['seller', 'customer'].includes(seller.role)) {
+        return res.status(400).json({ success: false, message: 'This withdrawal does not belong to a customer or seller wallet.' });
       }
 
       /*
@@ -1605,8 +1563,8 @@ router.patch(
         message:
           decision ===
           'approved'
-            ? 'Payout approved and marked as paid successfully.'
-            : 'Payout rejected and the amount has been returned to the seller wallet.',
+            ? 'Withdrawal marked as paid. Confirm the external payout was sent first.'
+            : 'Withdrawal rejected and the amount has been returned to the account wallet.',
 
         data: {
           transaction: {
@@ -1906,7 +1864,7 @@ router.post('/topup/stk/callback', async (req, res) => {
 router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, res) => {
   try {
     const result = await User.aggregate([
-      { $match: { role: 'seller' } },
+      { $match: { role: { $in: ['seller', 'customer'] } } },
       { $group: {
         _id: null,
         sellerAvailableLiability: { $sum: '$wallet.availableBalance' },
@@ -1915,7 +1873,7 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
       } },
     ]);
     const pendingPayouts = await User.countDocuments({
-      role: 'seller',
+      role: { $in: ['seller', 'customer'] },
       'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
     });
     const requiredMpesaSettings = [
