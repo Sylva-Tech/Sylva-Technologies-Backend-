@@ -277,6 +277,13 @@ const userSchema = new mongoose.Schema(
         ],
       },
 
+      storeProfile: {
+        type: String,
+        default: '',
+        trim: true,
+        maxlength: [1000, 'Store profile cannot exceed 1000 characters'],
+      },
+
       storeEmail: {
         type: String,
         default: '',
