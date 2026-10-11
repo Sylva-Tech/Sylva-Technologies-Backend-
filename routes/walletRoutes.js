@@ -6,6 +6,7 @@ const User = require('../models/User');
 const {
   protect,
   adminOnly,
+  requireVerified,
 } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -1073,6 +1074,7 @@ router.get(
   '/admin/payouts',
   protect,
   adminOnly,
+  requireVerified,
   async (req, res) => {
     try {
       const sellers = await User.find(
@@ -1241,6 +1243,7 @@ router.patch(
   '/admin/payouts/:transactionId',
   protect,
   adminOnly,
+  requireVerified,
   async (req, res) => {
     try {
       const {
@@ -1892,7 +1895,7 @@ router.post('/topup/stk/callback', async (req, res) => {
 });
 
 /* Admin-only overview. Seller wallet balances are liabilities, not company profit. */
-router.get('/admin/overview', protect, adminOnly, async (req, res) => {
+router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, res) => {
   try {
     const result = await User.aggregate([
       { $match: { role: 'seller' } },
