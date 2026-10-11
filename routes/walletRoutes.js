@@ -1705,6 +1705,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       metadata: { provider: 'safaricom-daraja', phone, initiatedBy: String(user._id) },
     };
     wallet.transactions.unshift(transaction);
+    transaction = wallet.transactions.id(transactionId);
     wallet.lastUpdatedAt = now;
     await user.save();
 
