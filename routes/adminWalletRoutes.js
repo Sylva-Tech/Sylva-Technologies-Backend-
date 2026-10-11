@@ -63,4 +63,67 @@ router.post('/transfer-out', protect, adminOnly, requireVerified, async (req, re
   }
 });
 
+router.post('/transfer-in', protect, requireVerified, async (req, res) => {
+  const amount = Number(req.body?.amount);
+  if (!['customer', 'seller'].includes(req.user.role)) return res.status(403).json({ success: false, message: 'Only customer and seller wallets can transfer funds to the platform wallet.' });
+  if (req.user.accountStatus !== 'active' || (req.user.role === 'seller' && (req.user.sellerStatus !== 'approved' || req.user.storeStatus !== 'active'))) return res.status(403).json({ success: false, message: 'Your account is not eligible to transfer funds.' });
+  if (!Number.isFinite(amount) || amount < 100 || Math.round(amount * 100) !== amount * 100) return res.status(400).json({ success: false, message: 'Enter a valid amount of at least KSh 100.' });
+  const session = await mongoose.startSession();
+  try {
+    let outcome;
+    await session.withTransaction(async () => {
+      const sender = await User.findById(req.user._id).session(session);
+      if (!sender || sender.isVerified !== true || sender.accountStatus !== 'active' || !sender.wallet || Number(sender.wallet.availableBalance || 0) < amount) {
+        throw Object.assign(new Error('Insufficient available wallet funds or account is not eligible.'), { statusCode: 409 });
+      }
+      let platform = await AdminWallet.findOne({ key: 'platform' }).session(session);
+      if (!platform) {
+        platform = new AdminWallet({ key: 'platform', currency: 'KES' });
+        await platform.save({ session });
+      }
+      const ref = 'PLATFORM-' + new mongoose.Types.ObjectId().toString().toUpperCase();
+      sender.wallet.availableBalance = Number((Number(sender.wallet.availableBalance || 0) - amount).toFixed(2));
+      sender.wallet.lastUpdatedAt = new Date();
+      sender.wallet.transactions.push({ type: 'debit', amount, category: 'platform_transfer', status: 'completed', description: 'Transferred to Sylva Technologies platform wallet.', reference: ref, createdAt: new Date(), processedAt: new Date() });
+      platform.availableBalance = Number((Number(platform.availableBalance || 0) + amount).toFixed(2));
+      platform.lastUpdatedAt = new Date();
+      platform.transactions.push({ type: 'credit', amount, category: sender.role === 'seller' ? 'seller_transfer_in' : 'customer_transfer_in', status: 'completed', description: 'Transfer received from a verified account wallet.', reference: ref, relatedUser: sender._id, metadata: { senderRole: sender.role, senderEmail: sender.email } });
+      await sender.save({ session });
+      await platform.save({ session });
+      outcome = { reference: ref, amount };
+    });
+    return res.json({ success: true, message: 'Transfer recorded in both wallet ledgers.', data: outcome });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, message: error.statusCode ? error.message : 'Unable to complete transfer.' });
+  } finally { await session.endSession(); }
+});
+
+router.post('/withdrawals', protect, adminOnly, requireVerified, async (req, res) => {
+  const amount = Number(req.body?.amount);
+  const method = String(req.body?.method || '').toLowerCase();
+  let destination = String(req.body?.destination || '').trim();
+  if (!Number.isFinite(amount) || amount < 100 || Math.round(amount * 100) !== amount * 100) return res.status(400).json({ success: false, message: 'Enter a valid withdrawal amount of at least KSh 100.' });
+  if (method === 'mpesa') {
+    destination = destination.replace(/[\s-]/g, '');
+    if (/^0[17]\d{8}$/.test(destination)) destination = '254' + destination.slice(1);
+    if (/^\+254[17]\d{8}$/.test(destination)) destination = destination.slice(1);
+    if (!/^254[17]\d{8}$/.test(destination)) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan M-Pesa phone number.' });
+  } else if (method === 'bank') {
+    if (destination.length < 5 || destination.length > 200) return res.status(400).json({ success: false, message: 'Enter valid bank payout details.' });
+  } else return res.status(400).json({ success: false, message: 'Choose M-Pesa or bank.' });
+  try {
+    const wallet = await platformWallet();
+    if (Number(wallet.availableBalance || 0) < amount) return res.status(409).json({ success: false, message: 'Insufficient available platform funds.' });
+    const ref = 'WITHDRAW-' + new mongoose.Types.ObjectId().toString().toUpperCase();
+    wallet.availableBalance = Number((wallet.availableBalance - amount).toFixed(2));
+    wallet.pendingBalance = Number((wallet.pendingBalance + amount).toFixed(2));
+    wallet.lastUpdatedAt = new Date();
+    wallet.transactions.push({ type: 'debit', amount, category: 'withdrawal_request', status: 'pending', description: 'Platform withdrawal awaiting external payout processing.', reference: ref, metadata: { payoutMethod: method, destination, requestedBy: String(req.user._id) } });
+    await wallet.save();
+    return res.status(202).json({ success: true, message: 'Withdrawal request saved and funds reserved. The M-Pesa or bank transfer still needs to be sent and confirmed externally.', data: { reference: ref, amount, method, status: 'pending' } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Unable to create withdrawal request.' });
+  }
+});
+
 module.exports = router;
