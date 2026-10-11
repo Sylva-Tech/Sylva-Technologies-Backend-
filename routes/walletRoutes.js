@@ -615,8 +615,14 @@ router.get(
       if (!user) {
         return res.status(404).json({
           success: false,
-          message:
-            'Wallet could not be found.',
+          message: 'Wallet could not be found.',
+        });
+      }
+      if (!['customer', 'seller'].includes(user.role) ||
+          (user.role === 'customer' && user.isVerified !== true)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Verify your customer account to access wallet transactions.',
         });
       }
 
