@@ -563,15 +563,20 @@ router.get(
       if (!user) {
         return res.status(404).json({
           success: false,
-          message:
-            'Wallet could not be found.',
+          message: 'Wallet could not be found.',
+        });
+      }
+      if (!['customer', 'seller'].includes(user.role) ||
+          (user.role === 'customer' && user.isVerified !== true)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Verify your customer account to access your private wallet.',
         });
       }
 
       return res.json({
         success: true,
-        data:
-          serializeWallet(user),
+        data: serializeWallet(user),
       });
     } catch (error) {
       console.error(
@@ -1655,10 +1660,11 @@ const normalizeStkPhone = (value) => {
   const phone = normalizeKenyanPhone(value);
   return phone && /^254(?:7|1)\d{8}$/.test(phone) ? phone : '';
 };
-const isApprovedActiveSeller = (user) =>
-  user?.role === 'seller' && user?.sellerStatus === 'approved' &&
-  user?.isVerified === true && ['active', 'warning'].includes(user?.accountStatus) &&
-  user?.storeStatus === 'active';
+const isEligibleWalletTopup = (user) => {
+  if (!user || user.isVerified !== true || !['customer', 'seller'].includes(user.role)) return false;
+  if (user.role === 'customer') return user.accountStatus === 'active';
+  return user.sellerStatus === 'approved' && ['active', 'warning'].includes(user.accountStatus) && user.storeStatus === 'active';
+};
 const getMpesaTimestamp = () => {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -1685,8 +1691,8 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
   let transaction;
   try {
     user = await User.findById(req.user._id);
-    if (!user || !isApprovedActiveSeller(user)) {
-      return res.status(403).json({ success: false, message: 'Only verified, approved and active sellers can top up a wallet.' });
+    if (!user || !isEligibleWalletTopup(user)) {
+      return res.status(403).json({ success: false, message: 'Verify your account first. Wallet top-ups are available to verified customers and approved, active sellers.' });
     }
     const amount = Number(req.body?.amount);
     if (!Number.isSafeInteger(amount) || amount < 100 || amount > 150000) {
