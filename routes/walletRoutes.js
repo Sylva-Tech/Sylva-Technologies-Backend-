@@ -1049,7 +1049,7 @@ router.get(
         })
       )
           .select(
-            'name email phone sellerProfile wallet'
+            'name email phone role sellerProfile wallet'
           )
           .lean();
 
@@ -1717,7 +1717,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
         BusinessShortCode: shortcode, Password: password, Timestamp: timestamp,
         TransactionType: 'CustomerPayBillOnline', Amount: amount, PartyA: phone,
         PartyB: shortcode, PhoneNumber: phone, CallBackURL: callbackUrl,
-        AccountReference: reference.slice(0, 12), TransactionDesc: 'Sylva seller wallet top-up',
+        AccountReference: reference.slice(0, 12), TransactionDesc: user.role === 'seller' ? 'Sylva seller wallet top-up' : 'Sylva customer wallet top-up',
       }, { headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' }, timeout: 20000 });
 
       if (response.data?.ResponseCode !== '0' || !response.data?.CheckoutRequestID) {
@@ -1866,10 +1866,10 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
     const result = await User.aggregate([
       { $match: { role: { $in: ['seller', 'customer'] } } },
       { $group: {
-        _id: null,
-        sellerAvailableLiability: { $sum: '$wallet.availableBalance' },
-        sellerPendingLiability: { $sum: '$wallet.pendingBalance' },
-        sellersWithWallets: { $sum: 1 },
+        _id: '$role',
+        availableLiability: { $sum: '$wallet.availableBalance' },
+        pendingLiability: { $sum: '$wallet.pendingBalance' },
+        accountsWithWallets: { $sum: 1 },
       } },
     ]);
     const pendingPayouts = await User.countDocuments({
@@ -1889,9 +1889,12 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
       missingMpesaSettings.push('MPESA_CALLBACK_URL');
     }
     return res.json({ success: true, data: {
-      sellerAvailableLiability: roundMoney(result[0]?.sellerAvailableLiability || 0),
-      sellerPendingLiability: roundMoney(result[0]?.sellerPendingLiability || 0),
-      sellersWithWallets: result[0]?.sellersWithWallets || 0,
+      sellerAvailableLiability: roundMoney(result.find((item) => item._id === 'seller')?.availableLiability || 0),
+      sellerPendingLiability: roundMoney(result.find((item) => item._id === 'seller')?.pendingLiability || 0),
+      sellersWithWallets: result.find((item) => item._id === 'seller')?.accountsWithWallets || 0,
+      customerAvailableLiability: roundMoney(result.find((item) => item._id === 'customer')?.availableLiability || 0),
+      customerPendingLiability: roundMoney(result.find((item) => item._id === 'customer')?.pendingLiability || 0),
+      customersWithWallets: result.find((item) => item._id === 'customer')?.accountsWithWallets || 0,
       pendingPayouts,
       mpesaConfiguration: {
         configured: missingMpesaSettings.length === 0,
@@ -1900,7 +1903,7 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
         callbackPath: '/api/wallet/topup/stk/callback',
         expectedCallbackUrl: 'https://sylva-technologies-backend.onrender.com/api/wallet/topup/stk/callback',
       },
-      note: 'These balances are amounts owed to sellers, not Sylva Technologies company funds.',
+      note: 'Customer and seller wallet balances are separate account-holder liabilities, not Sylva Technologies company funds.',
     } });
   } catch (error) {
     console.error('Admin wallet overview error:', error.message);
