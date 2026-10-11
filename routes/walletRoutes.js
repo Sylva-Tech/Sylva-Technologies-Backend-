@@ -1801,14 +1801,22 @@ router.post('/topup/stk/callback', async (req, res) => {
     const checkoutRequestID = String(callback?.CheckoutRequestID || '');
     if (!checkoutRequestID) return res.status(400).json({ ResultCode: 1, ResultDesc: 'Invalid callback.' });
 
+    // Find the server-created pending transaction first, then validate the
+    // account's actual role value. This avoids treating a query operator as data.
     const seller = await User.findOne({
-      role: { $in: ['customer', 'seller'] },
       'wallet.transactions': { $elemMatch: {
         category: 'mpesa_topup', status: 'pending',
         'metadata.checkoutRequestID': checkoutRequestID,
       } },
     });
     if (!seller) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
+    if (!['customer', 'seller'].includes(String(seller.role || ''))) {
+      console.error('M-Pesa callback matched a wallet transaction on an ineligible account.', {
+        checkoutRequestID,
+        userId: String(seller._id),
+      });
+      return res.json({ ResultCode: 0, ResultDesc: 'Callback received for review.' });
+    }
 
     const tx = seller.wallet.transactions.find((item) =>
       item.category === 'mpesa_topup' && item.status === 'pending' &&
