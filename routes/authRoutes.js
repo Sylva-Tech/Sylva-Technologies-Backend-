@@ -1269,6 +1269,82 @@ router.post(
 );
 
 /* ============================================================
+ * RESEND EMAIL VERIFICATION FOR THE SIGNED-IN ACCOUNT
+ * POST /api/auth/resend-verification
+ * ============================================================ */
+
+router.post('/resend-verification', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || '';
+    if (!authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'Please sign in again to request verification.' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+    } catch {
+      return res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+    }
+
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Account not found.' });
+    }
+    if (user.isVerified === true) {
+      return res.status(200).json({ success: true, alreadyVerified: true, message: 'This email address is already verified.' });
+    }
+
+    const rawVerificationToken = generateSecureToken();
+    const verificationCode = generateVerificationCode();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await VerificationToken.deleteMany({ user: user._id, purpose: 'verification' });
+    await VerificationToken.deleteMany({ user: user._id, purpose: 'verification-code' });
+    await VerificationToken.create({
+      user: user._id,
+      purpose: 'verification',
+      tokenHash: hashToken(rawVerificationToken),
+      expiresAt,
+      method: 'email',
+    });
+    await VerificationToken.create({
+      user: user._id,
+      purpose: 'verification-code',
+      tokenHash: hashToken(verificationCode),
+      expiresAt,
+      method: 'email',
+    });
+
+    const verifyLink = `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(rawVerificationToken)}&email=${encodeURIComponent(user.email)}`;
+    const result = await sendVerificationCodeAndLinkEmail({
+      to: user.email,
+      name: user.name,
+      otp: verificationCode,
+      verifyLink,
+      expiresInMinutes: 24 * 60,
+    });
+
+    if (!result || result.success === false) {
+      await VerificationToken.deleteMany({ user: user._id, purpose: 'verification' });
+      await VerificationToken.deleteMany({ user: user._id, purpose: 'verification-code' });
+      return res.status(503).json({
+        success: false,
+        message: result?.message || 'The verification email could not be sent. Please try again later.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `A new verification email has been sent to ${user.email}. Open that email and click “Verify My Email”. The link expires in 24 hours.`,
+    });
+  } catch (error) {
+    console.error('Resend email verification error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to send a verification email right now.' });
+  }
+});
+
+/* ============================================================
  * VERIFY EMAIL
  *
  * GET /api/auth/verify-email
