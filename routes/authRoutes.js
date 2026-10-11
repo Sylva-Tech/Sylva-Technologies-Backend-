@@ -6,6 +6,9 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const VerificationToken = require('../models/VerificationToken');
+const sellerUpload = require('../middleware/sellerUpload');
+const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
+const cloudinary = require('../config/cloudinary');
 
 const {
   sendVerificationCodeAndLinkEmail,
@@ -122,6 +125,186 @@ const safeUser = (user) => {
  * REGISTER
  * POST /api/auth/register
  * ============================================================ */
+
+/*
+ * SELLER REGISTRATION
+ * Requires typed ID/KRA PIN details and matching private document uploads.
+ */
+router.post(
+  '/seller/register',
+  sellerUpload.fields([
+    { name: 'idFront', maxCount: 1 },
+    { name: 'idBack', maxCount: 1 },
+    { name: 'kraPin', maxCount: 1 },
+  ]),
+  async (req, res) => {
+    const uploadedDocuments = [];
+    let createdUser = null;
+
+    try {
+      const name = String(req.body?.officialName || '').trim();
+      const email = normalizeEmail(req.body?.email);
+      const phone = String(req.body?.mpesaPhone || '').trim().replace(/\s+/g, '');
+      const password = String(req.body?.password || '');
+      const confirmPassword = String(req.body?.confirmPassword || '');
+      const storeName = String(req.body?.storeName || '').trim();
+      const storeProfile = String(req.body?.storeProfile || '').trim();
+      const idType = String(req.body?.idType || '').trim();
+      const idNumber = String(req.body?.idNumber || '').trim();
+      const kraPinNumber = String(req.body?.kraPinNumber || '').trim().toUpperCase();
+      const privacyAccepted = String(req.body?.privacyPolicyAccepted) === 'true';
+      const termsAccepted = String(req.body?.termsAndConditionsAccepted) === 'true';
+      const files = req.files || {};
+      const idFront = files.idFront?.[0];
+      const idBack = files.idBack?.[0];
+      const kraPinFile = files.kraPin?.[0];
+
+      if (!name || name.length < 2 || !email || !phone || !password || !storeName || !storeProfile || !idType || !idNumber || !kraPinNumber) {
+        return res.status(400).json({ success: false, message: 'Complete all required account, store, ID and KRA PIN fields.' });
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
+      }
+      if (!/^\+254[17]\d{8}$/.test(phone)) {
+        return res.status(400).json({ success: false, message: 'Enter a valid Kenyan mobile number in +254 format.' });
+      }
+      if (password.length < 6 || password !== confirmPassword) {
+        return res.status(400).json({ success: false, message: 'Use a password of at least 6 characters and confirm it correctly.' });
+      }
+      if (!['national_id', 'passport', 'military_id', 'other'].includes(idType)) {
+        return res.status(400).json({ success: false, message: 'Select a valid identification document type.' });
+      }
+      if (idNumber.length < 5 || idNumber.length > 50) {
+        return res.status(400).json({ success: false, message: 'Enter a valid ID or passport number.' });
+      }
+      if (!/^[A-Z]\d{9}[A-Z]$/.test(kraPinNumber)) {
+        return res.status(400).json({ success: false, message: 'Enter a valid KRA PIN number, for example A123456789B.' });
+      }
+      if (storeName.length < 2 || storeName.length > 100 || storeProfile.length < 20 || storeProfile.length > 1000) {
+        return res.status(400).json({ success: false, message: 'Enter a store name and a store description between 20 and 1000 characters.' });
+      }
+      if (!privacyAccepted || !termsAccepted) {
+        return res.status(400).json({ success: false, message: 'Accept the Privacy Policy and Terms & Conditions to continue.' });
+      }
+      if (!idFront || !idBack || !kraPinFile) {
+        return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your KRA PIN certificate.' });
+      }
+
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
+      }
+
+      const [frontUpload, backUpload, kraUpload] = await Promise.all([
+        uploadBufferToCloudinary(idFront.buffer),
+        uploadBufferToCloudinary(idBack.buffer),
+        uploadBufferToCloudinary(kraPinFile.buffer),
+      ]);
+      uploadedDocuments.push(frontUpload, backUpload, kraUpload);
+
+      const now = new Date();
+      createdUser = await User.create({
+        name,
+        email,
+        phone,
+        password,
+        role: 'seller',
+        sellerStatus: 'pending',
+        accountStatus: 'active',
+        storeStatus: 'inactive',
+        isVerified: false,
+        consent: {
+          privacyPolicy: true,
+          termsAndConditions: true,
+          informationAccuracy: true,
+          acceptedAt: now,
+        },
+        sellerProfile: {
+          officialName: name,
+          idType,
+          idNumber,
+          idFrontDocument: frontUpload.public_id,
+          idBackDocument: backUpload.public_id,
+          storeName,
+          storeProfile,
+          storeEmail: email,
+          storePhone: phone,
+          mpesaPhone: phone,
+          kraPin: kraPinNumber,
+          kraPinDocument: kraUpload.public_id,
+          applicationDate: now,
+        },
+      });
+
+      const rawVerificationToken = generateSecureToken();
+      const verificationCode = generateVerificationCode();
+      const verificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      await VerificationToken.deleteMany({ user: createdUser._id, purpose: 'verification' });
+      await VerificationToken.deleteMany({ user: createdUser._id, purpose: 'verification-code' });
+      await VerificationToken.create({
+        user: createdUser._id,
+        purpose: 'verification',
+        tokenHash: hashToken(rawVerificationToken),
+        expiresAt: verificationExpiresAt,
+        method: 'email',
+      });
+      await VerificationToken.create({
+        user: createdUser._id,
+        purpose: 'verification-code',
+        tokenHash: hashToken(verificationCode),
+        expiresAt: verificationExpiresAt,
+        method: 'email',
+      });
+
+      const verifyLink = `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(rawVerificationToken)}&email=${encodeURIComponent(email)}`;
+      let emailSent = true;
+      try {
+        const result = await sendVerificationCodeAndLinkEmail({
+          to: email,
+          name,
+          otp: verificationCode,
+          verifyLink,
+          expiresInMinutes: 24 * 60,
+        });
+        emailSent = result?.success !== false;
+      } catch (emailError) {
+        emailSent = false;
+        console.error('Seller verification email error:', emailError.message);
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: emailSent
+          ? 'Seller application submitted. Verify your email, then wait for administrator approval.'
+          : 'Seller application submitted, but the verification email could not be sent. Use the resend verification option on the login page.',
+        emailSent,
+        user: safeUser(createdUser),
+      });
+    } catch (error) {
+      if (createdUser?._id) {
+        await Promise.allSettled([
+          VerificationToken.deleteMany({ user: createdUser._id }),
+          User.findByIdAndDelete(createdUser._id),
+        ]);
+      }
+      await Promise.allSettled(
+        uploadedDocuments.map((document) =>
+          cloudinary.uploader.destroy(document.public_id, {
+            resource_type: document.resource_type || 'image',
+            type: 'authenticated',
+          })
+        )
+      );
+
+      if (error.code === 11000) {
+        return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
+      }
+      console.error('Seller registration error:', error.message);
+      return res.status(500).json({ success: false, message: 'Unable to submit the seller application. Please try again.' });
+    }
+  }
+);
 
 router.post('/register', async (req, res) => {
   try {
