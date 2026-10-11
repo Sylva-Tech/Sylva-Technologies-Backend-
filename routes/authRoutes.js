@@ -1434,8 +1434,10 @@ router.get(
       });
 
       return res.status(200).json({
-        message:
-          'Email verified successfully.',
+        success: true,
+        verified: true,
+        message: 'Email verified successfully. Your account status is now Verified.',
+        user: safeUser(user),
       });
     } catch (error) {
       console.error(
@@ -1542,8 +1544,10 @@ router.post(
       });
 
       return res.status(200).json({
-        message:
-          'Email verified successfully. Please log in to continue.',
+        success: true,
+        verified: true,
+        message: 'Email verified successfully. Your account status is now Verified. Please log in to continue.',
+        user: safeUser(user),
       });
     } catch (error) {
       console.error(
