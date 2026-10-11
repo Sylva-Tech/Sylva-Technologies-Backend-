@@ -1802,7 +1802,7 @@ router.post('/topup/stk/callback', async (req, res) => {
       return res.status(503).json({ ResultCode: 1, ResultDesc: 'Payment verification is not configured.' });
     }
     const credentials = await getMpesaAccessToken();
-    const timestamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+    const timestamp = getMpesaTimestamp();
     const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
     const verification = await axios.post(credentials.host + '/mpesa/stkpushquery/v1/query', {
       BusinessShortCode: shortcode,
