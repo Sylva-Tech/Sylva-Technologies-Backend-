@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const AdminWallet = require('../models/AdminWallet');
 const { protect, adminOnly, requireVerified } = require('../middleware/authMiddleware');
 const router = express.Router();
@@ -27,7 +28,7 @@ router.post('/transfer-out', protect, adminOnly, requireVerified, async (req, re
   if (!Number.isFinite(amount) || amount < 100 || Math.round(amount * 100) !== amount * 100 || !email) {
     return res.status(400).json({ success: false, message: 'Enter a recipient email and a valid amount of at least KSh 100.' });
   }
-  const session = await require('mongoose').startSession();
+  const session = await mongoose.startSession();
   try {
     let outcome;
     await session.withTransaction(async () => {
@@ -43,7 +44,7 @@ router.post('/transfer-out', protect, adminOnly, requireVerified, async (req, re
       if (!recipient.wallet) recipient.wallet = {};
       recipient.wallet.availableBalance = Number(recipient.wallet.availableBalance || 0);
       recipient.wallet.transactions = Array.isArray(recipient.wallet.transactions) ? recipient.wallet.transactions : [];
-      const ref = 'PLATFORM-' + new require('mongoose').Types.ObjectId().toString().toUpperCase();
+      const ref = 'PLATFORM-' + new mongoose.Types.ObjectId().toString().toUpperCase();
       platform.availableBalance = Number((platform.availableBalance - amount).toFixed(2));
       platform.lastUpdatedAt = new Date();
       platform.transactions.push({ type: 'debit', amount, category: recipient.role === 'seller' ? 'transfer_to_seller' : 'transfer_to_customer', status: 'completed', description: 'Platform wallet transfer to verified account.', reference: ref, relatedUser: recipient._id });
