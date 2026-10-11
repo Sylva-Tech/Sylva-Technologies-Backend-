@@ -1647,4 +1647,211 @@ router.patch(
   }
 );
 
+
+
+/* SELLER M-PESA STK TOP-UP. Configure Daraja secrets in the backend environment. */
+const axios = require('axios');
+const normalizeStkPhone = (value) => {
+  const phone = normalizeKenyanPhone(value);
+  return phone && /^254(?:7|1)\d{8}$/.test(phone) ? phone : '';
+};
+const isApprovedActiveSeller = (user) =>
+  user?.role === 'seller' && user?.sellerStatus === 'approved' &&
+  user?.isVerified === true && ['active', 'warning'].includes(user?.accountStatus) &&
+  user?.storeStatus === 'active';
+const getMpesaAccessToken = async () => {
+  const key = process.env.MPESA_CONSUMER_KEY;
+  const secret = process.env.MPESA_CONSUMER_SECRET;
+  if (!key || !secret) throw new Error('M-Pesa credentials are not configured.');
+  const host = process.env.MPESA_ENV === 'sandbox' ? 'https://sandbox.safaricom.co.ke' : 'https://api.safaricom.co.ke';
+  const auth = Buffer.from(key + ':' + secret).toString('base64');
+  const response = await axios.get(host + '/oauth/v1/generate?grant_type=client_credentials', {
+    headers: { Authorization: 'Basic ' + auth }, timeout: 15000,
+  });
+  if (!response.data?.access_token) throw new Error('M-Pesa access token was not returned.');
+  return { token: response.data.access_token, host };
+};
+
+router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
+  let user;
+  let transaction;
+  try {
+    user = await User.findById(req.user._id);
+    if (!user || !isApprovedActiveSeller(user)) {
+      return res.status(403).json({ success: false, message: 'Only verified, approved and active sellers can top up a wallet.' });
+    }
+    const amount = Number(req.body?.amount);
+    if (!Number.isSafeInteger(amount) || amount < 100 || amount > 150000) {
+      return res.status(400).json({ success: false, message: 'Enter a whole-number top-up between KSh 100 and KSh 150,000.' });
+    }
+    const phone = normalizeStkPhone(req.body?.phone || user.sellerProfile?.mpesaPhone || user.phone);
+    if (!phone) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan M-Pesa phone number.' });
+
+    const shortcode = process.env.MPESA_SHORTCODE;
+    const passkey = process.env.MPESA_PASSKEY;
+    const callbackUrl = process.env.MPESA_CALLBACK_URL;
+    if (!shortcode || !passkey || !callbackUrl || !/^https:\/\//i.test(callbackUrl)) {
+      return res.status(503).json({ success: false, message: 'M-Pesa STK Push is not fully configured. Please contact support.' });
+    }
+
+    const wallet = ensureWallet(user);
+    const now = new Date();
+    const transactionId = new mongoose.Types.ObjectId();
+    const reference = 'STK-' + transactionId.toString();
+    transaction = {
+      _id: transactionId, type: 'credit', amount, category: 'mpesa_topup',
+      status: 'pending', description: 'M-Pesa top-up awaiting payment confirmation.',
+      reference, createdAt: now, updatedAt: now, processedAt: null,
+      metadata: { provider: 'safaricom-daraja', phone, initiatedBy: String(user._id) },
+    };
+    wallet.transactions.unshift(transaction);
+    wallet.lastUpdatedAt = now;
+    await user.save();
+
+    try {
+      const credentials = await getMpesaAccessToken();
+      const timestamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+      const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
+      const response = await axios.post(credentials.host + '/mpesa/stkpush/v1/processrequest', {
+        BusinessShortCode: shortcode, Password: password, Timestamp: timestamp,
+        TransactionType: 'CustomerPayBillOnline', Amount: amount, PartyA: phone,
+        PartyB: shortcode, PhoneNumber: phone, CallBackURL: callbackUrl,
+        AccountReference: reference.slice(0, 12), TransactionDesc: 'Sylva seller wallet top-up',
+      }, { headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' }, timeout: 20000 });
+
+      if (response.data?.ResponseCode !== '0' || !response.data?.CheckoutRequestID) {
+        throw new Error(response.data?.ResponseDescription || 'M-Pesa did not accept the STK request.');
+      }
+      transaction.metadata = {
+        ...transaction.metadata,
+        merchantRequestID: response.data.MerchantRequestID,
+        checkoutRequestID: response.data.CheckoutRequestID,
+      };
+      transaction.description = 'STK Push sent. Waiting for Safaricom payment confirmation.';
+      transaction.updatedAt = new Date();
+      await user.save();
+      return res.status(202).json({
+        success: true,
+        message: 'STK Push sent. Enter your M-Pesa PIN; the wallet updates after confirmed payment.',
+        data: { reference, checkoutRequestId: response.data.CheckoutRequestID, amount, phone: '+' + phone },
+      });
+    } catch (providerError) {
+      transaction.status = 'failed';
+      transaction.description = 'M-Pesa STK request could not be started.';
+      transaction.processedAt = new Date();
+      transaction.updatedAt = new Date();
+      transaction.metadata = { ...transaction.metadata, providerError: 'STK initiation failed' };
+      await user.save();
+      throw providerError;
+    }
+  } catch (error) {
+    console.error('M-Pesa STK initiation failed:', error.response?.data || error.message);
+    return res.status(502).json({ success: false, message: 'Unable to start M-Pesa payment. Check the number and try again.' });
+  }
+});
+
+/* Safaricom callback: match a pending server-created request, verify amount/phone,
+   and atomically transition pending -> completed to avoid duplicate credits. */
+router.post('/topup/stk/callback', async (req, res) => {
+  try {
+    const callback = req.body?.Body?.stkCallback;
+    const checkoutRequestID = String(callback?.CheckoutRequestID || '');
+    if (!checkoutRequestID) return res.status(400).json({ ResultCode: 1, ResultDesc: 'Invalid callback.' });
+
+    const seller = await User.findOne({
+      role: 'seller',
+      'wallet.transactions': { $elemMatch: {
+        category: 'mpesa_topup', status: 'pending',
+        'metadata.checkoutRequestID': checkoutRequestID,
+      } },
+    });
+    if (!seller) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
+
+    const tx = seller.wallet.transactions.find((item) =>
+      item.category === 'mpesa_topup' && item.status === 'pending' &&
+      item.metadata?.checkoutRequestID === checkoutRequestID
+    );
+    if (!tx) return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
+
+    if (Number(callback.ResultCode) !== 0) {
+      await User.updateOne({
+        _id: seller._id,
+        'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending' } },
+      }, { $set: {
+        'wallet.transactions.$.status': 'failed',
+        'wallet.transactions.$.description': 'M-Pesa payment was cancelled or failed.',
+        'wallet.transactions.$.processedAt': new Date(),
+        'wallet.transactions.$.updatedAt': new Date(),
+      } });
+      return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
+    }
+
+    const items = callback.CallbackMetadata?.Item || [];
+    const field = (name) => items.find((item) => item.Name === name)?.Value;
+    const paidAmount = Number(field('Amount'));
+    const receipt = String(field('MpesaReceiptNumber') || '');
+    const paidPhone = String(field('PhoneNumber') || '');
+    if (!receipt || !Number.isFinite(paidAmount) || paidAmount !== Number(tx.amount) ||
+        (paidPhone && paidPhone !== String(tx.metadata?.phone || ''))) {
+      console.error('M-Pesa wallet callback amount/phone/receipt mismatch', { checkoutRequestID });
+      return res.json({ ResultCode: 0, ResultDesc: 'Callback received for review.' });
+    }
+
+    const duplicateReceipt = await User.exists({ 'wallet.transactions.metadata.mpesaReceiptNumber': receipt });
+    if (duplicateReceipt) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
+
+    const update = await User.updateOne({
+      _id: seller._id,
+      'wallet.transactions': { $elemMatch: {
+        _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID,
+      } },
+    }, {
+      $inc: { 'wallet.availableBalance': paidAmount },
+      $set: {
+        'wallet.lastUpdatedAt': new Date(),
+        'wallet.transactions.$.status': 'completed',
+        'wallet.transactions.$.description': 'M-Pesa top-up confirmed by callback.',
+        'wallet.transactions.$.processedAt': new Date(),
+        'wallet.transactions.$.updatedAt': new Date(),
+        'wallet.transactions.$.metadata.mpesaReceiptNumber': receipt,
+        'wallet.transactions.$.metadata.callbackResultCode': 0,
+      },
+    });
+    if (!update.modifiedCount) return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
+    return res.json({ ResultCode: 0, ResultDesc: 'Callback processed.' });
+  } catch (error) {
+    console.error('M-Pesa wallet callback error:', error.message);
+    return res.status(500).json({ ResultCode: 1, ResultDesc: 'Callback processing failed.' });
+  }
+});
+
+/* Admin-only overview. Seller wallet balances are liabilities, not company profit. */
+router.get('/admin/overview', protect, adminOnly, async (req, res) => {
+  try {
+    const result = await User.aggregate([
+      { $match: { role: 'seller' } },
+      { $group: {
+        _id: null,
+        sellerAvailableLiability: { $sum: '$wallet.availableBalance' },
+        sellerPendingLiability: { $sum: '$wallet.pendingBalance' },
+        sellersWithWallets: { $sum: 1 },
+      } },
+    ]);
+    const pendingPayouts = await User.countDocuments({
+      role: 'seller',
+      'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
+    });
+    return res.json({ success: true, data: {
+      sellerAvailableLiability: roundMoney(result[0]?.sellerAvailableLiability || 0),
+      sellerPendingLiability: roundMoney(result[0]?.sellerPendingLiability || 0),
+      sellersWithWallets: result[0]?.sellersWithWallets || 0,
+      pendingPayouts,
+      note: 'These balances are amounts owed to sellers, not Sylva Technologies company funds.',
+    } });
+  } catch (error) {
+    console.error('Admin wallet overview error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to load wallet overview.' });
+  }
+});
+
 module.exports = router;
