@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Product = require('../models/Product');
 const SellerAppeal = require('../models/SellerAppeal');
+const cloudinary = require('../config/cloudinary');
 
 const {
   protect,
@@ -199,6 +200,31 @@ const serializeSeller = (
   return result;
 };
 
+const createPrivateDocumentLink = async (publicId) => {
+  if (!publicId || typeof publicId !== 'string') return null;
+  const resourceTypes = ['image', 'raw', 'video'];
+  for (const resourceType of resourceTypes) {
+    try {
+      const resource = await cloudinary.api.resource(publicId, {
+        resource_type: resourceType,
+        type: 'authenticated',
+      });
+      return cloudinary.utils.private_download_url(
+        publicId,
+        resource.format || 'pdf',
+        {
+          resource_type: resourceType,
+          type: 'authenticated',
+          expires_at: Math.floor(Date.now() / 1000) + 300,
+        }
+      );
+    } catch (error) {
+      // Try the next Cloudinary resource type; do not expose the underlying reference.
+    }
+  }
+  return null;
+};
+
 const getReason = (value) =>
   String(value || '').trim();
 
@@ -363,21 +389,18 @@ router.get(
        * Only tell the admin whether the documents exist.
        */
       result.documents = {
-        idFront: Boolean(
-          seller.sellerProfile
-            ?.idFrontDocument
-        ),
-
-        idBack: Boolean(
-          seller.sellerProfile
-            ?.idBackDocument
-        ),
-
-        kraPin: Boolean(
-          seller.sellerProfile
-            ?.kraPinDocument
-        ),
+        idFront: Boolean(seller.sellerProfile?.idFrontDocument),
+        idBack: Boolean(seller.sellerProfile?.idBackDocument),
+        kraPin: Boolean(seller.sellerProfile?.kraPinDocument),
       };
+
+      // Short-lived, admin-only download URLs; never return raw Cloudinary IDs.
+      const documentEntries = await Promise.all([
+        ['idFront', seller.sellerProfile?.idFrontDocument],
+        ['idBack', seller.sellerProfile?.idBackDocument],
+        ['kraPin', seller.sellerProfile?.kraPinDocument],
+      ].map(async ([key, publicId]) => [key, await createPrivateDocumentLink(publicId)]));
+      result.documentLinks = Object.fromEntries(documentEntries);
 
       result.appeals =
         appealHistory;
