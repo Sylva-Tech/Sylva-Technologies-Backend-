@@ -112,6 +112,12 @@ const serializeSeller = (
     storeName:
       getStoreName(item) || 'Not provided',
 
+    storeEmail:
+      item.sellerProfile?.storeEmail || item.email || '',
+
+    storePhone:
+      item.sellerProfile?.storePhone || item.phone || '',
+
     storeProfile:
       item.sellerProfile?.storeProfile || '',
 
