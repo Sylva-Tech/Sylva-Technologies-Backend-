@@ -1907,11 +1907,30 @@ router.get('/admin/overview', protect, adminOnly, async (req, res) => {
       role: 'seller',
       'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
     });
+    const requiredMpesaSettings = [
+      'MPESA_CONSUMER_KEY',
+      'MPESA_CONSUMER_SECRET',
+      'MPESA_SHORTCODE',
+      'MPESA_PASSKEY',
+      'MPESA_CALLBACK_URL',
+    ];
+    const missingMpesaSettings = requiredMpesaSettings.filter((name) => !String(process.env[name] || '').trim());
+    if (!/^https:\/\//i.test(String(process.env.MPESA_CALLBACK_URL || '')) &&
+        !missingMpesaSettings.includes('MPESA_CALLBACK_URL')) {
+      missingMpesaSettings.push('MPESA_CALLBACK_URL');
+    }
     return res.json({ success: true, data: {
       sellerAvailableLiability: roundMoney(result[0]?.sellerAvailableLiability || 0),
       sellerPendingLiability: roundMoney(result[0]?.sellerPendingLiability || 0),
       sellersWithWallets: result[0]?.sellersWithWallets || 0,
       pendingPayouts,
+      mpesaConfiguration: {
+        configured: missingMpesaSettings.length === 0,
+        missing: missingMpesaSettings,
+        environment: process.env.MPESA_ENV === 'sandbox' ? 'sandbox' : 'production',
+        callbackPath: '/api/wallet/topup/stk/callback',
+        expectedCallbackUrl: 'https://sylva-technologies-backend.onrender.com/api/wallet/topup/stk/callback',
+      },
       note: 'These balances are amounts owed to sellers, not Sylva Technologies company funds.',
     } });
   } catch (error) {
