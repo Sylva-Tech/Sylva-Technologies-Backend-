@@ -8,7 +8,7 @@ const replySchema = new mongoose.Schema({
   sentAt: { type: Date, default: Date.now },
 }, { _id: true });
 const schema = new mongoose.Schema({
-  providerMessageId: { type: String, default: undefined, index: true },
+  providerMessageId: { type: String, default: undefined },
   source: { type: String, enum: ['email', 'website'], default: 'email', index: true },
   from: { type: String, required: true, trim: true, lowercase: true, index: true },
   to: [{ type: String, trim: true, lowercase: true }],
