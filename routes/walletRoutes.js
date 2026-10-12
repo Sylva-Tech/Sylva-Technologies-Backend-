@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 
 const User = require('../models/User');
+const AdminWallet = require('../models/AdminWallet');
 
 const {
   protect,
@@ -1627,6 +1628,22 @@ const normalizeStkPhone = (value) => {
   const phone = normalizeKenyanPhone(value);
   return phone && /^254(?:7|1)\d{8}$/.test(phone) ? phone : '';
 };
+const getWalletAccountLabel = (user) => {
+  if (user?.role === 'admin') return 'Sylva Tech';
+  const source = user?.role === 'seller'
+    ? user?.sellerProfile?.storeName
+    : user?.name;
+  const cleaned = String(source || (user?.role === 'seller' ? 'Seller Store' : 'Customer'))
+    .replace(/[^a-zA-Z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.slice(0, 12) || (user?.role === 'seller' ? 'Seller Store' : 'Customer');
+};
+const getWalletAccountDisplayName = (user) => user?.role === 'admin'
+  ? 'Sylva Technologies'
+  : String(user?.role === 'seller' ? user?.sellerProfile?.storeName : user?.name || '')
+      .trim() || (user?.role === 'seller' ? 'Seller Store' : 'Customer');
+
 const isEligibleWalletTopup = (user) => {
   if (!user || user.isVerified !== true || !['customer', 'seller'].includes(user.role)) return false;
   if (user.role === 'customer') return user.accountStatus === 'active';
@@ -1658,8 +1675,9 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
   let transaction;
   try {
     user = await User.findById(req.user._id);
-    if (!user || !isEligibleWalletTopup(user)) {
-      return res.status(403).json({ success: false, message: 'Verify your account first. Wallet top-ups are available to verified customers and approved, active sellers.' });
+    const isAdminDeposit = user?.role === 'admin' && user?.isVerified === true && user?.accountStatus === 'active';
+    if (!user || (!isAdminDeposit && !isEligibleWalletTopup(user))) {
+      return res.status(403).json({ success: false, message: 'Verify your account first. Deposits are available to verified customers, approved active sellers, and verified administrators.' });
     }
     const amount = Number(req.body?.amount);
     if (!Number.isSafeInteger(amount) || amount < 100 || amount > 150000) {
@@ -1685,7 +1703,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
     if (missingMpesaSettings.length) {
       return res.status(503).json({
         success: false,
-        message: 'M-Pesa STK Push is not fully configured.',
+        message: 'M-Pesa deposits are not fully configured.',
         data: {
           missingConfiguration: missingMpesaSettings,
           requiredCallbackPath: '/api/wallet/topup/stk/callback',
@@ -1694,20 +1712,31 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       });
     }
 
-    const wallet = ensureWallet(user);
     const now = new Date();
     const transactionId = new mongoose.Types.ObjectId();
-    const reference = 'STK-' + transactionId.toString();
+    const accountLabel = getWalletAccountLabel(user);
+    const accountDisplayName = getWalletAccountDisplayName(user);
+    const internalReference = 'DEP-' + transactionId.toString().slice(-8).toUpperCase();
     transaction = {
       _id: transactionId, type: 'credit', amount, category: 'mpesa_topup',
-      status: 'pending', description: 'M-Pesa top-up awaiting payment confirmation.',
-      reference, createdAt: now, updatedAt: now, processedAt: null,
-      metadata: { provider: 'safaricom-daraja', phone, initiatedBy: String(user._id) },
+      status: 'pending', description: 'Wallet deposit awaiting M-Pesa confirmation.',
+      reference: accountDisplayName, createdAt: now, updatedAt: now, processedAt: null,
+      metadata: { provider: 'safaricom-daraja', phone, initiatedBy: String(user._id), walletOwnerType: isAdminDeposit ? 'platform' : 'user', accountReference: accountLabel, internalReference },
     };
-    wallet.transactions.unshift(transaction);
-    transaction = wallet.transactions.id(transactionId);
-    wallet.lastUpdatedAt = now;
-    await user.save();
+    if (isAdminDeposit) {
+      let platformWallet = await AdminWallet.findOne({ key: 'platform' });
+      if (!platformWallet) platformWallet = new AdminWallet({ key: 'platform', currency: 'KES' });
+      platformWallet.transactions.push(transaction);
+      platformWallet.lastUpdatedAt = now;
+      await platformWallet.save();
+      transaction = platformWallet.transactions.id(transactionId);
+    } else {
+      const wallet = ensureWallet(user);
+      wallet.transactions.unshift(transaction);
+      transaction = wallet.transactions.id(transactionId);
+      wallet.lastUpdatedAt = now;
+      await user.save();
+    }
 
     try {
       const credentials = await getMpesaAccessToken();
@@ -1717,7 +1746,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
         BusinessShortCode: shortcode, Password: password, Timestamp: timestamp,
         TransactionType: 'CustomerPayBillOnline', Amount: amount, PartyA: phone,
         PartyB: shortcode, PhoneNumber: phone, CallBackURL: callbackUrl,
-        AccountReference: reference.slice(0, 12), TransactionDesc: user.role === 'seller' ? 'Sylva seller wallet top-up' : 'Sylva customer wallet top-up',
+        AccountReference: accountLabel, TransactionDesc: 'Wallet deposit',
       }, { headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' }, timeout: 20000 });
 
       if (response.data?.ResponseCode !== '0' || !response.data?.CheckoutRequestID) {
@@ -1728,26 +1757,50 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
         merchantRequestID: response.data.MerchantRequestID,
         checkoutRequestID: response.data.CheckoutRequestID,
       };
-      transaction.description = 'STK Push sent. Waiting for Safaricom payment confirmation.';
+      transaction.description = 'Deposit requested. Awaiting M-Pesa confirmation.';
       transaction.updatedAt = new Date();
-      await user.save();
+      if (isAdminDeposit) {
+        const platformWallet = await AdminWallet.findOne({ key: 'platform' });
+        const savedTransaction = platformWallet?.transactions.id(transactionId);
+        if (savedTransaction) {
+          savedTransaction.metadata = transaction.metadata;
+          savedTransaction.description = transaction.description;
+          savedTransaction.updatedAt = transaction.updatedAt;
+          await platformWallet.save();
+        }
+      } else {
+        await user.save();
+      }
       return res.status(202).json({
         success: true,
-        message: 'STK Push sent. Enter your M-Pesa PIN; the wallet updates after confirmed payment.',
-        data: { reference, checkoutRequestId: response.data.CheckoutRequestID, amount, phone: '+' + phone },
+        message: 'Deposit request sent. Enter your M-Pesa PIN; the wallet updates after payment is confirmed.',
+        data: { reference: accountDisplayName, accountReference: accountLabel, checkoutRequestId: response.data.CheckoutRequestID, amount, phone: '+' + phone },
       });
     } catch (providerError) {
       transaction.status = 'failed';
-      transaction.description = 'M-Pesa STK request could not be started.';
+      transaction.description = 'Wallet deposit request could not be started.';
       transaction.processedAt = new Date();
       transaction.updatedAt = new Date();
-      transaction.metadata = { ...transaction.metadata, providerError: 'STK initiation failed' };
-      await user.save();
+      transaction.metadata = { ...transaction.metadata, providerError: 'Deposit initiation failed' };
+      if (isAdminDeposit) {
+        const platformWallet = await AdminWallet.findOne({ key: 'platform' });
+        const savedTransaction = platformWallet?.transactions.id(transactionId);
+        if (savedTransaction) {
+          savedTransaction.status = transaction.status;
+          savedTransaction.description = transaction.description;
+          savedTransaction.processedAt = transaction.processedAt;
+          savedTransaction.updatedAt = transaction.updatedAt;
+          savedTransaction.metadata = transaction.metadata;
+          await platformWallet.save();
+        }
+      } else {
+        await user.save();
+      }
       throw providerError;
     }
   } catch (error) {
-    console.error('M-Pesa STK initiation failed:', error.response?.data || error.message);
-    return res.status(502).json({ success: false, message: 'Unable to start M-Pesa payment. Check the number and try again.' });
+    console.error('M-Pesa deposit initiation failed:', error.response?.data || error.message);
+    return res.status(502).json({ success: false, message: 'Unable to start the deposit. Check the number and try again.' });
   }
 });
 
