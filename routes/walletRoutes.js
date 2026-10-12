@@ -1685,7 +1685,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
     }
     const amount = Number(req.body?.amount);
     if (!Number.isSafeInteger(amount) || amount < 100 || amount > 150000) {
-      return res.status(400).json({ success: false, message: 'Enter a whole-number top-up between KSh 100 and KSh 150,000.' });
+      return res.status(400).json({ success: false, message: 'Enter a whole-number deposit between KSh 100 and KSh 150,000.' });
     }
     const phone = normalizeStkPhone(req.body?.phone || user.sellerProfile?.mpesaPhone || user.phone);
     if (!phone) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan M-Pesa phone number.' });
