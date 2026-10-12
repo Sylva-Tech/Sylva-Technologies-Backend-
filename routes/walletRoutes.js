@@ -1675,7 +1675,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
   let transaction;
   try {
     user = await User.findById(req.user._id);
-    const isAdminDeposit = user?.role === 'admin' && user?.isVerified === true && user?.accountStatus === 'active';
+    const isAdminDeposit = user?.role === 'admin' && user?.isVerified === true;
     if (!user || (!isAdminDeposit && !isEligibleWalletTopup(user))) {
       return res.status(403).json({ success: false, message: 'Verify your account first. Deposits are available to verified customers, approved active sellers, and verified administrators.' });
     }
@@ -1721,7 +1721,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       _id: transactionId, type: 'credit', amount, category: 'mpesa_topup',
       status: 'pending', description: 'Wallet deposit awaiting M-Pesa confirmation.',
       reference: `${accountDisplayName} ${internalReference}`, createdAt: now, updatedAt: now, processedAt: null,
-      metadata: { provider: 'safaricom-daraja', phone, initiatedBy: String(user._id), walletOwnerType: isAdminDeposit ? 'platform' : 'user', accountReference: accountLabel, internalReference },
+      metadata: { provider: 'safaricom-daraja', phone, initiatedBy: String(user._id), walletOwnerType: isAdminDeposit ? 'platform' : 'user', accountReference: accountLabel, accountDisplayName, internalReference },
     };
     if (isAdminDeposit) {
       let platformWallet = await AdminWallet.findOne({ key: 'platform' });
