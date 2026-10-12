@@ -267,6 +267,10 @@ const serializeSellerTransaction = (
       rejectionReason:
         metadata.rejectionReason ||
         undefined,
+
+      accountDisplayName:
+        metadata.accountDisplayName ||
+        undefined,
     },
   };
 };
@@ -1746,7 +1750,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
         BusinessShortCode: shortcode, Password: password, Timestamp: timestamp,
         TransactionType: 'CustomerPayBillOnline', Amount: amount, PartyA: phone,
         PartyB: shortcode, PhoneNumber: phone, CallBackURL: callbackUrl,
-        AccountReference: accountLabel, TransactionDesc: 'Wallet deposit',
+        AccountReference: accountLabel, TransactionDesc: 'Deposit',
       }, { headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' }, timeout: 20000 });
 
       if (response.data?.ResponseCode !== '0' || !response.data?.CheckoutRequestID) {
