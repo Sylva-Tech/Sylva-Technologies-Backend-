@@ -10,6 +10,7 @@ const categoryRoutes = require('./routes/categoryRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const userRoutes = require('./routes/userRoutes');
 const contactRoutes = require('./routes/contactRoutes');
+const supportInboxRoutes = require('./routes/supportInboxRoutes');
 const advertisementRoutes = require('./routes/advertisementRoutes');
 const flipAdvertisementRoutes = require('./routes/flipAdvertisementRoutes');
 const adminRoutes = require('./routes/adminRoutes');
@@ -361,6 +362,8 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/users', userRoutes);
 
 app.use('/api/contact', contactRoutes);
+
+app.use('/api/support-inbox', supportInboxRoutes);
 
 app.use('/api/advertisements', advertisementRoutes);
 
