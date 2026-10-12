@@ -79,6 +79,67 @@ router.post('/:id/reply', protect, adminOnly, replyLimiter, async (req, res) => 
   }
 });
 
+// Resend inbound webhook: verify its signature, then retrieve the full parsed email.
+router.post('/inbound/resend', async (req, res) => {
+  if (!resend || !process.env.RESEND_INBOUND_WEBHOOK_SECRET || !req.rawBody) {
+    return res.status(503).json({ success: false, message: 'Inbound email webhook is not configured.' });
+  }
+  let event;
+  try {
+    event = resend.webhooks.verify({
+      payload: req.rawBody.toString('utf8'),
+      headers: {
+        id: req.get('svix-id'),
+        timestamp: req.get('svix-timestamp'),
+        signature: req.get('svix-signature'),
+      },
+      webhookSecret: process.env.RESEND_INBOUND_WEBHOOK_SECRET,
+    });
+  } catch (e) {
+    return res.status(400).json({ success: false, message: 'Invalid webhook signature.' });
+  }
+  if (event?.type !== 'email.received' || !event.data?.email_id) {
+    return res.status(200).json({ success: true, ignored: true });
+  }
+  try {
+    const { data: email, error: receiveError } = await resend.emails.receiving.get(event.data.email_id);
+    if (receiveError || !email) {
+      console.error('Resend inbound email retrieval failed:', receiveError?.message || 'Email not found');
+      return res.status(502).json({ success: false, message: 'Unable to retrieve the received email content.' });
+    }
+    const headers = Array.isArray(email.headers) ? email.headers : [];
+    const originalRecipient = headers.find(h => String(h.name || '').toLowerCase() === 'x-original-recipient')?.value;
+    const to = originalRecipient
+      ? [String(originalRecipient).toLowerCase()]
+      : (Array.isArray(event.data.to) ? event.data.to : [event.data.to]).filter(Boolean);
+    const providerMessageId = String(email.message_id || event.data.message_id || event.data.email_id).slice(0, 300);
+    if (await SupportMessage.findOne({ providerMessageId })) {
+      return res.status(200).json({ success: true, duplicate: true });
+    }
+    const rawFrom = String(email.from || event.data.from || '').trim();
+    const from = (rawFrom.match(/<([^>]+)>/)?.[1] || rawFrom).trim().toLowerCase();
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(from)) {
+      return res.status(400).json({ success: false, message: 'Received email has an invalid sender.' });
+    }
+    await SupportMessage.create({
+      providerMessageId,
+      source: 'email',
+      from,
+      to,
+      subject: String(email.subject || event.data.subject || '(No subject)').slice(0, 300),
+      text: String(email.text || ''),
+      html: String(email.html || ''),
+      receivedAt: email.created_at ? new Date(email.created_at) : new Date(),
+      isRead: false,
+    });
+    return res.status(201).json({ success: true });
+  } catch (e) {
+    if (e.code === 11000) return res.status(200).json({ success: true, duplicate: true });
+    console.error('Resend inbound webhook failed:', e.message);
+    return res.status(500).json({ success: false, message: 'Unable to store the received email.' });
+  }
+});
+
 // A trusted email processor must POST parsed fields and the shared secret.
 // Configure SUPPORT_INBOUND_SECRET in Render and the processor; never expose it in the frontend.
 router.post('/inbound', async (req, res) => {
