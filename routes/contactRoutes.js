@@ -1,5 +1,6 @@
 const express = require('express');
 const ContactMessage = require('../models/ContactMessage');
+const SupportMessage = require('../models/SupportMessage');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -27,6 +28,17 @@ router.post('/', async (req, res) => {
       phone,
       subject,
       message,
+    });
+
+    await SupportMessage.create({
+      source: 'website',
+      from: String(email).trim().toLowerCase(),
+      to: ['support@sylvatechnologies.co.ke'],
+      name: String(name).trim(),
+      subject: String(subject || 'Website enquiry').trim(),
+      text: String(message).trim(),
+      receivedAt: new Date(),
+      isRead: false,
     });
 
     res.status(201).json(contactMessage);
