@@ -189,7 +189,7 @@ app.use(
     strict: true,
     verify: (req, res, buffer) => {
       // Paystack signs the exact request bytes, so preserve them before JSON parsing.
-      if (req.originalUrl.split('?')[0] === '/api/orders/paystack/webhook') {
+      if (['/api/orders/paystack/webhook', '/api/support-inbox/inbound/resend'].includes(req.originalUrl.split('?')[0])) {
         req.rawBody = Buffer.from(buffer);
       }
     },
