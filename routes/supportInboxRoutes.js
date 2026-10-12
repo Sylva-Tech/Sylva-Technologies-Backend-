@@ -118,7 +118,7 @@ router.post('/inbound/resend', async (req, res) => {
     }
     const rawFrom = String(email.from || event.data.from || '').trim();
     const from = (rawFrom.match(/<([^>]+)>/)?.[1] || rawFrom).trim().toLowerCase();
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(from)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from)) {
       return res.status(400).json({ success: false, message: 'Received email has an invalid sender.' });
     }
     await SupportMessage.create({
