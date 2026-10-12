@@ -107,8 +107,10 @@ router.post('/inbound/resend', async (req, res) => {
       console.error('Resend inbound email retrieval failed:', receiveError?.message || 'Email not found');
       return res.status(502).json({ success: false, message: 'Unable to retrieve the received email content.' });
     }
-    const headers = Array.isArray(email.headers) ? email.headers : [];
-    const originalRecipient = headers.find(h => String(h.name || '').toLowerCase() === 'x-original-recipient')?.value;
+    const headers = email.headers || [];
+    const originalRecipient = Array.isArray(headers)
+      ? headers.find(h => String(h.name || h.key || '').toLowerCase() === 'x-original-recipient')?.value
+      : (headers['x-original-recipient'] || headers['X-Original-Recipient']);
     const to = originalRecipient
       ? [String(originalRecipient).toLowerCase()]
       : (Array.isArray(event.data.to) ? event.data.to : [event.data.to]).filter(Boolean);
