@@ -752,6 +752,8 @@ router.post(
 
           slug: productSlug,
 
+          code: normalizedSku,
+
           sku: normalizedSku,
 
           brand: brand.trim(),
