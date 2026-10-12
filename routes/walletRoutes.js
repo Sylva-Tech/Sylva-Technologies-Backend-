@@ -1720,7 +1720,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
     transaction = {
       _id: transactionId, type: 'credit', amount, category: 'mpesa_topup',
       status: 'pending', description: 'Wallet deposit awaiting M-Pesa confirmation.',
-      reference: accountDisplayName, createdAt: now, updatedAt: now, processedAt: null,
+      reference: `${accountDisplayName} ${internalReference}`, createdAt: now, updatedAt: now, processedAt: null,
       metadata: { provider: 'safaricom-daraja', phone, initiatedBy: String(user._id), walletOwnerType: isAdminDeposit ? 'platform' : 'user', accountReference: accountLabel, internalReference },
     };
     if (isAdminDeposit) {
@@ -1812,43 +1812,37 @@ router.post('/topup/stk/callback', async (req, res) => {
     const checkoutRequestID = String(callback?.CheckoutRequestID || '');
     if (!checkoutRequestID) return res.status(400).json({ ResultCode: 1, ResultDesc: 'Invalid callback.' });
 
-    // Find the server-created pending transaction first, then validate the
-    // account's actual role value. This avoids treating a query operator as data.
-    const seller = await User.findOne({
-      'wallet.transactions': { $elemMatch: {
-        category: 'mpesa_topup', status: 'pending',
-        'metadata.checkoutRequestID': checkoutRequestID,
-      } },
-    });
-    if (!seller) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
-    if (!['customer', 'seller'].includes(String(seller.role || ''))) {
-      console.error('M-Pesa callback matched a wallet transaction on an ineligible account.', {
-        checkoutRequestID,
-        userId: String(seller._id),
-      });
-      return res.json({ ResultCode: 0, ResultDesc: 'Callback received for review.' });
-    }
+    const pendingQuery = {
+      category: 'mpesa_topup',
+      status: 'pending',
+      'metadata.checkoutRequestID': checkoutRequestID,
+    };
+    const [platformWallet, account] = await Promise.all([
+      AdminWallet.findOne({ key: 'platform', transactions: { $elemMatch: pendingQuery } }),
+      User.findOne({ 'wallet.transactions': { $elemMatch: pendingQuery } }),
+    ]);
+    const isPlatformDeposit = Boolean(platformWallet);
+    const owner = isPlatformDeposit ? platformWallet : account;
+    if (!owner) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
 
-    const tx = seller.wallet.transactions.find((item) =>
-      item.category === 'mpesa_topup' && item.status === 'pending' &&
-      item.metadata?.checkoutRequestID === checkoutRequestID
-    );
+    const tx = isPlatformDeposit
+      ? platformWallet.transactions.find((item) => item.category === 'mpesa_topup' && item.status === 'pending' && item.metadata?.checkoutRequestID === checkoutRequestID)
+      : account.wallet.transactions.find((item) => item.category === 'mpesa_topup' && item.status === 'pending' && item.metadata?.checkoutRequestID === checkoutRequestID);
     if (!tx) return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
 
+    const ownerFilter = isPlatformDeposit
+      ? { _id: platformWallet._id, 'transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } } }
+      : { _id: account._id, 'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } } };
+
     if (Number(callback.ResultCode) !== 0) {
-      await User.updateOne({
-        _id: seller._id,
-        'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending' } },
-      }, { $set: {
-        'wallet.transactions.$.status': 'failed',
-        'wallet.transactions.$.description': 'M-Pesa payment was cancelled or failed.',
-        'wallet.transactions.$.processedAt': new Date(),
-        'wallet.transactions.$.updatedAt': new Date(),
-      } });
+      const failureUpdate = isPlatformDeposit
+        ? { $set: { 'transactions.$.status': 'failed', 'transactions.$.description': 'M-Pesa deposit was cancelled or failed.', 'transactions.$.processedAt': new Date() } }
+        : { $set: { 'wallet.transactions.$.status': 'failed', 'wallet.transactions.$.description': 'M-Pesa deposit was cancelled or failed.', 'wallet.transactions.$.processedAt': new Date(), 'wallet.transactions.$.updatedAt': new Date() } };
+      await (isPlatformDeposit ? AdminWallet : User).updateOne(ownerFilter, failureUpdate);
       return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
     }
 
-    // STK query verification before crediting: never trust the callback alone.
+    // Confirm the transaction with Safaricom before crediting any wallet.
     const shortcode = process.env.MPESA_SHORTCODE;
     const passkey = process.env.MPESA_PASSKEY;
     if (!shortcode || !passkey) {
@@ -1867,10 +1861,7 @@ router.post('/topup/stk/callback', async (req, res) => {
       timeout: 15000,
     });
     if (String(verification.data?.ResultCode) !== '0') {
-      console.warn('M-Pesa STK query has not confirmed a successful payment yet.', {
-        checkoutRequestID,
-        resultCode: verification.data?.ResultCode,
-      });
+      console.warn('M-Pesa deposit query has not confirmed a successful payment yet.', { checkoutRequestID, resultCode: verification.data?.ResultCode });
       return res.status(503).json({ ResultCode: 1, ResultDesc: 'Payment is not yet confirmed.' });
     }
 
@@ -1885,28 +1876,38 @@ router.post('/topup/stk/callback', async (req, res) => {
       return res.json({ ResultCode: 0, ResultDesc: 'Callback received for review.' });
     }
 
-    const duplicateReceipt = await User.exists({ 'wallet.transactions.metadata.mpesaReceiptNumber': receipt });
-    if (duplicateReceipt) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
+    const duplicateUserReceipt = await User.exists({ 'wallet.transactions.metadata.mpesaReceiptNumber': receipt });
+    const duplicatePlatformReceipt = await AdminWallet.exists({ 'transactions.metadata.mpesaReceiptNumber': receipt });
+    if (duplicateUserReceipt || duplicatePlatformReceipt) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
 
-    const update = await User.updateOne({
-      _id: seller._id,
-      'wallet.transactions': { $elemMatch: {
-        _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID,
-      } },
-    }, {
-      $inc: { 'wallet.availableBalance': paidAmount },
-      $set: {
-        'wallet.lastUpdatedAt': new Date(),
-        'wallet.transactions.$.status': 'completed',
-        'wallet.transactions.$.description': 'M-Pesa top-up confirmed by callback.',
-        'wallet.transactions.$.processedAt': new Date(),
-        'wallet.transactions.$.updatedAt': new Date(),
-        'wallet.transactions.$.metadata.mpesaReceiptNumber': receipt,
-        'wallet.transactions.$.metadata.callbackResultCode': 0,
-      },
-    });
+    const now = new Date();
+    const successUpdate = isPlatformDeposit
+      ? {
+          $inc: { availableBalance: paidAmount },
+          $set: {
+            lastUpdatedAt: now,
+            'transactions.$.status': 'completed',
+            'transactions.$.description': 'M-Pesa deposit confirmed.',
+            'transactions.$.processedAt': now,
+            'transactions.$.metadata.mpesaReceiptNumber': receipt,
+            'transactions.$.metadata.callbackResultCode': 0,
+          },
+        }
+      : {
+          $inc: { 'wallet.availableBalance': paidAmount },
+          $set: {
+            'wallet.lastUpdatedAt': now,
+            'wallet.transactions.$.status': 'completed',
+            'wallet.transactions.$.description': 'M-Pesa deposit confirmed.',
+            'wallet.transactions.$.processedAt': now,
+            'wallet.transactions.$.updatedAt': now,
+            'wallet.transactions.$.metadata.mpesaReceiptNumber': receipt,
+            'wallet.transactions.$.metadata.callbackResultCode': 0,
+          },
+        };
+    const update = await (isPlatformDeposit ? AdminWallet : User).updateOne(ownerFilter, successUpdate);
     if (!update.modifiedCount) return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
-    return res.json({ ResultCode: 0, ResultDesc: 'Callback processed.' });
+    return res.json({ ResultCode: 0, ResultDesc: 'Deposit confirmed.' });
   } catch (error) {
     console.error('M-Pesa wallet callback error:', error.message);
     return res.status(500).json({ ResultCode: 1, ResultDesc: 'Callback processing failed.' });
