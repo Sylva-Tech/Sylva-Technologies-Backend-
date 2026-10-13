@@ -99,6 +99,35 @@ router.post('/inbound/resend', async (req, res) => {
   } catch (e) {
     return res.status(400).json({ success: false, message: 'Invalid webhook signature.' });
   }
+  const deliveryStatusMap = {
+    'email.sent': 'sent',
+    'email.delivered': 'delivered',
+    'email.delivery_delayed': 'delivery_delayed',
+    'email.bounced': 'bounced',
+    'email.complained': 'complained',
+    'email.failed': 'failed',
+  };
+  if (deliveryStatusMap[event?.type]) {
+    const providerMessageId = String(event.data?.email_id || event.data?.id || '').trim();
+    if (!providerMessageId) return res.status(200).json({ success: true, ignored: true });
+    try {
+      const message = await MailboxMessage.findOne({ providerMessageId });
+      if (!message) return res.status(200).json({ success: true, unmatched: true });
+      message.status = deliveryStatusMap[event.type];
+      message.lastStatusAt = event.created_at ? new Date(event.created_at) : new Date();
+      if (event.type === 'email.delivered') message.deliveredAt = event.created_at ? new Date(event.created_at) : new Date();
+      message.events.push({
+        type: event.type,
+        at: event.created_at ? new Date(event.created_at) : new Date(),
+        details: { eventId: event.id || '', reason: event.data?.reason || event.data?.bounce?.message || '' },
+      });
+      await message.save();
+      return res.status(200).json({ success: true });
+    } catch (e) {
+      console.error('Mailbox delivery event update failed:', e.message);
+      return res.status(500).json({ success: false, message: 'Unable to store email delivery status.' });
+    }
+  }
   if (event?.type !== 'email.received' || !event.data?.email_id) {
     return res.status(200).json({ success: true, ignored: true });
   }
