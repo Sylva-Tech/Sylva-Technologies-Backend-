@@ -37,21 +37,13 @@ const payoutRateLimitStore = new Map();
 const PAYOUT_RATE_WINDOW_MS = 15 * 60 * 1000;
 const PAYOUT_RATE_MAX_REQUESTS = 5;
 
-const getClientIp = (req) => {
-  const forwarded = req.headers['x-forwarded-for'];
-
-  if (forwarded) {
-    return String(forwarded)
-      .split(',')[0]
-      .trim();
-  }
-
-  return (
-    req.ip ||
-    req.socket?.remoteAddress ||
-    'unknown'
-  );
-};
+const getClientIp = (req) => (
+  // app.js configures Express trust proxy; use its resolved client IP rather
+  // than trusting a caller-supplied X-Forwarded-For header directly.
+  req.ip ||
+  req.socket?.remoteAddress ||
+  'unknown'
+);
 
 const cleanupRateLimitStore = () => {
   const now = Date.now();
