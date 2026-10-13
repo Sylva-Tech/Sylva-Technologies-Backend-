@@ -492,7 +492,8 @@ const validatePayoutDestination = (
   ).trim();
 
   if (
-    payoutMethod === 'mpesa'
+    payoutMethod === 'mpesa' ||
+    payoutMethod === 'airtel_money'
   ) {
     const normalized =
       normalizeKenyanPhone(value);
@@ -500,15 +501,15 @@ const validatePayoutDestination = (
     if (!normalized) {
       return {
         valid: false,
-        message:
-          'Please provide a valid Kenyan M-Pesa phone number.',
+        message: payoutMethod === 'airtel_money'
+          ? 'Please provide a valid Kenyan Airtel Money phone number.'
+          : 'Please provide a valid Kenyan M-Pesa phone number.',
       };
     }
 
     return {
       valid: true,
-      destination:
-        normalized,
+      destination: normalized,
     };
   }
 
@@ -543,7 +544,7 @@ const validatePayoutDestination = (
   return {
     valid: false,
     message:
-      'Unsupported payout method. Choose M-Pesa or bank.',
+      'Unsupported payout method. Choose M-Pesa, Airtel Money, or bank.',
   };
 };
 
@@ -753,6 +754,7 @@ router.post(
       if (
         ![
           'mpesa',
+          'airtel_money',
           'bank',
         ].includes(
           payoutMethod
@@ -1716,6 +1718,30 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       });
     }
 
+    const idempotencyKey = String(req.get('Idempotency-Key') || req.body?.idempotencyKey || '').trim();
+    if (idempotencyKey && (idempotencyKey.length < 8 || idempotencyKey.length > 120 || !/^[a-zA-Z0-9._:-]+$/.test(idempotencyKey))) {
+      return res.status(400).json({ success: false, message: 'Invalid deposit request key. Please refresh the page and try again.' });
+    }
+
+    if (idempotencyKey) {
+      const existing = isAdminDeposit
+        ? await AdminWallet.findOne({ key: 'platform', transactions: { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } })
+        : await User.findOne({ _id: user._id, 'wallet.transactions': { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } });
+      const existingTx = isAdminDeposit
+        ? existing?.transactions.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey)
+        : existing?.wallet?.transactions?.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey);
+      if (existingTx) {
+        if (existingTx.status === 'failed') {
+          return res.status(409).json({ success: false, message: 'This deposit attempt has already failed. Start a new deposit request.', data: { status: existingTx.status, transactionId: String(existingTx._id) } });
+        }
+        return res.status(202).json({
+          success: true,
+          message: existingTx.status === 'completed' ? 'This deposit was already confirmed.' : 'This deposit request already exists; do not initiate another payment.',
+          data: { transactionId: String(existingTx._id), status: existingTx.status, checkoutRequestId: existingTx.metadata?.checkoutRequestID || null, amount: existingTx.amount, reference: existingTx.reference },
+        });
+      }
+    }
+
     const now = new Date();
     const transactionId = new mongoose.Types.ObjectId();
     const accountLabel = getWalletAccountLabel(user);
@@ -1725,7 +1751,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       _id: transactionId, type: 'credit', amount, category: 'mpesa_topup',
       status: 'pending', description: 'Wallet deposit awaiting M-Pesa confirmation.',
       reference: `${accountDisplayName} ${internalReference}`, createdAt: now, updatedAt: now, processedAt: null,
-      metadata: { provider: 'safaricom-daraja', phone, initiatedBy: String(user._id), walletOwnerType: isAdminDeposit ? 'platform' : 'user', accountReference: accountLabel, accountDisplayName, internalReference },
+      metadata: { provider: 'safaricom-daraja', phone, initiatedBy: String(user._id), walletOwnerType: isAdminDeposit ? 'platform' : 'user', accountReference: accountLabel, accountDisplayName, internalReference, ...(idempotencyKey ? { idempotencyKey } : {}) },
     };
     if (isAdminDeposit) {
       let platformWallet = await AdminWallet.findOne({ key: 'platform' });
@@ -1808,6 +1834,41 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
   }
 });
 
+/* Authenticated deposit status: a seller can only inspect their own deposit. */
+router.get('/topup/status/:transactionId', protect, async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    if (!mongoose.isValidObjectId(transactionId)) {
+      return res.status(400).json({ success: false, message: 'Invalid deposit reference.' });
+    }
+    const isAdmin = req.user?.role === 'admin';
+    const owner = isAdmin
+      ? await AdminWallet.findOne({ key: 'platform', 'transactions._id': transactionId })
+      : await User.findOne({ _id: req.user._id, 'wallet.transactions._id': transactionId });
+    if (!owner) return res.status(404).json({ success: false, message: 'Deposit transaction was not found in your wallet.' });
+    const tx = isAdmin
+      ? owner.transactions.id(transactionId)
+      : owner.wallet?.transactions?.id(transactionId);
+    if (!tx || tx.category !== 'mpesa_topup') {
+      return res.status(404).json({ success: false, message: 'Deposit transaction was not found in your wallet.' });
+    }
+    return res.json({ success: true, data: {
+      transactionId: String(tx._id),
+      status: tx.status,
+      amount: roundMoney(tx.amount),
+      reference: tx.reference || '',
+      description: tx.description || '',
+      createdAt: tx.createdAt || null,
+      updatedAt: tx.updatedAt || null,
+      processedAt: tx.processedAt || null,
+      reconciliationRequired: tx.metadata?.reconciliationRequired === true,
+    } });
+  } catch (error) {
+    console.error('Wallet deposit status error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to check the deposit status.' });
+  }
+});
+
 /* Safaricom callback: match a pending server-created request, verify amount/phone,
    and atomically transition pending -> completed to avoid duplicate credits. */
 router.post('/topup/stk/callback', async (req, res) => {
@@ -1827,7 +1888,17 @@ router.post('/topup/stk/callback', async (req, res) => {
     ]);
     const isPlatformDeposit = Boolean(platformWallet);
     const owner = isPlatformDeposit ? platformWallet : account;
-    if (!owner) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
+    if (!owner) {
+      const alreadyKnown = await Promise.all([
+        AdminWallet.exists({ key: 'platform', 'transactions.metadata.checkoutRequestID': checkoutRequestID }),
+        User.exists({ 'wallet.transactions.metadata.checkoutRequestID': checkoutRequestID }),
+      ]);
+      if (alreadyKnown.some(Boolean)) {
+        return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
+      }
+      // Ask Safaricom to retry rather than silently losing an uncorrelated callback.
+      return res.status(503).json({ ResultCode: 1, ResultDesc: 'Deposit transaction is not yet correlated. Please retry callback.' });
+    }
 
     const tx = isPlatformDeposit
       ? platformWallet.transactions.find((item) => item.category === 'mpesa_topup' && item.status === 'pending' && item.metadata?.checkoutRequestID === checkoutRequestID)
@@ -1875,14 +1946,25 @@ router.post('/topup/stk/callback', async (req, res) => {
     const receipt = String(field('MpesaReceiptNumber') || '');
     const paidPhone = String(field('PhoneNumber') || '');
     if (!receipt || !Number.isFinite(paidAmount) || paidAmount !== Number(tx.amount) ||
-        (paidPhone && paidPhone !== String(tx.metadata?.phone || ''))) {
+        (paidPhone && normalizeKenyanPhone(paidPhone) !== normalizeKenyanPhone(tx.metadata?.phone || ''))) {
       console.error('M-Pesa wallet callback amount/phone/receipt mismatch', { checkoutRequestID });
+      const mismatchUpdate = isPlatformDeposit
+        ? { $set: { 'transactions.$.status': 'failed', 'transactions.$.description': 'Payment confirmation needs administrator review.', 'transactions.$.processedAt': new Date(), 'transactions.$.metadata.reconciliationRequired': true } }
+        : { $set: { 'wallet.transactions.$.status': 'failed', 'wallet.transactions.$.description': 'Payment confirmation needs administrator review.', 'wallet.transactions.$.processedAt': new Date(), 'wallet.transactions.$.updatedAt': new Date(), 'wallet.transactions.$.metadata.reconciliationRequired': true } };
+      await (isPlatformDeposit ? AdminWallet : User).updateOne(ownerFilter, mismatchUpdate);
       return res.json({ ResultCode: 0, ResultDesc: 'Callback received for review.' });
     }
 
     const duplicateUserReceipt = await User.exists({ 'wallet.transactions.metadata.mpesaReceiptNumber': receipt });
     const duplicatePlatformReceipt = await AdminWallet.exists({ 'transactions.metadata.mpesaReceiptNumber': receipt });
-    if (duplicateUserReceipt || duplicatePlatformReceipt) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
+    if (duplicateUserReceipt || duplicatePlatformReceipt) {
+      console.error('M-Pesa receipt already linked to a wallet transaction; manual reconciliation required.', { checkoutRequestID });
+      const duplicateUpdate = isPlatformDeposit
+        ? { $set: { 'transactions.$.status': 'failed', 'transactions.$.description': 'Payment receipt is already linked to another transaction; administrator review required.', 'transactions.$.processedAt': new Date(), 'transactions.$.metadata.reconciliationRequired': true } }
+        : { $set: { 'wallet.transactions.$.status': 'failed', 'wallet.transactions.$.description': 'Payment receipt is already linked to another transaction; administrator review required.', 'wallet.transactions.$.processedAt': new Date(), 'wallet.transactions.$.updatedAt': new Date(), 'wallet.transactions.$.metadata.reconciliationRequired': true } };
+      await (isPlatformDeposit ? AdminWallet : User).updateOne(ownerFilter, duplicateUpdate);
+      return res.json({ ResultCode: 0, ResultDesc: 'Callback received for review.' });
+    }
 
     const now = new Date();
     const successUpdate = isPlatformDeposit
