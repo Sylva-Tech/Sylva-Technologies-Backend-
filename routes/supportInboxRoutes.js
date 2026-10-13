@@ -219,7 +219,7 @@ router.post('/inbound/cloudflare', async (req, res) => {
     const providerMessageId = String(parsed.messageId || '').trim().replace(/[<>]/g, '').slice(0, 300)
       || require('crypto').createHash('sha256').update(rawEmail).digest('hex');
 
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(from)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from)) {
       return res.status(400).json({ success: false, message: 'Email has an invalid sender address.' });
     }
 
