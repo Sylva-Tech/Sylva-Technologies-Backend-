@@ -1,0 +1,222 @@
+const express = require('express');
+const rateLimit = require('express-rate-limit');
+const { Resend } = require('resend');
+const MailboxMessage = require('../models/MailboxMessage');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
+
+const router = express.Router();
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const SENDERS = {
+  support: 'Sylva Technologies <support@sylvatechnologies.co.ke>',
+  sales: 'Sylva Technologies <sales@sylvatechnologies.co.ke>',
+  orders: 'Sylva Technologies <order@sylvatechnologies.co.ke>',
+  payment: 'Sylva Technologies <payment@sylvatechnologies.co.ke>',
+  admin: 'Sylva Technologies <admin@sylvatechnologies.co.ke>',
+};
+const sendLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false });
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const normalizeList = value => (Array.isArray(value) ? value : value ? [value] : [])
+  .map(item => String(item).trim().toLowerCase()).filter(Boolean);
+const validList = list => list.length <= 50 && list.every(value => emailPattern.test(value));
+const safeAttachments = list => (Array.isArray(list) ? list : []).slice(0, 10).map(item => ({
+  filename: String(item.filename || 'attachment').slice(0, 255),
+  contentType: String(item.contentType || 'application/octet-stream').slice(0, 150),
+  size: Number(item.size || 0),
+  providerId: String(item.providerId || ''),
+}));
+
+router.get('/', protect, adminOnly, async (req, res) => {
+  try {
+    const allowedFolders = ['inbox', 'sent', 'drafts', 'archive', 'trash'];
+    const folder = allowedFolders.includes(req.query.folder) ? req.query.folder : 'inbox';
+    const query = { folder };
+    const messages = await MailboxMessage.find(query)
+      .select('-html -events.details')
+      .sort(folder === 'sent' ? { sentAt: -1, updatedAt: -1 } : { receivedAt: -1, updatedAt: -1 })
+      .limit(300).lean();
+    return res.json({ success: true, folder, messages });
+  } catch (e) {
+    console.error('Mailbox list failed:', e.message);
+    return res.status(500).json({ success: false, message: 'Unable to load mailbox messages.' });
+  }
+});
+
+router.get('/:id', protect, adminOnly, async (req, res) => {
+  try {
+    const message = await MailboxMessage.findById(req.params.id);
+    if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
+    if (message.folder === 'inbox' && !message.isRead) {
+      message.isRead = true;
+      await message.save();
+    }
+    return res.json({ success: true, message });
+  } catch (e) {
+    if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid message identifier.' });
+    console.error('Mailbox message load failed:', e.message);
+    return res.status(500).json({ success: false, message: 'Unable to open this message.' });
+  }
+});
+
+router.post('/drafts', protect, adminOnly, async (req, res) => {
+  try {
+    const to = normalizeList(req.body?.to);
+    const cc = normalizeList(req.body?.cc);
+    const bcc = normalizeList(req.body?.bcc);
+    if (![to, cc, bcc].every(validList)) return res.status(400).json({ success: false, message: 'Check recipient email addresses (maximum 50 per field).' });
+    const senderAlias = String(req.body?.sender || 'support').toLowerCase();
+    if (!SENDERS[senderAlias]) return res.status(400).json({ success: false, message: 'Choose a permitted Sylva sender address.' });
+    const values = {
+      direction: 'outbound', folder: 'drafts', from: (SENDERS[senderAlias].match(/<([^>]+)>/) || [])[1],
+      senderAlias, to, cc, bcc,
+      subject: String(req.body?.subject || '').slice(0, 300),
+      text: String(req.body?.text || '').slice(0, 100000),
+      attachments: safeAttachments(req.body?.attachments),
+      status: 'draft', isRead: true, lastStatusAt: new Date(),
+    };
+    let draft;
+    if (req.body?.id) {
+      draft = await MailboxMessage.findOneAndUpdate(
+        { _id: req.body.id, direction: 'outbound', folder: 'drafts' },
+        { $set: values },
+        { new: true, runValidators: true }
+      );
+      if (!draft) return res.status(404).json({ success: false, message: 'Draft not found.' });
+    } else {
+      draft = await MailboxMessage.create(values);
+    }
+    return res.json({ success: true, draft });
+  } catch (e) {
+    if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid draft identifier.' });
+    console.error('Save draft failed:', e.message);
+    return res.status(500).json({ success: false, message: 'Unable to save draft.' });
+  }
+});
+
+router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
+  let record;
+  try {
+    const to = normalizeList(req.body?.to);
+    const cc = normalizeList(req.body?.cc);
+    const bcc = normalizeList(req.body?.bcc);
+    const senderAlias = String(req.body?.sender || 'support').toLowerCase();
+    const subject = String(req.body?.subject || '').trim().slice(0, 300);
+    const text = String(req.body?.text || '').trim();
+    const from = SENDERS[senderAlias];
+    const inputAttachments = Array.isArray(req.body?.attachments) ? req.body.attachments.slice(0, 10) : [];
+    if (!from) return res.status(400).json({ success: false, message: 'Choose a permitted Sylva sender address.' });
+    if (!validList(to) || !validList(cc) || !validList(bcc) || (to.length + cc.length + bcc.length === 0)) {
+      return res.status(400).json({ success: false, message: 'Enter valid recipients in To, CC, or BCC (maximum 50 per field).' });
+    }
+    if (!subject || !text || text.length > 100000) return res.status(400).json({ success: false, message: 'Enter a subject and message under 100,000 characters.' });
+    if (inputAttachments.length > 10) return res.status(400).json({ success: false, message: 'You can attach up to 10 files.' });
+    let totalSize = 0;
+    const providerAttachments = inputAttachments.map(file => {
+      const filename = String(file.filename || 'attachment').slice(0, 255);
+      const content = String(file.content || '');
+      const size = Math.floor(content.length * 0.75);
+      totalSize += size;
+      if (!content || content.length > 7 * 1024 * 1024) throw new Error('Each attachment must be a valid base64 file under 5 MB.');
+      return { filename, content, contentType: String(file.contentType || 'application/octet-stream') };
+    });
+    if (totalSize > 15 * 1024 * 1024) return res.status(400).json({ success: false, message: 'Combined attachments must be under 15 MB.' });
+    if (!resend) return res.status(503).json({ success: false, message: 'Email sending is not configured on the server.' });
+    const fromAddress = (from.match(/<([^>]+)>/) || [])[1];
+    record = await MailboxMessage.create({
+      direction: 'outbound', folder: 'sent', from: fromAddress, senderAlias, to, cc, bcc,
+      subject, text, attachments: safeAttachments(inputAttachments.map(file => ({ ...file, size: Math.floor(String(file.content || '').length * 0.75) }))),
+      status: 'queued', isRead: true, sentAt: new Date(), lastStatusAt: new Date(),
+    });
+    const { data, error } = await resend.emails.send({
+      from, to, ...(cc.length ? { cc } : {}), ...(bcc.length ? { bcc } : {}),
+      subject, text, replyTo: fromAddress, ...(providerAttachments.length ? { attachments: providerAttachments } : {}),
+    });
+    if (error) {
+      record.status = 'failed';
+      record.events.push({ type: 'email.failed', details: { message: String(error.message || 'Provider send failed').slice(0, 500) } });
+      record.lastStatusAt = new Date();
+      await record.save();
+      return res.status(502).json({ success: false, message: 'The email provider could not send this message. Check sender verification and try again.', messageId: record._id });
+    }
+    record.providerMessageId = data?.id || undefined;
+    record.status = 'sent';
+    record.events.push({ type: 'email.sent', details: { providerMessageId: data?.id || '' } });
+    record.lastStatusAt = new Date();
+    await record.save();
+    if (req.body?.draftId) {
+      await MailboxMessage.findOneAndUpdate(
+        { _id: req.body.draftId, direction: 'outbound', folder: 'drafts' },
+        { $set: { folder: 'trash' } }
+      );
+    }
+    return res.json({ success: true, message: 'Email submitted to Resend.', email: record });
+  } catch (e) {
+    if (record && record.status === 'queued') {
+      record.status = 'failed';
+      record.lastStatusAt = new Date();
+      record.events.push({ type: 'email.failed', details: { message: String(e.message || 'Send failed').slice(0, 500) } });
+      await record.save().catch(() => {});
+    }
+    if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid draft identifier.' });
+    console.error('Mailbox send failed:', e.message);
+    return res.status(400).json({ success: false, message: e.message.includes('attachment') ? e.message : 'Unable to send this email.' });
+  }
+});
+
+router.patch('/:id/folder', protect, adminOnly, async (req, res) => {
+  try {
+    const folder = String(req.body?.folder || '');
+    if (!['inbox', 'sent', 'drafts', 'archive', 'trash'].includes(folder)) return res.status(400).json({ success: false, message: 'Invalid mailbox folder.' });
+    const message = await MailboxMessage.findByIdAndUpdate(req.params.id, { $set: { folder } }, { new: true, runValidators: true });
+    if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
+    return res.json({ success: true, message });
+  } catch (e) {
+    if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid message identifier.' });
+    return res.status(500).json({ success: false, message: 'Unable to move this message.' });
+  }
+});
+
+router.post('/events/resend', async (req, res) => {
+  if (!resend || !process.env.RESEND_INBOUND_WEBHOOK_SECRET || !req.rawBody) {
+    return res.status(503).json({ success: false, message: 'Resend event webhook is not configured.' });
+  }
+  let event;
+  try {
+    event = resend.webhooks.verify({
+      payload: req.rawBody.toString('utf8'),
+      headers: {
+        id: req.get('svix-id'),
+        timestamp: req.get('svix-timestamp'),
+        signature: req.get('svix-signature'),
+      },
+      webhookSecret: process.env.RESEND_INBOUND_WEBHOOK_SECRET,
+    });
+  } catch (e) {
+    return res.status(400).json({ success: false, message: 'Invalid webhook signature.' });
+  }
+  const type = String(event?.type || '');
+  const providerMessageId = String(event?.data?.email_id || event?.data?.id || '').trim();
+  const statusMap = {
+    'email.sent': 'sent',
+    'email.delivered': 'delivered',
+    'email.delivery_delayed': 'delivery_delayed',
+    'email.bounced': 'bounced',
+    'email.complained': 'complained',
+    'email.failed': 'failed',
+  };
+  if (!statusMap[type] || !providerMessageId) return res.status(200).json({ success: true, ignored: true });
+  try {
+    const message = await MailboxMessage.findOne({ providerMessageId });
+    if (!message) return res.status(200).json({ success: true, unmatched: true });
+    message.status = statusMap[type];
+    message.lastStatusAt = new Date();
+    if (type === 'email.delivered') message.deliveredAt = event.created_at ? new Date(event.created_at) : new Date();
+    message.events.push({ type, at: event.created_at ? new Date(event.created_at) : new Date(), details: { eventId: event.id || '', reason: event.data?.reason || event.data?.bounce?.message || '' } });
+    await message.save();
+    return res.status(200).json({ success: true });
+  } catch (e) {
+    console.error('Mailbox event webhook failed:', e.message);
+    return res.status(500).json({ success: false, message: 'Unable to store email status.' });
+  }
+});
+
+module.exports = router;
