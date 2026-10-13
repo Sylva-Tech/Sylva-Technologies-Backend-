@@ -42,7 +42,7 @@ router.post('/', async (req, res) => {
       isRead: false,
     });
 
-    res.status(201).json(contactMessage);
+    res.status(201).json({ success: true, message: 'Your message has been sent successfully.' });
   } catch (error) {
     res.status(500).json({ message: error.message || 'Unable to send message.' });
   }
