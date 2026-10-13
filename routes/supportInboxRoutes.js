@@ -169,6 +169,7 @@ router.post('/inbound/resend', async (req, res) => {
     });
     await MailboxMessage.create({
       providerMessageId,
+      providerEmailId: String(event.data.email_id || ''),
       direction: 'inbound',
       folder: 'inbox',
       from,
