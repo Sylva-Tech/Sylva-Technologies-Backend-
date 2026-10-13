@@ -4,6 +4,7 @@ let cachedToken = null;
 let tokenExpiresAt = 0;
 
 const normalizePin = (value) => String(value || '').trim().toUpperCase();
+const normalizeId = (value) => String(value || '').trim().replace(/\s+/g, '');
 
 const normalizeName = (value) =>
   String(value || '')
@@ -28,6 +29,11 @@ const getKraEndpoints = () => {
       sandbox
         ? 'https://sbx.kra.go.ke/checker/v1/pinbypin'
         : 'https://api.kra.go.ke/checker/v1/pinbypin'
+    ),
+    idUrl: process.env.KRA_ID_CHECK_URL || (
+      sandbox
+        ? 'https://sbx.kra.go.ke/checker/v1/pin'
+        : 'https://api.kra.go.ke/checker/v1/pin'
     ),
   };
 };
@@ -67,6 +73,14 @@ const getAccessToken = async () => {
   return cachedToken;
 };
 
+const logProviderFailure = (label, error) => {
+  // Never log credentials, access tokens, submitted IDs/PINs, or response bodies.
+  console.error(label + ' request failed:', {
+    code: error.code || 'KRA_REQUEST_FAILED',
+    statusCode: error.response?.status || null,
+  });
+};
+
 const checkKraPin = async (pinValue) => {
   const pin = normalizePin(pinValue);
 
@@ -96,17 +110,17 @@ const checkKraPin = async (pinValue) => {
     );
 
     const body = response.data || {};
-    const responseCode = String(body.ResponseCode || '');
-    const responseStatus = String(body.Status || '').toUpperCase();
-    const pinData = body.PINDATA || {};
-    const returnedPin = normalizePin(pinData.KRAPIN || pin);
+    const responseCode = String(body.ResponseCode ?? body.responseCode ?? '');
+    const responseStatus = String(body.Status ?? body.status ?? '').toUpperCase();
+    const pinData = body.PINDATA || body.pinData || {};
+    const returnedPin = normalizePin(pinData.KRAPIN || '');
 
     if (responseCode === '19005') {
       return {
         status: 'invalid',
         reason: 'KRA reported that this PIN is invalid.',
         responseCode,
-        message: String(body.Message || 'Invalid PIN'),
+        message: String(body.Message || body.message || 'Invalid PIN'),
         checkedAt: new Date(),
         provider: 'KRA',
       };
@@ -123,17 +137,100 @@ const checkKraPin = async (pinValue) => {
     }
 
     const pinStatus = String(pinData.StatusOfPIN || '').trim();
+    const common = {
+      responseCode,
+      message: String(body.Message || body.message || ''),
+      taxpayerType: String(pinData.TypeOfTaxpayer || ''),
+      taxpayerName: String(pinData.Name || ''),
+      taxpayerPin: returnedPin,
+      pinStatus,
+      checkedAt: new Date(),
+      provider: 'KRA',
+    };
+
     if (pinStatus.toLowerCase() !== 'active') {
       return {
+        ...common,
         status: 'inactive',
         reason: pinStatus
           ? 'KRA reports that this PIN is ' + pinStatus + '.'
           : 'KRA did not confirm that this PIN is active.',
-        responseCode,
-        message: String(body.Message || ''),
-        taxpayerType: String(pinData.TypeOfTaxpayer || ''),
-        taxpayerName: String(pinData.Name || ''),
-        pinStatus,
+      };
+    }
+
+    return {
+      ...common,
+      status: 'verified',
+      reason: 'KRA confirmed that the PIN is valid and active.',
+      message: common.message || 'Valid PIN',
+    };
+  } catch (error) {
+    logProviderFailure('KRA PIN verification', error);
+    return {
+      status: 'provider_unavailable',
+      reason: error.code === 'KRA_NOT_CONFIGURED'
+        ? 'KRA API credentials are not configured.'
+        : 'KRA verification is temporarily unavailable. Please retry later.',
+      checkedAt: new Date(),
+      provider: 'KRA',
+    };
+  }
+};
+
+/**
+ * Verify a Kenyan national ID through KRA PIN Checker by ID.
+ * Do not use this endpoint for passports, military IDs, or other ID types
+ * unless KRA explicitly confirms the correct TaxpayerType for those documents.
+ */
+const checkKraId = async (idValue, taxpayerType = 'KE') => {
+  const id = normalizeId(idValue);
+  const type = String(taxpayerType || '').trim().toUpperCase();
+
+  if (!id || !type) {
+    return {
+      status: 'invalid_format',
+      reason: 'A taxpayer ID and taxpayer type are required.',
+      checkedAt: new Date(),
+      provider: 'KRA',
+    };
+  }
+
+  try {
+    const token = await getAccessToken();
+    const { idUrl } = getKraEndpoints();
+    const response = await axios.post(
+      idUrl,
+      { TaxpayerType: type, TaxpayerID: id },
+      {
+        headers: {
+          Authorization: 'Bearer ' + token,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        timeout: 10000,
+      }
+    );
+
+    const body = response.data || {};
+    const errorCode = String(body.ErrorCode ?? body.errorCode ?? '');
+    const taxpayerPin = normalizePin(body.TaxpayerPIN || body.taxpayerPIN || '');
+    const taxpayerName = String(body.TaxpayerName || body.taxpayerName || '').trim();
+
+    if (errorCode === '30002' || /invalid id/i.test(String(body.ErrorMessage || body.errorMessage || ''))) {
+      return {
+        status: 'invalid',
+        reason: 'KRA reported that this ID number is invalid.',
+        responseCode: errorCode,
+        checkedAt: new Date(),
+        provider: 'KRA',
+      };
+    }
+
+    if (!taxpayerPin || !taxpayerName) {
+      return {
+        status: 'provider_unavailable',
+        reason: 'KRA did not return a conclusive ID verification result.',
+        responseCode: errorCode || undefined,
         checkedAt: new Date(),
         provider: 'KRA',
       };
@@ -141,29 +238,21 @@ const checkKraPin = async (pinValue) => {
 
     return {
       status: 'verified',
-      reason: 'KRA confirmed that the PIN is valid and active.',
-      responseCode,
-      message: String(body.Message || 'Valid PIN'),
-      taxpayerType: String(pinData.TypeOfTaxpayer || ''),
-      taxpayerName: String(pinData.Name || ''),
-      pinStatus,
+      reason: 'KRA returned taxpayer details for this ID.',
+      responseCode: errorCode || 'OK',
+      taxpayerPin,
+      taxpayerName,
+      taxpayerType: type,
       checkedAt: new Date(),
       provider: 'KRA',
     };
   } catch (error) {
-    // Never log credentials, access tokens, or full provider response payloads.
-    const statusCode = error.response?.status;
-    console.error('KRA PIN verification request failed:', {
-      code: error.code || 'KRA_REQUEST_FAILED',
-      statusCode: statusCode || null,
-      message: error.message,
-    });
-
+    logProviderFailure('KRA ID verification', error);
     return {
       status: 'provider_unavailable',
       reason: error.code === 'KRA_NOT_CONFIGURED'
         ? 'KRA API credentials are not configured.'
-        : 'KRA verification is temporarily unavailable. Please retry later.',
+        : 'KRA ID verification is temporarily unavailable. Please retry later.',
       checkedAt: new Date(),
       provider: 'KRA',
     };
@@ -176,8 +265,7 @@ const namesMatch = (submittedName, taxpayerName) => {
   if (!submitted || !official) return false;
   if (submitted === official) return true;
 
-  // KRA may abbreviate names. Treat a clear token overlap as review-worthy,
-  // not proof of identity; callers must never auto-reject on a name mismatch.
+  // Name similarity is a review signal, never standalone proof of identity.
   const submittedTokens = new Set(submitted.split(' ').filter(Boolean));
   const officialTokens = official.split(' ').filter(Boolean);
   const shared = officialTokens.filter((token) => submittedTokens.has(token)).length;
@@ -186,6 +274,8 @@ const namesMatch = (submittedName, taxpayerName) => {
 
 module.exports = {
   checkKraPin,
+  checkKraId,
   namesMatch,
   normalizePin,
+  normalizeId,
 };
