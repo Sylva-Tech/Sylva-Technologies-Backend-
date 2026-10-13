@@ -156,16 +156,28 @@ router.post('/withdrawals', protect, adminOnly, requireVerified, financialAction
     if (destination.length < 5 || destination.length > 200) return res.status(400).json({ success: false, message: 'Enter valid bank payout details.' });
   } else return res.status(400).json({ success: false, message: 'Choose M-Pesa, Airtel Money, or bank.' });
   try {
-    const wallet = await platformWallet();
-    if (Number(wallet.availableBalance || 0) < amount) return res.status(409).json({ success: false, message: 'Insufficient available platform funds.' });
+    await platformWallet();
     const ref = 'WITHDRAW-' + new mongoose.Types.ObjectId().toString().toUpperCase();
-    wallet.availableBalance = Number((wallet.availableBalance - amount).toFixed(2));
-    wallet.pendingBalance = Number((wallet.pendingBalance + amount).toFixed(2));
-    wallet.lastUpdatedAt = new Date();
-    wallet.transactions.push({ type: 'debit', amount, category: 'withdrawal_request', status: 'pending', description: 'Platform withdrawal awaiting external payout processing.', reference: ref, metadata: { payoutMethod: method, destination, requestedBy: String(req.user._id) } });
-    await wallet.save();
-    return res.status(202).json({ success: true, message: 'Withdrawal request saved and funds reserved. The M-Pesa or bank transfer still needs to be sent and confirmed externally.', data: { reference: ref, amount, method, status: 'pending' } });
+    const now = new Date();
+    const updated = await AdminWallet.findOneAndUpdate(
+      { key: 'platform', availableBalance: mongoose.trusted({ $gte: amount }) },
+      {
+        $inc: { availableBalance: -amount, pendingBalance: amount },
+        $set: { lastUpdatedAt: now },
+        $push: { transactions: {
+          type: 'debit', amount, category: 'withdrawal_request', status: 'pending',
+          description: 'Platform withdrawal awaiting external payout processing.',
+          reference: ref,
+          metadata: { payoutMethod: method, destination, requestedBy: String(req.user._id), requestedAt: now.toISOString() },
+          createdAt: now, updatedAt: now,
+        } },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!updated) return res.status(409).json({ success: false, message: 'Insufficient available platform funds or wallet changed. Refresh and try again.' });
+    return res.status(202).json({ success: true, message: 'Withdrawal request saved and funds reserved. The external M-Pesa, Airtel Money or bank payout must still be sent and confirmed.', data: { reference: ref, amount, method, status: 'pending' } });
   } catch (error) {
+    console.error('Platform withdrawal request error:', error.message);
     return res.status(500).json({ success: false, message: 'Unable to create withdrawal request.' });
   }
 });
