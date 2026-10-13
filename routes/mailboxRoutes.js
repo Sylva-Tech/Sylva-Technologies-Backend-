@@ -179,8 +179,8 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
     const bodyText = String(req.body?.text || '').trim();
     const signatureName = String(req.body?.signatureName || '').trim().slice(0, 100);
     const signatureTitle = String(req.body?.signatureTitle || '').trim().slice(0, 120);
-    const signatureText = ['Regards,', signatureName, signatureTitle, 'Sylva Technologies', 'Empowering Your Digital Life'].filter(Boolean).join('\\n');
-    const text = [bodyText, signatureText].filter(Boolean).join('\\n\\n');
+    const signatureText = ['Regards,', signatureName, signatureTitle, 'Sylva Technologies', 'Empowering Your Digital Life'].filter(Boolean).join('\n');
+    const text = [bodyText, signatureText].filter(Boolean).join('\n\n');
     const from = SENDERS[senderAlias];
     const inputAttachments = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
     if (!from) return res.status(400).json({ success: false, message: 'Choose a permitted Sylva sender address.' });
