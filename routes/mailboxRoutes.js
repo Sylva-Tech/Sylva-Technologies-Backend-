@@ -4,6 +4,8 @@ const rateLimit = require('express-rate-limit');
 const { Resend } = require('resend');
 const MailboxMessage = require('../models/MailboxMessage');
 const MailboxDocument = require('../models/MailboxDocument');
+const SupportMessage = require('../models/SupportMessage');
+const ContactMessage = require('../models/ContactMessage');
 const { encryptAttachment, decryptAttachment, getKey } = require('../utils/mailAttachmentCrypto');
 const { encryptMessageContent, decryptMessageContent, getMessageKey } = require('../utils/mailMessageCrypto');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
@@ -265,6 +267,65 @@ router.post('/drafts', protect, adminOnly, async (req, res) => {
 });
 
 
+
+// Bounded migration for legacy mailbox, support, and contact message bodies.
+router.post('/content/encrypt-legacy', protect, adminOnly, async (req, res) => {
+  try {
+    getMessageKey();
+    let migrated = 0;
+    const mailboxLegacy = await MailboxMessage.find({
+      contentEncryptionVersion: mongoose.trusted({ $ne: 1 }),
+    }).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion').limit(100);
+    for (const document of mailboxLegacy) {
+      Object.assign(document, encryptMessageContent({
+        subject: document.subject, text: document.text, html: document.html,
+      }));
+      await document.save();
+      migrated += 1;
+    }
+
+    const supportLegacy = await SupportMessage.find({
+      contentEncryptionVersion: mongoose.trusted({ $ne: 1 }),
+    }).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion').limit(100);
+    for (const document of supportLegacy) {
+      Object.assign(document, encryptMessageContent({
+        subject: document.subject, text: document.text, html: document.html,
+        replies: Array.isArray(document.replies) ? document.replies : [],
+      }));
+      document.replies = [];
+      await document.save();
+      migrated += 1;
+    }
+
+    const contactLegacy = await ContactMessage.find({
+      contentEncryptionVersion: mongoose.trusted({ $ne: 1 }),
+    }).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion').limit(100);
+    for (const document of contactLegacy) {
+      Object.assign(document, encryptMessageContent({
+        subject: document.subject, text: document.message, html: '',
+      }));
+      document.message = '(Encrypted message)';
+      await document.save();
+      migrated += 1;
+    }
+
+    const [mailboxRemaining, supportRemaining, contactRemaining] = await Promise.all([
+      MailboxMessage.countDocuments({ contentEncryptionVersion: mongoose.trusted({ $ne: 1 }) }),
+      SupportMessage.countDocuments({ contentEncryptionVersion: mongoose.trusted({ $ne: 1 }) }),
+      ContactMessage.countDocuments({ contentEncryptionVersion: mongoose.trusted({ $ne: 1 }) }),
+    ]);
+    const remaining = mailboxRemaining + supportRemaining + contactRemaining;
+    return res.json({
+      success: true, migrated, remaining,
+      batches: { mailbox: mailboxLegacy.length, support: supportLegacy.length, contact: contactLegacy.length },
+      message: remaining ? 'Legacy messages remain. Run this migration again until remaining is zero.' : 'All stored message bodies in Sylva Mail, support inbox, and contact messages are encrypted.',
+    });
+  } catch (e) {
+    if (e.code === 'MAIL_ATTACHMENT_ENCRYPTION_NOT_CONFIGURED') return res.status(503).json({ success: false, message: e.message });
+    console.error('Legacy message encryption migration failed:', e.message);
+    return res.status(500).json({ success: false, message: 'Unable to encrypt legacy messages.' });
+  }
+});
 
 // One-time, bounded migration for attachment records saved before encryption was enabled.
 // Run repeatedly until remaining is zero; raw legacy bytes are encrypted before each update.
