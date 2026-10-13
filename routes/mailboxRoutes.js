@@ -2,6 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { Resend } = require('resend');
 const MailboxMessage = require('../models/MailboxMessage');
+const MailboxDocument = require('../models/MailboxDocument');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -25,6 +26,30 @@ const safeAttachments = list => (Array.isArray(list) ? list : []).slice(0, 10).m
   providerId: String(item.providerId || ''),
 }));
 
+async function storeDocumentFiles(messageId, files, replace = false) {
+  const list = Array.isArray(files) ? files.filter(file => file && file.content) : [];
+  if (replace) await MailboxDocument.deleteMany({ messageId });
+  if (!list.length) return;
+  let totalSize = 0;
+  const records = list.slice(0, 10).map(file => {
+    const contentBase64 = String(file.content || '');
+    const size = Math.floor(contentBase64.length * 0.75);
+    totalSize += size;
+    if (!contentBase64 || contentBase64.length > 7 * 1024 * 1024) {
+      throw new Error('Each attachment must be a valid base64 file under 5 MB.');
+    }
+    return {
+      messageId,
+      filename: String(file.filename || 'attachment').slice(0, 255),
+      contentType: String(file.contentType || 'application/octet-stream').slice(0, 150),
+      size,
+      contentBase64,
+    };
+  });
+  if (totalSize > 6 * 1024 * 1024) throw new Error('Combined attachments must be under 6 MB.');
+  await MailboxDocument.insertMany(records);
+}
+
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
     const allowedFolders = ['inbox', 'outbox', 'sent', 'drafts', 'archive', 'trash'];
@@ -45,7 +70,19 @@ router.get('/:id/attachments', protect, adminOnly, async (req, res) => {
   try {
     const message = await MailboxMessage.findById(req.params.id).select('direction providerEmailId attachments');
     if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
-    if (message.direction !== 'inbound' || !message.providerEmailId || !resend) {
+    if (message.direction === 'outbound') {
+      const documents = await MailboxDocument.find({ messageId: message._id }).select('+contentBase64').lean();
+      return res.json({
+        success: true,
+        attachments: documents.map(item => ({
+          filename: item.filename,
+          contentType: item.contentType,
+          size: item.size,
+          downloadUrl: 'data:' + item.contentType + ';base64,' + item.contentBase64,
+        })),
+      });
+    }
+    if (!message.providerEmailId || !resend) {
       return res.json({ success: true, attachments: (message.attachments || []).map(item => ({ ...item.toObject(), downloadUrl: '' })) });
     }
     const { data, error } = await resend.emails.receiving.attachments.list({ emailId: message.providerEmailId });
@@ -113,6 +150,9 @@ router.post('/drafts', protect, adminOnly, async (req, res) => {
     } else {
       draft = await MailboxMessage.create(values);
     }
+    if (Array.isArray(req.body?.attachments) && req.body.attachments.some(file => file?.content)) {
+      await storeDocumentFiles(draft._id, req.body.attachments, true);
+    }
     return res.json({ success: true, draft });
   } catch (e) {
     if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid draft identifier.' });
@@ -148,13 +188,32 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
       return { filename, content, contentType: String(file.contentType || 'application/octet-stream') };
     });
     if (totalSize > 6 * 1024 * 1024) return res.status(400).json({ success: false, message: 'Combined attachments must be under 6 MB for safe delivery.' });
+    let draftDocuments = [];
+    if (req.body?.draftId && inputAttachments.length === 0) {
+      draftDocuments = await MailboxDocument.find({ messageId: req.body.draftId }).select('+contentBase64').lean();
+      for (const item of draftDocuments) {
+        providerAttachments.push({ filename: item.filename, content: item.contentBase64, contentType: item.contentType });
+        totalSize += Number(item.size || 0);
+      }
+      if (totalSize > 6 * 1024 * 1024) return res.status(400).json({ success: false, message: 'Combined attachments must be under 6 MB for safe delivery.' });
+    }
     if (!resend) return res.status(503).json({ success: false, message: 'Email sending is not configured on the server.' });
     const fromAddress = (from.match(/<([^>]+)>/) || [])[1];
+    const attachmentMetadata = inputAttachments.length
+      ? inputAttachments.map(file => ({ ...file, size: Math.floor(String(file.content || '').length * 0.75) }))
+      : draftDocuments.map(file => ({ filename: file.filename, contentType: file.contentType, size: file.size }));
     record = await MailboxMessage.create({
       direction: 'outbound', folder: 'outbox', from: fromAddress, senderAlias, to, cc, bcc,
-      subject, text, attachments: safeAttachments(inputAttachments.map(file => ({ ...file, size: Math.floor(String(file.content || '').length * 0.75) }))),
+      subject, text, attachments: safeAttachments(attachmentMetadata),
       status: 'queued', isRead: true, sentAt: new Date(), lastStatusAt: new Date(),
     });
+    if (inputAttachments.length) await storeDocumentFiles(record._id, inputAttachments, true);
+    else if (draftDocuments.length) {
+      await MailboxDocument.insertMany(draftDocuments.map(file => ({
+        messageId: record._id, filename: file.filename, contentType: file.contentType,
+        size: file.size, contentBase64: file.contentBase64,
+      })));
+    }
     const { data, error } = await resend.emails.send({
       from, to, ...(cc.length ? { cc } : {}), ...(bcc.length ? { bcc } : {}),
       subject, text, replyTo: fromAddress, ...(providerAttachments.length ? { attachments: providerAttachments } : {}),
