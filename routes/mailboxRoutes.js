@@ -127,15 +127,45 @@ router.get('/:id/attachments', protect, adminOnly, async (req, res) => {
       return res.status(502).json({ success: false, message: 'Unable to retrieve attachment links.' });
     }
     const items = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
-    return res.json({
-      success: true,
-      attachments: items.map(item => ({
-        filename: String(item.filename || 'attachment').slice(0, 255),
-        contentType: String(item.content_type || item.contentType || 'application/octet-stream'),
-        size: Number(item.size || 0),
-        downloadUrl: String(item.download_url || item.downloadUrl || ''),
-      })),
-    });
+    // Provider URLs are never sent to the browser. Fetch each file server-side,
+    // encrypt it, and only then expose our authenticated document endpoint.
+    const stored = [];
+    let storedBytes = 0;
+    for (const item of items.slice(0, 10)) {
+      const filename = String(item.filename || 'attachment').slice(0, 255);
+      const contentType = String(item.content_type || item.contentType || 'application/octet-stream').slice(0, 150);
+      const rawUrl = String(item.download_url || item.downloadUrl || '');
+      try {
+        const parsedUrl = new URL(rawUrl);
+        if (parsedUrl.protocol !== 'https:' || !parsedUrl.hostname || ['localhost', '127.0.0.1', '::1'].includes(parsedUrl.hostname.toLowerCase())) {
+          throw new Error('Untrusted attachment URL.');
+        }
+        const response = await fetch(parsedUrl, { redirect: 'error', signal: AbortSignal.timeout(15000) });
+        if (!response.ok) throw new Error('Provider attachment download failed.');
+        const announcedSize = Number(response.headers.get('content-length') || 0);
+        if (announcedSize > 5 * 1024 * 1024) throw new Error('Attachment exceeds size limit.');
+        const bytes = Buffer.from(await response.arrayBuffer());
+        if (!bytes.length || bytes.length > 5 * 1024 * 1024 || storedBytes + bytes.length > 6 * 1024 * 1024) {
+          throw new Error('Attachment exceeds encrypted mailbox storage limit.');
+        }
+        const encrypted = encryptAttachment(bytes);
+        const document = await MailboxDocument.create({
+          messageId: message._id, filename, contentType, size: bytes.length, ...encrypted,
+        });
+        storedBytes += bytes.length;
+        stored.push({
+          documentId: String(document._id), filename, contentType, size: bytes.length,
+          encrypted: true, downloadUrl: '',
+        });
+      } catch (downloadError) {
+        console.warn('Provider attachment was not imported into encrypted storage:', downloadError.message);
+        stored.push({ filename, contentType, size: Number(item.size || 0), encrypted: false, downloadUrl: '' });
+      }
+    }
+    if (stored.length) return res.json({ success: true, attachments: stored });
+    return res.json({ success: true, attachments: (message.attachments || []).map(item => ({
+      filename: item.filename, contentType: item.contentType, size: item.size, encrypted: false, downloadUrl: '',
+    })) });
   } catch (e) {
     if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid message identifier.' });
     if (e.code === 'MAIL_ATTACHMENT_ENCRYPTION_NOT_CONFIGURED') return res.status(503).json({ success: false, message: e.message });
