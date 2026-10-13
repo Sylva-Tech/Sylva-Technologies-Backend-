@@ -192,16 +192,36 @@ router.patch('/withdrawals/:transactionId', protect, adminOnly, requireVerified,
     const wallet = await platformWallet();
     const tx = wallet.transactions.id(req.params.transactionId);
     if (!tx || tx.category !== 'withdrawal_request' || tx.status !== 'pending') return res.status(404).json({ success: false, message: 'Pending withdrawal not found.' });
-    if (Number(wallet.pendingBalance || 0) < Number(tx.amount || 0)) return res.status(409).json({ success: false, message: 'Platform pending balance does not cover this withdrawal.' });
-    wallet.pendingBalance = Number((wallet.pendingBalance - tx.amount).toFixed(2));
-    tx.status = decision === 'paid' ? 'paid' : 'rejected';
-    tx.processedAt = new Date();
-    tx.description = decision === 'paid' ? 'External payout confirmed as sent by admin.' : 'Withdrawal rejected; funds returned to available platform balance.';
-    tx.metadata = { ...(tx.metadata || {}), reviewedBy: String(req.user._id), reviewedAt: new Date().toISOString(), ...(decision === 'rejected' ? { rejectionReason: reason } : {}) };
-    if (decision === 'rejected') wallet.availableBalance = Number((wallet.availableBalance + tx.amount).toFixed(2));
-    wallet.lastUpdatedAt = new Date();
-    await wallet.save();
-    return res.json({ success: true, message: decision === 'paid' ? 'Marked paid. Only do this after the external M-Pesa/bank transfer is complete.' : 'Withdrawal rejected and funds returned.', data: safe(wallet) });
+    const amount = Number(tx.amount || 0);
+    if (!Number.isFinite(amount) || amount < 100) return res.status(409).json({ success: false, message: 'Withdrawal amount is invalid and requires review.' });
+    const now = new Date();
+    const update = {
+      $inc: {
+        pendingBalance: -amount,
+        ...(decision === 'rejected' ? { availableBalance: amount } : {}),
+      },
+      $set: {
+        lastUpdatedAt: now,
+        'transactions.$.status': decision === 'paid' ? 'paid' : 'rejected',
+        'transactions.$.processedAt': now,
+        'transactions.$.updatedAt': now,
+        'transactions.$.description': decision === 'paid' ? 'External payout confirmed as sent by admin.' : 'Withdrawal rejected; funds returned to available platform balance.',
+        'transactions.$.metadata.reviewedBy': String(req.user._id),
+        'transactions.$.metadata.reviewedAt': now.toISOString(),
+        ...(decision === 'rejected' ? { 'transactions.$.metadata.rejectionReason': reason } : {}),
+      },
+    };
+    const updated = await AdminWallet.findOneAndUpdate(
+      {
+        key: 'platform',
+        pendingBalance: mongoose.trusted({ $gte: amount }),
+        transactions: mongoose.trusted({ $elemMatch: { _id: tx._id, category: 'withdrawal_request', status: 'pending' } }),
+      },
+      update,
+      { new: true, runValidators: true }
+    );
+    if (!updated) return res.status(409).json({ success: false, message: 'This withdrawal was already processed or the pending balance changed. Refresh and review the ledger.' });
+    return res.json({ success: true, message: decision === 'paid' ? 'Marked paid. Only do this after the external M-Pesa, Airtel Money or bank transfer is complete.' : 'Withdrawal rejected and funds returned.', data: safe(updated) });
   } catch (error) {
     console.error('Platform withdrawal review error:', error.message);
     return res.status(500).json({ success: false, message: 'Unable to update withdrawal request.' });
