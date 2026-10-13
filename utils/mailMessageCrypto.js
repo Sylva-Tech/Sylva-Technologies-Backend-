@@ -15,6 +15,7 @@ function encryptMessageContent(value = {}) {
     subject: String(value.subject || ''),
     text: String(value.text || ''),
     html: String(value.html || ''),
+    replies: Array.isArray(value.replies) ? value.replies : undefined,
   });
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ALGORITHM, getMessageKey(), iv);
@@ -48,6 +49,7 @@ function decryptMessageContent(message) {
     source.subject = content.subject || '(No subject)';
     source.text = content.text || '';
     source.html = content.html || '';
+    if (Array.isArray(content.replies)) source.replies = content.replies;
   } else {
     // Legacy records remain readable until the authenticated migration endpoint encrypts them.
     source.subject = source.subject || '(No subject)';
