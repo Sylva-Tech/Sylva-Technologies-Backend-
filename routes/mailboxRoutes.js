@@ -219,11 +219,13 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
       subject, text, replyTo: fromAddress, ...(providerAttachments.length ? { attachments: providerAttachments } : {}),
     });
     if (error) {
+      const providerReason = String(error.message || error.name || 'Provider send failed').slice(0, 500);
+      console.error('Resend rejected Sylva Mail message:', providerReason);
       record.status = 'failed';
-      record.events.push({ type: 'email.failed', details: { message: String(error.message || 'Provider send failed').slice(0, 500) } });
+      record.events.push({ type: 'email.failed', details: { message: providerReason } });
       record.lastStatusAt = new Date();
       await record.save();
-      return res.status(502).json({ success: false, message: 'The email provider could not send this message. Check sender verification and try again.', messageId: record._id });
+      return res.status(502).json({ success: false, message: 'Resend rejected the email: ' + providerReason, messageId: record._id });
     }
     record.providerMessageId = data?.id || undefined;
     record.providerEmailId = data?.id || '';
