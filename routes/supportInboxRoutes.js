@@ -6,6 +6,7 @@ const SupportMessage = require('../models/SupportMessage');
 const MailboxMessage = require('../models/MailboxMessage');
 const MailboxDocument = require('../models/MailboxDocument');
 const { encryptAttachment } = require('../utils/mailAttachmentCrypto');
+const { encryptMessageContent, decryptMessageContent } = require('../utils/mailMessageCrypto');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const router = express.Router();
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -21,8 +22,8 @@ const escapeHtml = (s = '') => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;'
 
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
-    const messages = await SupportMessage.find().select('-html').sort({ isRead: 1, receivedAt: -1 }).limit(300).lean();
-    return res.json({ success: true, messages });
+    const messages = await SupportMessage.find().select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion').sort({ isRead: 1, receivedAt: -1 }).limit(300).lean();
+    return res.json({ success: true, messages: messages.map(item => { const opened = decryptMessageContent(item); delete opened.html; return opened; }) });
   } catch (e) {
     console.error('Support inbox list failed:', e.message);
     return res.status(500).json({ success: false, message: 'Unable to load the support inbox.' });
@@ -30,10 +31,10 @@ router.get('/', protect, adminOnly, async (req, res) => {
 });
 router.get('/:id', protect, adminOnly, async (req, res) => {
   try {
-    const message = await SupportMessage.findById(req.params.id);
+    const message = await SupportMessage.findById(req.params.id).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion');
     if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
     if (!message.isRead) { message.isRead = true; await message.save(); }
-    return res.json({ success: true, message });
+    return res.json({ success: true, message: decryptMessageContent(message) });
   } catch (e) {
     if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid message identifier.' });
     console.error('Support message load failed:', e.message);
@@ -42,9 +43,9 @@ router.get('/:id', protect, adminOnly, async (req, res) => {
 });
 router.patch('/:id/read', protect, adminOnly, async (req, res) => {
   try {
-    const message = await SupportMessage.findByIdAndUpdate(req.params.id, { isRead: req.body?.isRead !== false }, { new: true, runValidators: true }).select('-html');
+    const message = await SupportMessage.findByIdAndUpdate(req.params.id, { isRead: req.body?.isRead !== false }, { new: true, runValidators: true }).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion');
     if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
-    return res.json({ success: true, message });
+    return res.json({ success: true, message: decryptMessageContent(message) });
   } catch (e) {
     if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid message identifier.' });
     return res.status(500).json({ success: false, message: 'Unable to update message status.' });
@@ -60,7 +61,7 @@ router.post('/:id/reply', protect, adminOnly, replyLimiter, async (req, res) => 
     if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ success: false, message: 'A valid recipient email is required.' });
     if (!subject || !text || text.length > 12000) return res.status(400).json({ success: false, message: 'Enter a subject and a reply under 12,000 characters.' });
     if (!resend) return res.status(503).json({ success: false, message: 'Email sending is not configured on the server.' });
-    const message = await SupportMessage.findById(req.params.id);
+    const message = await SupportMessage.findById(req.params.id).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion');
     if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
     const fromAddress = from.match(/<([^>]+)>/)?.[1] || from;
     const safeText = escapeHtml(text).replace(/\r?\n/g, '<br>');
@@ -72,10 +73,14 @@ router.post('/:id/reply', protect, adminOnly, replyLimiter, async (req, res) => 
       console.error('Support reply send failed:', error.message);
       return res.status(502).json({ success: false, message: 'The email provider could not send this reply. Check sender verification and try again.' });
     }
-    message.replies.push({ from: fromAddress, to, subject, text, providerMessageId: data?.id || '', sentAt: new Date() });
+    const currentContent = decryptMessageContent(message);
+    const replies = Array.isArray(currentContent.replies) ? currentContent.replies : [];
+    replies.push({ from: fromAddress, to, subject, text, providerMessageId: data?.id || '', sentAt: new Date() });
+    Object.assign(message, encryptMessageContent({ subject: currentContent.subject, text: currentContent.text, html: currentContent.html, replies }));
+    message.replies = [];
     message.isRead = true;
     await message.save();
-    return res.json({ success: true, message: 'Reply sent.', supportMessage: message });
+    return res.json({ success: true, message: 'Reply sent.', supportMessage: decryptMessageContent(message) });
   } catch (e) {
     if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid message identifier.' });
     console.error('Support reply failed:', e.message);
@@ -168,7 +173,7 @@ router.post('/inbound/resend', async (req, res) => {
     })) : [];
 
     await SupportMessage.create({
-      providerMessageId, source: 'email', from, to, subject, text, html, receivedAt, isRead: false,
+      providerMessageId, source: 'email', from, to, ...encryptMessageContent({ subject, text, html, replies: [] }), replies: [], receivedAt, isRead: false,
     });
     await MailboxMessage.create({
       providerMessageId,
@@ -177,9 +182,7 @@ router.post('/inbound/resend', async (req, res) => {
       folder: 'inbox',
       from,
       to,
-      subject,
-      text,
-      html,
+      ...encryptMessageContent({ subject, text, html }),
       attachments,
       status: 'received',
       receivedAt,
@@ -256,7 +259,7 @@ router.post('/inbound/cloudflare', async (req, res) => {
       supportMessage = await SupportMessage.create({
         providerMessageId, source: 'email', from,
         to: to.length ? to : ['support@sylvatechnologies.co.ke'],
-        subject, text, html, receivedAt, isRead: false,
+        ...encryptMessageContent({ subject, text, html, replies: [] }), replies: [], receivedAt, isRead: false,
       });
     }
 
@@ -267,9 +270,7 @@ router.post('/inbound/cloudflare', async (req, res) => {
         folder: 'inbox',
         from,
         to: to.length ? to : ['support@sylvatechnologies.co.ke'],
-        subject,
-        text,
-        html,
+        ...encryptMessageContent({ subject, text, html }),
         attachments: attachmentMetadata,
         status: 'received',
         receivedAt,
@@ -315,7 +316,7 @@ router.post('/inbound', async (req, res) => {
     const providerMessageId = String(req.body?.messageId || '').trim().slice(0, 300);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from) || (!text && !html)) return res.status(400).json({ success: false, message: 'A valid sender and message body are required.' });
     if (providerMessageId && await SupportMessage.findOne({ providerMessageId })) return res.status(200).json({ success: true, duplicate: true });
-    await SupportMessage.create({ providerMessageId: providerMessageId || undefined, source: 'email', from, to, subject, text, html, receivedAt: req.body?.receivedAt ? new Date(req.body.receivedAt) : new Date(), isRead: false });
+    await SupportMessage.create({ providerMessageId: providerMessageId || undefined, source: 'email', from, to, ...encryptMessageContent({ subject, text, html, replies: [] }), replies: [], receivedAt: req.body?.receivedAt ? new Date(req.body.receivedAt) : new Date(), isRead: false });
     return res.status(201).json({ success: true });
   } catch (e) {
     if (e.code === 11000) return res.status(200).json({ success: true, duplicate: true });
