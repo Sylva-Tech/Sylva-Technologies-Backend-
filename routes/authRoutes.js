@@ -9,7 +9,7 @@ const VerificationToken = require('../models/VerificationToken');
 const sellerUpload = require('../middleware/sellerUpload');
 const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
 const cloudinary = require('../config/cloudinary');
-const { checkKraPin, namesMatch } = require('../services/kraPinVerificationService');
+const { checkKraPin, checkKraId, namesMatch, normalizePin } = require('../services/kraPinVerificationService');
 
 const {
   sendVerificationCodeAndLinkEmail,
@@ -191,6 +191,14 @@ router.post(
         return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your KRA PIN certificate.' });
       }
 
+      let kraIdVerification = {
+        status: 'not_checked',
+        checkedAt: null,
+        provider: 'KRA',
+        responseCode: '',
+        taxpayerType: '',
+        nameMatch: 'not_checked',
+      };
       let kraVerification = {
         status: 'not_checked',
         checkedAt: null,
@@ -202,6 +210,39 @@ router.post(
       };
 
       if (String(process.env.KRA_PIN_VERIFICATION_ENABLED || '').toLowerCase() === 'true') {
+        // KRA's documented TaxpayerType "KE" is used only for Kenyan national IDs.
+        if (idType === 'national_id') {
+          kraIdVerification = await checkKraId(idNumber, 'KE');
+
+          if (kraIdVerification.status === 'invalid' || kraIdVerification.status === 'invalid_format') {
+            return res.status(422).json({
+              success: false,
+              code: 'KRA_ID_INVALID',
+              message: 'KRA could not validate this national ID number. Check the number and try again.',
+            });
+          }
+
+          if (kraIdVerification.status === 'provider_unavailable') {
+            return res.status(503).json({
+              success: false,
+              code: 'KRA_ID_VERIFICATION_UNAVAILABLE',
+              message: 'KRA ID verification is temporarily unavailable. No application has been rejected; please retry later.',
+            });
+          }
+
+          if (normalizePin(kraIdVerification.taxpayerPin) !== kraPinNumber) {
+            return res.status(422).json({
+              success: false,
+              code: 'KRA_ID_PIN_MISMATCH',
+              message: 'The KRA PIN returned for this national ID does not match the PIN supplied. Check the details before retrying.',
+            });
+          }
+
+          kraIdVerification.nameMatch = namesMatch(name, kraIdVerification.taxpayerName)
+            ? 'match'
+            : 'review';
+        }
+
         kraVerification = await checkKraPin(kraPinNumber);
 
         if (kraVerification.status === 'invalid' || kraVerification.status === 'invalid_format') {
@@ -223,8 +264,8 @@ router.post(
         if (kraVerification.status === 'provider_unavailable') {
           return res.status(503).json({
             success: false,
-            code: 'KRA_VERIFICATION_UNAVAILABLE',
-            message: 'KRA verification is temporarily unavailable. No application has been rejected; please retry later.',
+            code: 'KRA_PIN_VERIFICATION_UNAVAILABLE',
+            message: 'KRA PIN verification is temporarily unavailable. No application has been rejected; please retry later.',
           });
         }
 
@@ -275,6 +316,14 @@ router.post(
           mpesaPhone: phone,
           kraPin: kraPinNumber,
           kraPinDocument: kraUpload.public_id,
+          kraIdVerification: {
+            status: kraIdVerification.status,
+            provider: kraIdVerification.provider || 'KRA',
+            responseCode: kraIdVerification.responseCode || '',
+            taxpayerType: kraIdVerification.taxpayerType || '',
+            nameMatch: kraIdVerification.nameMatch || 'not_checked',
+            checkedAt: kraIdVerification.checkedAt || null,
+          },
           kraPinVerification: {
             status: kraVerification.status,
             provider: kraVerification.provider || 'KRA',
