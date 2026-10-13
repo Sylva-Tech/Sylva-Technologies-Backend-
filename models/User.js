@@ -200,6 +200,26 @@ const userSchema = new mongoose.Schema(
        * PERSONAL INFORMATION
        * ------------------------------------------ */
 
+      country: {
+        type: String,
+        default: 'KE',
+        uppercase: true,
+        trim: true,
+        maxlength: 2,
+      },
+
+      identityVerificationStatus: {
+        type: String,
+        enum: ['pending', 'verified', 'rejected'],
+        default: 'pending',
+      },
+
+      identityVerificationProvider: {
+        type: String,
+        enum: ['manual_review', 'stripe_identity', 'other'],
+        default: 'manual_review',
+      },
+
       officialName: {
         type: String,
         default: '',
@@ -313,6 +333,19 @@ const userSchema = new mongoose.Schema(
           30,
           'M-Pesa phone number is too long',
         ],
+      },
+
+      taxIdentifier: {
+        type: String,
+        default: '',
+        trim: true,
+        maxlength: [50, 'Tax identifier is too long'],
+      },
+
+      taxDocument: {
+        type: String,
+        default: '',
+        maxlength: [500, 'Tax document reference is too long'],
       },
 
       kraPin: {
