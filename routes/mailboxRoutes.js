@@ -5,6 +5,7 @@ const { Resend } = require('resend');
 const MailboxMessage = require('../models/MailboxMessage');
 const MailboxDocument = require('../models/MailboxDocument');
 const { encryptAttachment, decryptAttachment, getKey } = require('../utils/mailAttachmentCrypto');
+const { encryptMessageContent, decryptMessageContent, getMessageKey } = require('../utils/mailMessageCrypto');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -68,10 +69,15 @@ router.get('/', protect, adminOnly, async (req, res) => {
     const folder = allowedFolders.includes(req.query.folder) ? req.query.folder : 'inbox';
     const query = { folder };
     const messages = await MailboxMessage.find(query)
-      .select('-html -events.details')
+      .select('-events.details +contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion')
       .sort(folder === 'sent' ? { sentAt: -1, updatedAt: -1 } : { receivedAt: -1, updatedAt: -1 })
       .limit(300).lean();
-    return res.json({ success: true, folder, messages });
+    const openedMessages = messages.map(item => {
+      const opened = decryptMessageContent(item);
+      delete opened.html;
+      return opened;
+    });
+    return res.json({ success: true, folder, messages: openedMessages });
   } catch (e) {
     console.error('Mailbox list failed:', e.message);
     return res.status(500).json({ success: false, message: 'Unable to load mailbox messages.' });
@@ -81,9 +87,10 @@ router.get('/', protect, adminOnly, async (req, res) => {
 router.get('/encryption-status', protect, adminOnly, async (req, res) => {
   try {
     getKey();
-    return res.json({ success: true, configured: true, algorithm: 'AES-256-GCM' });
+    getMessageKey();
+    return res.json({ success: true, configured: true, messageEncryptionConfigured: true, algorithm: 'AES-256-GCM' });
   } catch (e) {
-    return res.status(503).json({ success: true, configured: false, algorithm: 'AES-256-GCM', message: e.message });
+    return res.status(503).json({ success: true, configured: false, messageEncryptionConfigured: false, algorithm: 'AES-256-GCM', message: e.message });
   }
 });
 
@@ -173,13 +180,13 @@ router.get('/:id/attachments/:documentId/content', protect, adminOnly, async (re
 
 router.get('/:id', protect, adminOnly, async (req, res) => {
   try {
-    const message = await MailboxMessage.findById(req.params.id);
+    const message = await MailboxMessage.findById(req.params.id).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion');
     if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
     if (message.folder === 'inbox' && !message.isRead) {
       message.isRead = true;
       await message.save();
     }
-    return res.json({ success: true, message });
+    return res.json({ success: true, message: decryptMessageContent(message) });
   } catch (e) {
     if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid message identifier.' });
     console.error('Mailbox message load failed:', e.message);
@@ -198,8 +205,7 @@ router.post('/drafts', protect, adminOnly, async (req, res) => {
     const values = {
       direction: 'outbound', folder: 'drafts', from: (SENDERS[senderAlias].match(/<([^>]+)>/) || [])[1],
       senderAlias, to, cc, bcc,
-      subject: String(req.body?.subject || '').slice(0, 300),
-      text: String(req.body?.text || '').slice(0, 100000),
+      ...encryptMessageContent({ subject: String(req.body?.subject || '').slice(0, 300), text: String(req.body?.text || '').slice(0, 100000), html: '' }),
       signatureName: String(req.body?.signatureName || '').trim().slice(0, 100),
       signatureTitle: String(req.body?.signatureTitle || '').trim().slice(0, 120),
       attachments: safeAttachments(req.body?.attachments),
@@ -219,7 +225,7 @@ router.post('/drafts', protect, adminOnly, async (req, res) => {
     if (Array.isArray(req.body?.attachments) && req.body.attachments.some(file => file?.content)) {
       await storeDocumentFiles(draft._id, req.body.attachments, true);
     }
-    return res.json({ success: true, draft });
+    return res.json({ success: true, draft: decryptMessageContent(draft) });
   } catch (e) {
     if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid draft identifier.' });
     if (e.code === 'MAIL_ATTACHMENT_ENCRYPTION_NOT_CONFIGURED') return res.status(503).json({ success: false, message: e.message });
@@ -319,7 +325,7 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
       : draftDocuments.map(file => ({ filename: file.filename, contentType: file.contentType, size: file.size }));
     record = await MailboxMessage.create({
       direction: 'outbound', folder: 'outbox', from: fromAddress, senderAlias, to, cc, bcc,
-      subject, text, signatureName, signatureTitle, attachments: safeAttachments(attachmentMetadata),
+      ...encryptMessageContent({ subject, text, html: '' }), signatureName, signatureTitle, attachments: safeAttachments(attachmentMetadata),
       status: 'queued', isRead: true, sentAt: new Date(), lastStatusAt: new Date(),
     });
     if (inputAttachments.length) await storeDocumentFiles(record._id, inputAttachments, true);
@@ -327,6 +333,8 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
       await MailboxDocument.insertMany(draftDocuments.map(file => ({
         messageId: record._id, filename: file.filename, contentType: file.contentType,
         size: file.size, contentBase64: file.contentBase64,
+        encryptionIv: file.encryptionIv, encryptionAuthTag: file.encryptionAuthTag,
+        encryptionVersion: file.encryptionVersion,
       })));
     }
     const { data, error } = await resend.emails.send({
@@ -365,7 +373,7 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
         { $set: { folder: 'trash' } }
       );
     }
-    return res.json({ success: true, message: 'Email submitted to Resend.', email: record });
+    return res.json({ success: true, message: 'Email submitted to Resend.', email: decryptMessageContent(record) });
   } catch (e) {
     if (record && record.status === 'queued') {
       record.status = 'failed';
