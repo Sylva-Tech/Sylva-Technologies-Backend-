@@ -1768,10 +1768,16 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       await user.save();
     }
 
+    let providerAccepted = false;
+    let stkRequestStarted = false;
+    let providerRejected = false;
+    let acceptedCheckoutRequestID = '';
+    let acceptedMerchantRequestID = '';
     try {
       const credentials = await getMpesaAccessToken();
       const timestamp = getMpesaTimestamp();
       const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
+      stkRequestStarted = true;
       const response = await axios.post(credentials.host + '/mpesa/stkpush/v1/processrequest', {
         BusinessShortCode: shortcode, Password: password, Timestamp: timestamp,
         TransactionType: 'CustomerPayBillOnline', Amount: amount, PartyA: phone,
@@ -1780,12 +1786,16 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       }, { headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' }, timeout: 20000 });
 
       if (response.data?.ResponseCode !== '0' || !response.data?.CheckoutRequestID) {
+        providerRejected = true;
         throw new Error(response.data?.ResponseDescription || 'M-Pesa did not accept the STK request.');
       }
+      providerAccepted = true;
+      acceptedCheckoutRequestID = String(response.data.CheckoutRequestID);
+      acceptedMerchantRequestID = String(response.data.MerchantRequestID || '');
       transaction.metadata = {
         ...transaction.metadata,
-        merchantRequestID: response.data.MerchantRequestID,
-        checkoutRequestID: response.data.CheckoutRequestID,
+        merchantRequestID: acceptedMerchantRequestID,
+        checkoutRequestID: acceptedCheckoutRequestID,
       };
       transaction.description = 'Deposit requested. Awaiting M-Pesa confirmation.';
       transaction.updatedAt = new Date();
@@ -1807,11 +1817,24 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
         data: { transactionId: String(transaction._id), reference: accountDisplayName, accountReference: accountLabel, checkoutRequestId: response.data.CheckoutRequestID, amount, phone: '+' + phone, status: 'pending' },
       });
     } catch (providerError) {
-      transaction.status = 'failed';
-      transaction.description = 'Wallet deposit request could not be started.';
-      transaction.processedAt = new Date();
+      // A network timeout or server error after STK submission is ambiguous: the
+      // customer may have approved payment. Keep it pending and correlate callbacks;
+      // never label an uncertain payment failed and allow a second charge.
+      const uncertain = providerAccepted || (stkRequestStarted && !providerRejected &&
+        (!providerError.response || Number(providerError.response.status) >= 500));
+      transaction.status = uncertain ? 'pending' : 'failed';
+      transaction.description = uncertain
+        ? 'Deposit request status is uncertain; awaiting Safaricom confirmation or reconciliation.'
+        : 'Wallet deposit request could not be started.';
+      transaction.processedAt = uncertain ? null : new Date();
       transaction.updatedAt = new Date();
-      transaction.metadata = { ...transaction.metadata, providerError: 'Deposit initiation failed' };
+      transaction.metadata = {
+        ...transaction.metadata,
+        ...(acceptedCheckoutRequestID ? { checkoutRequestID: acceptedCheckoutRequestID } : {}),
+        ...(acceptedMerchantRequestID ? { merchantRequestID: acceptedMerchantRequestID } : {}),
+        ...(uncertain ? { initiationUncertain: true, reconciliationRequired: true } : {}),
+        providerError: uncertain ? 'Deposit initiation status uncertain' : 'Deposit initiation rejected',
+      };
       if (isAdminDeposit) {
         const platformWallet = await AdminWallet.findOne({ key: 'platform' });
         const savedTransaction = platformWallet?.transactions.id(transactionId);
@@ -1825,6 +1848,13 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
         }
       } else {
         await user.save();
+      }
+      if (uncertain) {
+        return res.status(202).json({
+          success: true,
+          message: 'The STK request status is not yet certain. Do not pay again; Sylva is waiting for Safaricom confirmation.',
+          data: { transactionId: String(transaction._id), checkoutRequestId: acceptedCheckoutRequestID || null, amount, status: 'pending', reconciliationRequired: true },
+        });
       }
       throw providerError;
     }
