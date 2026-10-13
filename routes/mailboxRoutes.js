@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const { Resend } = require('resend');
 const MailboxMessage = require('../models/MailboxMessage');
@@ -231,7 +232,7 @@ router.post('/attachments/encrypt-legacy', protect, adminOnly, async (req, res) 
     getKey();
     const legacy = await MailboxDocument.find({
       $or: [
-        { encryptionVersion: { $ne: 1 } },
+        { encryptionVersion: mongoose.trusted({ $ne: 1 }) },
         { encryptionIv: '' },
         { encryptionAuthTag: '' },
       ],
