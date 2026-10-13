@@ -325,6 +325,24 @@ const userSchema = new mongoose.Schema(
         ],
       },
 
+      kraPinVerification: {
+        status: {
+          type: String,
+          enum: ['not_checked', 'verified', 'invalid', 'inactive', 'provider_unavailable'],
+          default: 'not_checked',
+        },
+        provider: { type: String, default: 'KRA', maxlength: 30 },
+        responseCode: { type: String, default: '', maxlength: 30 },
+        pinStatus: { type: String, default: '', maxlength: 50 },
+        taxpayerType: { type: String, default: '', maxlength: 100 },
+        nameMatch: {
+          type: String,
+          enum: ['not_checked', 'match', 'review'],
+          default: 'not_checked',
+        },
+        checkedAt: { type: Date, default: null },
+      },
+
       /* ------------------------------------------
        * PRIVATE KRA DOCUMENT
        * ------------------------------------------ */
