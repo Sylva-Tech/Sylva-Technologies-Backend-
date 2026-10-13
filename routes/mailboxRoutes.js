@@ -3,6 +3,7 @@ const rateLimit = require('express-rate-limit');
 const { Resend } = require('resend');
 const MailboxMessage = require('../models/MailboxMessage');
 const MailboxDocument = require('../models/MailboxDocument');
+const { encryptAttachment, decryptAttachment } = require('../utils/mailAttachmentCrypto');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -37,18 +38,20 @@ async function storeDocumentFiles(messageId, files, replace = false) {
   if (!list.length) return;
   let totalSize = 0;
   const records = list.slice(0, 10).map(file => {
-    const contentBase64 = String(file.content || '');
-    const size = Math.floor(contentBase64.length * 0.75);
-    totalSize += size;
-    if (!contentBase64 || contentBase64.length > 7 * 1024 * 1024) {
-      throw new Error('Each attachment must be a valid base64 file under 5 MB.');
+    const encoded = String(file.content || '');
+    if (!encoded || encoded.length > 7 * 1024 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+      throw new Error('Each attachment must be valid base64 and under 5 MB.');
     }
+    const bytes = Buffer.from(encoded, 'base64');
+    if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error('Each attachment must be under 5 MB.');
+    totalSize += bytes.length;
+    const encrypted = encryptAttachment(bytes);
     return {
       messageId,
       filename: String(file.filename || 'attachment').slice(0, 255),
       contentType: String(file.contentType || 'application/octet-stream').slice(0, 150),
-      size,
-      contentBase64,
+      size: bytes.length,
+      ...encrypted,
     };
   });
   if (totalSize > 6 * 1024 * 1024) throw new Error('Combined attachments must be under 6 MB.');
@@ -75,18 +78,26 @@ router.get('/:id/attachments', protect, adminOnly, async (req, res) => {
   try {
     const message = await MailboxMessage.findById(req.params.id).select('direction providerEmailId attachments');
     if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
-    if (message.direction === 'outbound') {
-      const documents = await MailboxDocument.find({ messageId: message._id }).select('+contentBase64').lean();
+
+    // Prefer files stored in Sylva Mail so the authenticated viewer can decrypt them server-side.
+    const documents = await MailboxDocument.find({ messageId: message._id })
+      .select('+encryptionIv +encryptionAuthTag +encryptionVersion')
+      .lean();
+    if (documents.length) {
       return res.json({
         success: true,
         attachments: documents.map(item => ({
+          documentId: String(item._id),
           filename: item.filename,
           contentType: item.contentType,
           size: item.size,
-          downloadUrl: 'data:' + item.contentType + ';base64,' + item.contentBase64,
+          encrypted: Number(item.encryptionVersion) === 1,
+          downloadUrl: '',
         })),
       });
     }
+
+    // Resend-hosted inbound files remain provider-hosted; do not persist their temporary URLs.
     if (!message.providerEmailId || !resend) {
       return res.json({ success: true, attachments: (message.attachments || []).map(item => ({ ...item.toObject(), downloadUrl: '' })) });
     }
@@ -107,8 +118,43 @@ router.get('/:id/attachments', protect, adminOnly, async (req, res) => {
     });
   } catch (e) {
     if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid message identifier.' });
+    if (e.code === 'MAIL_ATTACHMENT_ENCRYPTION_NOT_CONFIGURED') return res.status(503).json({ success: false, message: e.message });
     console.error('Mailbox attachment lookup failed:', e.message);
     return res.status(500).json({ success: false, message: 'Unable to load attachments.' });
+  }
+});
+
+// Decrypt an attachment only after authentication and message ownership checks.
+// The file is streamed with a safe disposition; executable/unknown types are never rendered inline.
+router.get('/:id/attachments/:documentId/content', protect, adminOnly, async (req, res) => {
+  try {
+    const message = await MailboxMessage.findById(req.params.id).select('_id');
+    if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
+    const document = await MailboxDocument.findOne({ _id: req.params.documentId, messageId: message._id })
+      .select('+contentBase64 +encryptionIv +encryptionAuthTag +encryptionVersion');
+    if (!document) return res.status(404).json({ success: false, message: 'Attachment not found.' });
+
+    const bytes = decryptAttachment(document);
+    const type = String(document.contentType || 'application/octet-stream').toLowerCase();
+    const inlineTypes = /^(image\/(png|jpeg|gif|webp|avif)|video\/(mp4|webm|ogg)|audio\/(mpeg|ogg|wav|webm|mp4)|application\/pdf|text\/plain)$/.test(type);
+    const requestedInline = String(req.query.disposition || '').toLowerCase() === 'inline';
+    const disposition = requestedInline && inlineTypes ? 'inline' : 'attachment';
+    const safeName = String(document.filename || 'attachment').replace(/[\r\n"\\]/g, '_');
+    res.set({
+      'Content-Type': type,
+      'Content-Length': String(bytes.length),
+      'Content-Disposition': disposition + "; filename=\"" + safeName + "\"; filename*=UTF-8''" + encodeURIComponent(safeName),
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, no-store, max-age=0',
+      'Pragma': 'no-cache',
+    });
+    return res.status(200).send(bytes);
+  } catch (e) {
+    if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid attachment identifier.' });
+    if (e.code === 'MAIL_ATTACHMENT_ENCRYPTION_NOT_CONFIGURED') return res.status(503).json({ success: false, message: e.message });
+    if (e.code === 'MAIL_ATTACHMENT_LEGACY_FORMAT') return res.status(409).json({ success: false, message: e.message });
+    console.error('Attachment decrypt/stream failed:', e.message);
+    return res.status(500).json({ success: false, message: 'Unable to open this attachment. It may be damaged or its encryption key may not match.' });
   }
 });
 
@@ -163,6 +209,7 @@ router.post('/drafts', protect, adminOnly, async (req, res) => {
     return res.json({ success: true, draft });
   } catch (e) {
     if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid draft identifier.' });
+    if (e.code === 'MAIL_ATTACHMENT_ENCRYPTION_NOT_CONFIGURED') return res.status(503).json({ success: false, message: e.message });
     console.error('Save draft failed:', e.message);
     return res.status(500).json({ success: false, message: 'Unable to save draft.' });
   }
@@ -201,9 +248,9 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
     if (totalSize > 6 * 1024 * 1024) return res.status(400).json({ success: false, message: 'Combined attachments must be under 6 MB for safe delivery.' });
     let draftDocuments = [];
     if (req.body?.draftId && inputAttachments.length === 0) {
-      draftDocuments = await MailboxDocument.find({ messageId: req.body.draftId }).select('+contentBase64').lean();
+      draftDocuments = await MailboxDocument.find({ messageId: req.body.draftId }).select('+contentBase64 +encryptionIv +encryptionAuthTag +encryptionVersion').lean();
       for (const item of draftDocuments) {
-        providerAttachments.push({ filename: item.filename, content: item.contentBase64, contentType: item.contentType });
+        providerAttachments.push({ filename: item.filename, content: decryptAttachment(item).toString('base64'), contentType: item.contentType });
         totalSize += Number(item.size || 0);
       }
       if (totalSize > 6 * 1024 * 1024) return res.status(400).json({ success: false, message: 'Combined attachments must be under 6 MB for safe delivery.' });
@@ -270,6 +317,8 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
       await record.save().catch(() => {});
     }
     if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid draft identifier.' });
+    if (e.code === 'MAIL_ATTACHMENT_ENCRYPTION_NOT_CONFIGURED') return res.status(503).json({ success: false, message: e.message });
+    if (e.code === 'MAIL_ATTACHMENT_LEGACY_FORMAT') return res.status(409).json({ success: false, message: e.message });
     console.error('Mailbox send failed:', e.message);
     return res.status(400).json({ success: false, message: e.message.includes('attachment') ? e.message : 'Unable to send this email.' });
   }
