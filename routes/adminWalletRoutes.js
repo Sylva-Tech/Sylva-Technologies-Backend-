@@ -11,10 +11,10 @@ async function platformWallet() {
   return wallet;
 }
 function normalizeKenyanPayoutPhone(value) {
-  let phone = String(value || '').trim().replace(/[\\s-]/g, '');
-  if (/^0[17]\\d{8}$/.test(phone)) return '254' + phone.slice(1);
-  if (/^\\+254[17]\\d{8}$/.test(phone)) return phone.slice(1);
-  if (/^254[17]\\d{8}$/.test(phone)) return phone;
+  let phone = String(value || '').trim().replace(/[\s-]/g, '');
+  if (/^0[17]\d{8}$/.test(phone)) return '254' + phone.slice(1);
+  if (/^\+254[17]\d{8}$/.test(phone)) return phone.slice(1);
+  if (/^254[17]\d{8}$/.test(phone)) return phone;
   return '';
 }
 function safe(wallet) {
