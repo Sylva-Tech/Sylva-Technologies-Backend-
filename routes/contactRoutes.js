@@ -2,13 +2,14 @@ const express = require('express');
 const ContactMessage = require('../models/ContactMessage');
 const SupportMessage = require('../models/SupportMessage');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
+const { encryptMessageContent, decryptMessageContent } = require('../utils/mailMessageCrypto');
 
 const router = express.Router();
 
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
-    const messages = await ContactMessage.find().sort({ createdAt: -1 });
-    res.json(messages);
+    const messages = await ContactMessage.find().select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion').sort({ createdAt: -1 }).lean();
+    res.json(messages.map(item => { const opened = decryptMessageContent(item); return { ...opened, message: opened.text, text: undefined, html: undefined }; }));
   } catch (error) {
     res.status(500).json({ message: error.message || 'Unable to load messages.' });
   }
@@ -26,8 +27,8 @@ router.post('/', async (req, res) => {
       name,
       email,
       phone,
-      subject,
-      message,
+      ...encryptMessageContent({ subject: String(subject || '').trim(), text: String(message).trim(), html: '' }),
+      message: '(Encrypted message)',
     });
 
     await SupportMessage.create({
