@@ -5,6 +5,27 @@ const User = require('../models/User');
 const { protect, adminOnly, requireVerified } = require('../middleware/authMiddleware');
 const router = express.Router();
 
+const financialActionWindows = new Map();
+const financialActionRateLimit = (req, res, next) => {
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000;
+  const key = String(req.user?._id || 'anonymous') + ':' + String(req.ip || req.socket?.remoteAddress || 'unknown');
+  let record = financialActionWindows.get(key);
+  if (!record || now - record.startedAt >= windowMs) {
+    record = { startedAt: now, count: 0 };
+  }
+  record.count += 1;
+  financialActionWindows.set(key, record);
+  for (const [storedKey, stored] of financialActionWindows.entries()) {
+    if (now - stored.startedAt >= windowMs) financialActionWindows.delete(storedKey);
+  }
+  if (record.count > 8) {
+    res.set('Retry-After', String(Math.ceil((windowMs - (now - record.startedAt)) / 1000)));
+    return res.status(429).json({ success: false, message: 'Too many wallet actions. Wait before trying again.' });
+  }
+  next();
+};
+
 async function platformWallet() {
   let wallet = await AdminWallet.findOne({ key: 'platform' });
   if (!wallet) wallet = await AdminWallet.create({ key: 'platform', currency: 'KES' });
@@ -47,7 +68,7 @@ router.get('/', protect, adminOnly, requireVerified, async (req, res) => {
   }
 });
 
-router.post('/transfer-out', protect, adminOnly, requireVerified, async (req, res) => {
+router.post('/transfer-out', protect, adminOnly, requireVerified, financialActionRateLimit, async (req, res) => {
   const amount = Number(req.body?.amount);
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!Number.isFinite(amount) || amount < 100 || Math.round(amount * 100) !== amount * 100 || !email) {
@@ -88,7 +109,7 @@ router.post('/transfer-out', protect, adminOnly, requireVerified, async (req, re
   }
 });
 
-router.post('/transfer-in', protect, requireVerified, async (req, res) => {
+router.post('/transfer-in', protect, requireVerified, financialActionRateLimit, async (req, res) => {
   const amount = Number(req.body?.amount);
   if (!['customer', 'seller'].includes(req.user.role)) return res.status(403).json({ success: false, message: 'Only customer and seller wallets can transfer funds to the platform wallet.' });
   if (req.user.accountStatus !== 'active' || (req.user.role === 'seller' && (req.user.sellerStatus !== 'approved' || req.user.storeStatus !== 'active'))) return res.status(403).json({ success: false, message: 'Your account is not eligible to transfer funds.' });
@@ -123,7 +144,7 @@ router.post('/transfer-in', protect, requireVerified, async (req, res) => {
   } finally { await session.endSession(); }
 });
 
-router.post('/withdrawals', protect, adminOnly, requireVerified, async (req, res) => {
+router.post('/withdrawals', protect, adminOnly, requireVerified, financialActionRateLimit, async (req, res) => {
   const amount = Number(req.body?.amount);
   const method = String(req.body?.method || '').toLowerCase();
   let destination = String(req.body?.destination || '').trim();
@@ -149,7 +170,7 @@ router.post('/withdrawals', protect, adminOnly, requireVerified, async (req, res
   }
 });
 
-router.patch('/withdrawals/:transactionId', protect, adminOnly, requireVerified, async (req, res) => {
+router.patch('/withdrawals/:transactionId', protect, adminOnly, requireVerified, financialActionRateLimit, async (req, res) => {
   const decision = String(req.body?.decision || '').toLowerCase();
   const reason = String(req.body?.reason || '').trim().slice(0, 300);
   if (!['paid', 'rejected'].includes(decision)) return res.status(400).json({ success: false, message: 'Choose paid or rejected.' });
