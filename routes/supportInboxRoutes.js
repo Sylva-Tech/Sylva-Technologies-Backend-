@@ -1,8 +1,10 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { Resend } = require('resend');
+const { simpleParser } = require('mailparser');
 const SupportMessage = require('../models/SupportMessage');
 const MailboxMessage = require('../models/MailboxMessage');
+const MailboxDocument = require('../models/MailboxDocument');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const router = express.Router();
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -189,6 +191,95 @@ router.post('/inbound/resend', async (req, res) => {
     if (e.code === 11000) return res.status(200).json({ success: true, duplicate: true });
     console.error('Resend inbound webhook failed:', e.message);
     return res.status(500).json({ success: false, message: 'Unable to store the received email.' });
+  }
+});
+
+// Cloudflare Email Worker inbound endpoint.
+// The Worker forwards the original RFC 822 message here after routing a copy to Outlook.
+router.post('/inbound/cloudflare', async (req, res) => {
+  const expected = process.env.CLOUDFLARE_EMAIL_WORKER_SECRET;
+  const supplied = req.get('x-cloudflare-email-secret');
+  if (!expected || !supplied || supplied !== expected) {
+    return res.status(401).json({ success: false, message: 'Unauthorized Cloudflare email hook.' });
+  }
+
+  try {
+    const rawEmail = typeof req.body?.rawEmail === 'string' ? req.body.rawEmail : '';
+    if (!rawEmail || rawEmail.length > 8 * 1024 * 1024) {
+      return res.status(400).json({ success: false, message: 'Missing email content or message is too large.' });
+    }
+
+    const parsed = await simpleParser(rawEmail);
+    const from = String(parsed.from?.value?.[0]?.address || '').trim().toLowerCase();
+    const to = (parsed.to?.value || []).map(item => String(item.address || '').trim().toLowerCase()).filter(Boolean).slice(0, 10);
+    const subject = String(parsed.subject || '(No subject)').slice(0, 300);
+    const text = String(parsed.text || '').slice(0, 100000);
+    const html = typeof parsed.html === 'string' ? parsed.html.slice(0, 250000) : '';
+    const receivedAt = parsed.date && !Number.isNaN(new Date(parsed.date).getTime()) ? new Date(parsed.date) : new Date();
+    const providerMessageId = String(parsed.messageId || '').trim().replace(/[<>]/g, '').slice(0, 300)
+      || require('crypto').createHash('sha256').update(rawEmail).digest('hex');
+
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(from)) {
+      return res.status(400).json({ success: false, message: 'Email has an invalid sender address.' });
+    }
+
+    let mailboxMessage = await MailboxMessage.findOne({ providerMessageId });
+    let supportMessage = await SupportMessage.findOne({ providerMessageId });
+    if (mailboxMessage && supportMessage) {
+      return res.status(200).json({ success: true, duplicate: true });
+    }
+
+    const attachmentMetadata = (parsed.attachments || []).slice(0, 10).map((item, index) => ({
+      filename: String(item.filename || `attachment-${index + 1}`).slice(0, 255),
+      contentType: String(item.contentType || 'application/octet-stream').slice(0, 150),
+      size: Number(item.size || item.content?.length || 0),
+      providerId: `cloudflare:${providerMessageId}:${index}`,
+    }));
+
+    if (!supportMessage) {
+      supportMessage = await SupportMessage.create({
+        providerMessageId, source: 'email', from,
+        to: to.length ? to : ['support@sylvatechnologies.co.ke'],
+        subject, text, html, receivedAt, isRead: false,
+      });
+    }
+
+    if (!mailboxMessage) {
+      mailboxMessage = await MailboxMessage.create({
+        providerMessageId,
+        direction: 'inbound',
+        folder: 'inbox',
+        from,
+        to: to.length ? to : ['support@sylvatechnologies.co.ke'],
+        subject,
+        text,
+        html,
+        attachments: attachmentMetadata,
+        status: 'received',
+        receivedAt,
+        isRead: false,
+        lastStatusAt: new Date(),
+        events: [{ type: 'email.received', at: new Date(), details: { source: 'Cloudflare Email Worker' } }],
+      });
+
+      const attachments = (parsed.attachments || []).slice(0, 10);
+      const totalAttachmentBytes = attachments.reduce((sum, item) => sum + Number(item.content?.length || 0), 0);
+      if (attachments.length && totalAttachmentBytes <= 6 * 1024 * 1024) {
+        await MailboxDocument.insertMany(attachments.map((item, index) => ({
+          messageId: mailboxMessage._id,
+          filename: String(item.filename || `attachment-${index + 1}`).slice(0, 255),
+          contentType: String(item.contentType || 'application/octet-stream').slice(0, 150),
+          size: Number(item.size || item.content?.length || 0),
+          contentBase64: Buffer.from(item.content).toString('base64'),
+        })));
+      }
+    }
+
+    return res.status(201).json({ success: true });
+  } catch (e) {
+    if (e.code === 11000) return res.status(200).json({ success: true, duplicate: true });
+    console.error('Cloudflare inbound email failed:', e.message);
+    return res.status(500).json({ success: false, message: 'Unable to store Cloudflare email.' });
   }
 });
 
