@@ -2,6 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { Resend } = require('resend');
 const SupportMessage = require('../models/SupportMessage');
+const MailboxMessage = require('../models/MailboxMessage');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const router = express.Router();
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -123,16 +124,35 @@ router.post('/inbound/resend', async (req, res) => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from)) {
       return res.status(400).json({ success: false, message: 'Received email has an invalid sender.' });
     }
+    const subject = String(email.subject || event.data.subject || '(No subject)').slice(0, 300);
+    const text = String(email.text || '');
+    const html = String(email.html || '');
+    const receivedAt = email.created_at ? new Date(email.created_at) : new Date();
+    const attachments = Array.isArray(email.attachments) ? email.attachments.map(item => ({
+      filename: String(item.filename || item.name || 'attachment').slice(0, 255),
+      contentType: String(item.content_type || item.contentType || 'application/octet-stream').slice(0, 150),
+      size: Number(item.size || 0),
+      providerId: String(item.id || item.attachment_id || ''),
+    })) : [];
+
     await SupportMessage.create({
+      providerMessageId, source: 'email', from, to, subject, text, html, receivedAt, isRead: false,
+    });
+    await MailboxMessage.create({
       providerMessageId,
-      source: 'email',
+      direction: 'inbound',
+      folder: 'inbox',
       from,
       to,
-      subject: String(email.subject || event.data.subject || '(No subject)').slice(0, 300),
-      text: String(email.text || ''),
-      html: String(email.html || ''),
-      receivedAt: email.created_at ? new Date(email.created_at) : new Date(),
+      subject,
+      text,
+      html,
+      attachments,
+      status: 'received',
+      receivedAt,
       isRead: false,
+      lastStatusAt: receivedAt,
+      events: [{ type: 'email.received', at: receivedAt, details: { source: 'Resend inbound webhook' } }],
     });
     return res.status(201).json({ success: true });
   } catch (e) {
