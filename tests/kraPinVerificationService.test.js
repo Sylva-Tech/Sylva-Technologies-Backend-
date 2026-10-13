@@ -101,3 +101,37 @@ test('recognizes KRA invalid national ID response', async () => {
     axios.post = oldPost;
   }
 });
+
+
+test('checks that a supplied KRA PIN is active using PIN Checker by PIN', async () => {
+  const axios = require('axios');
+  const oldPost = axios.post;
+  let request;
+  axios.post = async (url, data, options) => {
+    request = { url, data, options };
+    return {
+      data: {
+        ResponseCode: '23000',
+        Status: 'OK',
+        PINDATA: {
+          KRAPIN: 'A744610021G',
+          TypeOfTaxpayer: 'Individual',
+          Name: 'SAMPLE TEST PERSON',
+          StatusOfPIN: 'Active',
+        },
+      },
+    };
+  };
+
+  try {
+    const result = await checkKraPin(' a744610021g ');
+    assert.equal(result.status, 'verified');
+    assert.equal(result.pinStatus, 'Active');
+    assert.equal(result.taxpayerPin, 'A744610021G');
+    assert.match(request.url, /\/checker\/v1\/pinbypin$/);
+    assert.deepEqual(request.data, { KRAPIN: 'A744610021G' });
+    assert.match(request.options.headers.Authorization, /^Bearer /);
+  } finally {
+    axios.post = oldPost;
+  }
+});
