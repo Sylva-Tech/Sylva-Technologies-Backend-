@@ -11,6 +11,7 @@ const orderRoutes = require('./routes/orderRoutes');
 const userRoutes = require('./routes/userRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const supportInboxRoutes = require('./routes/supportInboxRoutes');
+const mailboxRoutes = require('./routes/mailboxRoutes');
 const advertisementRoutes = require('./routes/advertisementRoutes');
 const flipAdvertisementRoutes = require('./routes/flipAdvertisementRoutes');
 const adminRoutes = require('./routes/adminRoutes');
@@ -189,7 +190,7 @@ app.use(
     strict: true,
     verify: (req, res, buffer) => {
       // Paystack signs the exact request bytes, so preserve them before JSON parsing.
-      if (['/api/orders/paystack/webhook', '/api/support-inbox/inbound/resend'].includes(req.originalUrl.split('?')[0])) {
+      if (['/api/orders/paystack/webhook', '/api/support-inbox/inbound/resend', '/api/mailbox/events/resend'].includes(req.originalUrl.split('?')[0])) {
         req.rawBody = Buffer.from(buffer);
       }
     },
@@ -364,6 +365,8 @@ app.use('/api/users', userRoutes);
 app.use('/api/contact', contactRoutes);
 
 app.use('/api/support-inbox', supportInboxRoutes);
+
+app.use('/api/mailbox', mailboxRoutes);
 
 app.use('/api/advertisements', advertisementRoutes);
 
