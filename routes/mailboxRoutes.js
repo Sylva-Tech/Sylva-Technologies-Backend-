@@ -23,6 +23,7 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const normalizeList = value => (Array.isArray(value) ? value : value ? [value] : [])
   .map(item => String(item).trim().toLowerCase()).filter(Boolean);
 const validList = list => list.length <= 50 && list.every(value => emailPattern.test(value));
+const escapeHtml = value => String(value || '').replace(/[&<>\"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' }[char]));
 const safeAttachments = list => (Array.isArray(list) ? list : []).slice(0, 10).map(item => ({
   filename: String(item.filename || 'attachment').slice(0, 255),
   contentType: String(item.contentType || 'application/octet-stream').slice(0, 150),
@@ -140,6 +141,8 @@ router.post('/drafts', protect, adminOnly, async (req, res) => {
       senderAlias, to, cc, bcc,
       subject: String(req.body?.subject || '').slice(0, 300),
       text: String(req.body?.text || '').slice(0, 100000),
+      signatureName: String(req.body?.signatureName || '').trim().slice(0, 100),
+      signatureTitle: String(req.body?.signatureTitle || '').trim().slice(0, 120),
       attachments: safeAttachments(req.body?.attachments),
       status: 'draft', isRead: true, lastStatusAt: new Date(),
     };
@@ -173,14 +176,18 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
     const bcc = normalizeList(req.body?.bcc);
     const senderAlias = String(req.body?.sender || 'support').toLowerCase();
     const subject = String(req.body?.subject || '').trim().slice(0, 300);
-    const text = String(req.body?.text || '').trim();
+    const bodyText = String(req.body?.text || '').trim();
+    const signatureName = String(req.body?.signatureName || '').trim().slice(0, 100);
+    const signatureTitle = String(req.body?.signatureTitle || '').trim().slice(0, 120);
+    const signatureText = ['Regards,', signatureName, signatureTitle, 'Sylva Technologies', 'Empowering Your Digital Life'].filter(Boolean).join('\\n');
+    const text = [bodyText, signatureText].filter(Boolean).join('\\n\\n');
     const from = SENDERS[senderAlias];
     const inputAttachments = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
     if (!from) return res.status(400).json({ success: false, message: 'Choose a permitted Sylva sender address.' });
     if (!validList(to) || !validList(cc) || !validList(bcc) || (to.length + cc.length + bcc.length === 0)) {
       return res.status(400).json({ success: false, message: 'Enter valid recipients in To, CC, or BCC (maximum 50 per field).' });
     }
-    if (!subject || !text || text.length > 100000) return res.status(400).json({ success: false, message: 'Enter a subject and message under 100,000 characters.' });
+    if (!subject || !bodyText || text.length > 100000) return res.status(400).json({ success: false, message: 'Enter a subject and message under 100,000 characters.' });
     if (inputAttachments.length > 10) return res.status(400).json({ success: false, message: 'You can attach up to 10 files.' });
     let totalSize = 0;
     const providerAttachments = inputAttachments.map(file => {
@@ -208,7 +215,7 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
       : draftDocuments.map(file => ({ filename: file.filename, contentType: file.contentType, size: file.size }));
     record = await MailboxMessage.create({
       direction: 'outbound', folder: 'outbox', from: fromAddress, senderAlias, to, cc, bcc,
-      subject, text, attachments: safeAttachments(attachmentMetadata),
+      subject, text, signatureName, signatureTitle, attachments: safeAttachments(attachmentMetadata),
       status: 'queued', isRead: true, sentAt: new Date(), lastStatusAt: new Date(),
     });
     if (inputAttachments.length) await storeDocumentFiles(record._id, inputAttachments, true);
@@ -220,7 +227,17 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
     }
     const { data, error } = await resend.emails.send({
       from, to, ...(cc.length ? { cc } : {}), ...(bcc.length ? { bcc } : {}),
-      subject, text, replyTo: fromAddress, ...(providerAttachments.length ? { attachments: providerAttachments } : {}),
+      subject, text,
+      html: '<div style="font-family:Arial,Helvetica,sans-serif;line-height:1.65;color:#0f172a">' + escapeHtml(bodyText).replace(/\\r?\\n/g, '<br>') +
+        '<div style="margin-top:24px;padding-top:14px;border-top:3px solid #166534">' +
+        '<p style="margin:0 0 5px;color:#475569">Regards,</p>' +
+        (signatureName ? '<strong style="display:block">' + escapeHtml(signatureName) + '</strong>' : '') +
+        (signatureTitle ? '<span style="display:block;color:#475569;font-size:13px">' + escapeHtml(signatureTitle) + '</span>' : '') +
+        '<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:12px"><tr>' +
+        '<td style="vertical-align:middle;padding-right:12px"><img src="https://www.sylvatechnologies.co.ke/sylva-logo.svg" alt="Sylva Technologies" width="54" height="54" style="display:block;object-fit:contain"></td>' +
+        '<td style="vertical-align:middle"><strong style="display:block;color:#166534;font-size:17px">Sylva Technologies</strong><span style="color:#475569;font-size:12px">Empowering Your Digital Life</span></td>' +
+        '</tr></table></div></div>',
+      replyTo: fromAddress, ...(providerAttachments.length ? { attachments: providerAttachments } : {}),
     });
     if (error) {
       const providerReason = String(error.message || error.name || 'Provider send failed').slice(0, 500);
