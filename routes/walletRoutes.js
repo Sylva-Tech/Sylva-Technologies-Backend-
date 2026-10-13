@@ -978,17 +978,15 @@ router.get(
   requireVerified,
   async (req, res) => {
     try {
-      const payoutAccounts = await User.find(
-        mongoose.trusted({
-          role: { $in: ['seller', 'customer'] },
-          'wallet.transactions': {
-            $elemMatch: {
-              category: 'payout_request',
-              status: 'pending',
-            },
+      const payoutAccounts = await User.find({
+        role: mongoose.trusted({ $in: ['seller', 'customer'] }),
+        'wallet.transactions': mongoose.trusted({
+          $elemMatch: {
+            category: 'payout_request',
+            status: 'pending',
           },
-        })
-      )
+        }),
+      })
           .select(
             'name email phone role sellerProfile wallet'
           )
@@ -1981,8 +1979,10 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
       } },
     ]);
     const pendingPayouts = await User.countDocuments({
-      role: { $in: ['seller', 'customer'] },
-      'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
+      role: mongoose.trusted({ $in: ['seller', 'customer'] }),
+      'wallet.transactions': mongoose.trusted({
+        $elemMatch: { category: 'payout_request', status: 'pending' },
+      }),
     });
     const requiredMpesaSettings = [
       'MPESA_CONSUMER_KEY',
