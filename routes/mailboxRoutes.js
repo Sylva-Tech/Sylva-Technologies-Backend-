@@ -3,7 +3,7 @@ const rateLimit = require('express-rate-limit');
 const { Resend } = require('resend');
 const MailboxMessage = require('../models/MailboxMessage');
 const MailboxDocument = require('../models/MailboxDocument');
-const { encryptAttachment, decryptAttachment } = require('../utils/mailAttachmentCrypto');
+const { encryptAttachment, decryptAttachment, getKey } = require('../utils/mailAttachmentCrypto');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -212,6 +212,57 @@ router.post('/drafts', protect, adminOnly, async (req, res) => {
     if (e.code === 'MAIL_ATTACHMENT_ENCRYPTION_NOT_CONFIGURED') return res.status(503).json({ success: false, message: e.message });
     console.error('Save draft failed:', e.message);
     return res.status(500).json({ success: false, message: 'Unable to save draft.' });
+  }
+});
+
+router.get('/encryption-status', protect, adminOnly, async (req, res) => {
+  try {
+    getKey();
+    return res.json({ success: true, configured: true, algorithm: 'AES-256-GCM' });
+  } catch (e) {
+    return res.status(503).json({ success: true, configured: false, algorithm: 'AES-256-GCM', message: e.message });
+  }
+});
+
+// One-time, bounded migration for attachment records saved before encryption was enabled.
+// Run repeatedly until remaining is zero; raw legacy bytes are encrypted before each update.
+router.post('/attachments/encrypt-legacy', protect, adminOnly, async (req, res) => {
+  try {
+    getKey();
+    const legacy = await MailboxDocument.find({
+      $or: [
+        { encryptionVersion: { $ne: 1 } },
+        { encryptionIv: '' },
+        { encryptionAuthTag: '' },
+      ],
+    }).select('+contentBase64 +encryptionIv +encryptionAuthTag +encryptionVersion').limit(100);
+    let migrated = 0;
+    for (const document of legacy) {
+      const plainBytes = Buffer.from(String(document.contentBase64 || ''), 'base64');
+      if (!plainBytes.length) {
+        console.warn('Skipping empty legacy Sylva Mail attachment:', String(document._id));
+        continue;
+      }
+      const encrypted = encryptAttachment(plainBytes);
+      document.contentBase64 = encrypted.contentBase64;
+      document.encryptionIv = encrypted.encryptionIv;
+      document.encryptionAuthTag = encrypted.encryptionAuthTag;
+      document.encryptionVersion = encrypted.encryptionVersion;
+      await document.save();
+      migrated += 1;
+    }
+    const remaining = await MailboxDocument.countDocuments({
+      $or: [
+        { encryptionVersion: { $ne: 1 } },
+        { encryptionIv: '' },
+        { encryptionAuthTag: '' },
+      ],
+    });
+    return res.json({ success: true, migrated, remaining, message: remaining ? 'Run the migration again to encrypt the next batch.' : 'All stored attachments are encrypted.' });
+  } catch (e) {
+    if (e.code === 'MAIL_ATTACHMENT_ENCRYPTION_NOT_CONFIGURED') return res.status(503).json({ success: false, message: e.message });
+    console.error('Legacy attachment encryption migration failed:', e.message);
+    return res.status(500).json({ success: false, message: 'Unable to encrypt legacy attachments.' });
   }
 });
 
