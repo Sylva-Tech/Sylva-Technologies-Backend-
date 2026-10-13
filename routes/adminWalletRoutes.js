@@ -148,7 +148,7 @@ router.post('/withdrawals', protect, adminOnly, requireVerified, financialAction
   const amount = Number(req.body?.amount);
   const method = String(req.body?.method || '').toLowerCase();
   let destination = String(req.body?.destination || '').trim();
-  if (!Number.isFinite(amount) || amount < 100 || Math.round(amount * 100) !== amount * 100) return res.status(400).json({ success: false, message: 'Enter a valid withdrawal amount of at least KSh 100.' });
+  if (!Number.isFinite(amount) || amount < 50 || Math.round(amount * 100) !== amount * 100) return res.status(400).json({ success: false, message: 'Enter a valid withdrawal amount of at least KSh 50.' });
   if (method === 'mpesa' || method === 'airtel_money') {
     destination = normalizeKenyanPayoutPhone(destination);
     if (!destination) return res.status(400).json({ success: false, message: method === 'airtel_money' ? 'Enter a valid Kenyan Airtel Money phone number.' : 'Enter a valid Kenyan M-Pesa phone number.' });
@@ -193,7 +193,7 @@ router.patch('/withdrawals/:transactionId', protect, adminOnly, requireVerified,
     const tx = wallet.transactions.id(req.params.transactionId);
     if (!tx || tx.category !== 'withdrawal_request' || tx.status !== 'pending') return res.status(404).json({ success: false, message: 'Pending withdrawal not found.' });
     const amount = Number(tx.amount || 0);
-    if (!Number.isFinite(amount) || amount < 100) return res.status(409).json({ success: false, message: 'Withdrawal amount is invalid and requires review.' });
+    if (!Number.isFinite(amount) || amount < 50) return res.status(409).json({ success: false, message: 'Withdrawal amount is invalid and requires review.' });
     const now = new Date();
     const update = {
       $inc: {
