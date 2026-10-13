@@ -23,7 +23,7 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const normalizeList = value => (Array.isArray(value) ? value : value ? [value] : [])
   .map(item => String(item).trim().toLowerCase()).filter(Boolean);
 const validList = list => list.length <= 50 && list.every(value => emailPattern.test(value));
-const escapeHtml = value => String(value || '').replace(/[&<>\"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' }[char]));
+const escapeHtml = value => String(value || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const safeAttachments = list => (Array.isArray(list) ? list : []).slice(0, 10).map(item => ({
   filename: String(item.filename || 'attachment').slice(0, 255),
   contentType: String(item.contentType || 'application/octet-stream').slice(0, 150),
@@ -228,7 +228,7 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
     const { data, error } = await resend.emails.send({
       from, to, ...(cc.length ? { cc } : {}), ...(bcc.length ? { bcc } : {}),
       subject, text,
-      html: '<div style="font-family:Arial,Helvetica,sans-serif;line-height:1.65;color:#0f172a">' + escapeHtml(bodyText).replace(/\\r?\\n/g, '<br>') +
+      html: '<div style="font-family:Arial,Helvetica,sans-serif;line-height:1.65;color:#0f172a">' + escapeHtml(bodyText).replace(/\r?\n/g, '<br>') +
         '<div style="margin-top:24px;padding-top:14px;border-top:3px solid #166534">' +
         '<p style="margin:0 0 5px;color:#475569">Regards,</p>' +
         (signatureName ? '<strong style="display:block">' + escapeHtml(signatureName) + '</strong>' : '') +
