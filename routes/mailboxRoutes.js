@@ -35,8 +35,10 @@ const safeAttachments = list => (Array.isArray(list) ? list : []).slice(0, 10).m
 
 async function storeDocumentFiles(messageId, files, replace = false) {
   const list = Array.isArray(files) ? files.filter(file => file && file.content) : [];
-  if (replace) await MailboxDocument.deleteMany({ messageId });
-  if (!list.length) return;
+  if (!list.length) {
+    if (replace) await MailboxDocument.deleteMany({ messageId });
+    return;
+  }
   let totalSize = 0;
   const records = list.slice(0, 10).map(file => {
     const encoded = String(file.content || '');
@@ -56,6 +58,7 @@ async function storeDocumentFiles(messageId, files, replace = false) {
     };
   });
   if (totalSize > 6 * 1024 * 1024) throw new Error('Combined attachments must be under 6 MB.');
+  if (replace) await MailboxDocument.deleteMany({ messageId });
   await MailboxDocument.insertMany(records);
 }
 
