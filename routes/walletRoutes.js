@@ -505,6 +505,20 @@ const validatePayoutDestination = (
     };
   }
 
+  if (payoutMethod === 'paypal') {
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(value) || value.length > 254) {
+      return {
+        valid: false,
+        message: 'Enter a valid email address linked to the recipient PayPal account.',
+      };
+    }
+
+    return {
+      valid: true,
+      destination: value.toLowerCase(),
+    };
+  }
+
   if (
     payoutMethod === 'bank'
   ) {
@@ -536,7 +550,7 @@ const validatePayoutDestination = (
   return {
     valid: false,
     message:
-      'Unsupported payout method. Choose M-Pesa, Airtel Money, or bank.',
+      'Unsupported payout method. Choose M-Pesa, Airtel Money, PayPal, or bank.',
   };
 };
 
