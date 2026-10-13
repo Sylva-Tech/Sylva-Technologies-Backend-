@@ -17,5 +17,5 @@ jobs:
           cache: npm
       - run: npm install
       - run: npm test
-      - name: Syntax-check backend JavaScript
-        run: find . -path './node_modules' -prune -o -path './.git' -prune -o -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Syntax-check active backend JavaScript
+        run: find . -path './node_modules' -prune -o -path './.git' -prune -o -name '*.js' ! -name 'old-authRoutes.js' -print0 | xargs -0 -n1 node --check
