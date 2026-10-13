@@ -914,11 +914,11 @@ router.post(
         _id: user._id,
         isVerified: true,
         role: user.role,
-        accountStatus: user.role === 'seller' ? { $in: ['active', 'warning'] } : 'active',
-        'wallet.availableBalance': { $gte: amount },
-        'wallet.transactions': {
+        accountStatus: user.accountStatus,
+        'wallet.availableBalance': mongoose.trusted({ $gte: amount }),
+        'wallet.transactions': mongoose.trusted({
           $not: { $elemMatch: { category: 'payout_request', status: 'pending' } },
-        },
+        }),
       };
       if (user.role === 'seller') {
         updateFilter.sellerStatus = 'approved';
