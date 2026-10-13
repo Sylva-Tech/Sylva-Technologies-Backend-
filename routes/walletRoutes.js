@@ -506,7 +506,7 @@ const validatePayoutDestination = (
   }
 
   if (payoutMethod === 'paypal') {
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(value) || value.length > 254) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) || value.length > 254) {
       return {
         valid: false,
         message: 'Enter a valid email address linked to the recipient PayPal account.',
