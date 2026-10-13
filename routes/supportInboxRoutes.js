@@ -289,6 +289,10 @@ router.post('/inbound/cloudflare', async (req, res) => {
     return res.status(201).json({ success: true });
   } catch (e) {
     if (e.code === 11000) return res.status(200).json({ success: true, duplicate: true });
+    if (e.code === 'MAIL_ATTACHMENT_ENCRYPTION_NOT_CONFIGURED') {
+      console.error('Cloudflare inbound email rejected because attachment encryption is not configured.');
+      return res.status(503).json({ success: false, message: e.message });
+    }
     console.error('Cloudflare inbound email failed:', e.message);
     return res.status(500).json({ success: false, message: 'Unable to store Cloudflare email.' });
   }
