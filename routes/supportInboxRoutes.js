@@ -5,6 +5,7 @@ const { simpleParser } = require('mailparser');
 const SupportMessage = require('../models/SupportMessage');
 const MailboxMessage = require('../models/MailboxMessage');
 const MailboxDocument = require('../models/MailboxDocument');
+const { encryptAttachment } = require('../utils/mailAttachmentCrypto');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const router = express.Router();
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -236,6 +237,21 @@ router.post('/inbound/cloudflare', async (req, res) => {
       providerId: `cloudflare:${providerMessageId}:${index}`,
     }));
 
+    const inboundAttachments = (parsed.attachments || []).slice(0, 10);
+    const totalAttachmentBytes = inboundAttachments.reduce((sum, item) => sum + Number(item.content?.length || 0), 0);
+    let encryptedAttachmentRecords = [];
+    if (inboundAttachments.length) {
+      if (totalAttachmentBytes > 6 * 1024 * 1024) {
+        return res.status(413).json({ success: false, message: 'Attachments exceed the 6 MB encrypted mailbox storage limit.' });
+      }
+      encryptedAttachmentRecords = inboundAttachments.map((item, index) => ({
+        filename: String(item.filename || `attachment-${index + 1}`).slice(0, 255),
+        contentType: String(item.contentType || 'application/octet-stream').slice(0, 150),
+        size: Number(item.size || item.content?.length || 0),
+        ...encryptAttachment(item.content),
+      }));
+    }
+
     if (!supportMessage) {
       supportMessage = await SupportMessage.create({
         providerMessageId, source: 'email', from,
@@ -262,15 +278,10 @@ router.post('/inbound/cloudflare', async (req, res) => {
         events: [{ type: 'email.received', at: new Date(), details: { source: 'Cloudflare Email Worker' } }],
       });
 
-      const attachments = (parsed.attachments || []).slice(0, 10);
-      const totalAttachmentBytes = attachments.reduce((sum, item) => sum + Number(item.content?.length || 0), 0);
-      if (attachments.length && totalAttachmentBytes <= 6 * 1024 * 1024) {
-        await MailboxDocument.insertMany(attachments.map((item, index) => ({
+      if (encryptedAttachmentRecords.length) {
+        await MailboxDocument.insertMany(encryptedAttachmentRecords.map(item => ({
+          ...item,
           messageId: mailboxMessage._id,
-          filename: String(item.filename || `attachment-${index + 1}`).slice(0, 255),
-          contentType: String(item.contentType || 'application/octet-stream').slice(0, 150),
-          size: Number(item.size || item.content?.length || 0),
-          contentBase64: Buffer.from(item.content).toString('base64'),
         })));
       }
     }
