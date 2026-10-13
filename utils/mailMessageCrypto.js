@@ -53,7 +53,7 @@ function decryptMessageContent(message) {
   } else {
     // Legacy records remain readable until the authenticated migration endpoint encrypts them.
     source.subject = source.subject || '(No subject)';
-    source.text = source.text || '';
+    source.text = source.text || source.message || '';
     source.html = source.html || '';
   }
   delete source.contentCiphertext;
