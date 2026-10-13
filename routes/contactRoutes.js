@@ -36,8 +36,8 @@ router.post('/', async (req, res) => {
       from: String(email).trim().toLowerCase(),
       to: ['support@sylvatechnologies.co.ke'],
       name: String(name).trim(),
-      subject: String(subject || 'Website enquiry').trim(),
-      text: String(message).trim(),
+      ...encryptMessageContent({ subject: String(subject || 'Website enquiry').trim(), text: String(message).trim(), html: '', replies: [] }),
+      replies: [],
       receivedAt: new Date(),
       isRead: false,
     });
