@@ -131,7 +131,7 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
     const subject = String(req.body?.subject || '').trim().slice(0, 300);
     const text = String(req.body?.text || '').trim();
     const from = SENDERS[senderAlias];
-    const inputAttachments = Array.isArray(req.body?.attachments) ? req.body.attachments.slice(0, 10) : [];
+    const inputAttachments = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
     if (!from) return res.status(400).json({ success: false, message: 'Choose a permitted Sylva sender address.' });
     if (!validList(to) || !validList(cc) || !validList(bcc) || (to.length + cc.length + bcc.length === 0)) {
       return res.status(400).json({ success: false, message: 'Enter valid recipients in To, CC, or BCC (maximum 50 per field).' });
@@ -147,7 +147,7 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
       if (!content || content.length > 7 * 1024 * 1024) throw new Error('Each attachment must be a valid base64 file under 5 MB.');
       return { filename, content, contentType: String(file.contentType || 'application/octet-stream') };
     });
-    if (totalSize > 15 * 1024 * 1024) return res.status(400).json({ success: false, message: 'Combined attachments must be under 15 MB.' });
+    if (totalSize > 6 * 1024 * 1024) return res.status(400).json({ success: false, message: 'Combined attachments must be under 6 MB for safe delivery.' });
     if (!resend) return res.status(503).json({ success: false, message: 'Email sending is not configured on the server.' });
     const fromAddress = (from.match(/<([^>]+)>/) || [])[1];
     record = await MailboxMessage.create({
