@@ -9,6 +9,7 @@ const VerificationToken = require('../models/VerificationToken');
 const sellerUpload = require('../middleware/sellerUpload');
 const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
 const cloudinary = require('../config/cloudinary');
+const { checkKraPin, namesMatch } = require('../services/kraPinVerificationService');
 
 const {
   sendVerificationCodeAndLinkEmail,
@@ -177,7 +178,7 @@ router.post(
       if (idNumber.length < 5 || idNumber.length > 50) {
         return res.status(400).json({ success: false, message: 'Enter a valid ID or passport number.' });
       }
-      if (!/^[A-Z]\d{9}[A-Z]$/.test(kraPinNumber)) {
+      if (!/^[AP]\d{9}[A-Z]$/.test(kraPinNumber)) {
         return res.status(400).json({ success: false, message: 'Enter a valid KRA PIN number, for example A123456789B.' });
       }
       if (storeName.length < 2 || storeName.length > 100 || storeProfile.length < 20 || storeProfile.length > 1000) {
@@ -188,6 +189,48 @@ router.post(
       }
       if (!idFront || !idBack || !kraPinFile) {
         return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your KRA PIN certificate.' });
+      }
+
+      let kraVerification = {
+        status: 'not_checked',
+        checkedAt: null,
+        provider: 'KRA',
+        nameMatch: 'not_checked',
+        pinStatus: '',
+        responseCode: '',
+        taxpayerType: '',
+      };
+
+      if (String(process.env.KRA_PIN_VERIFICATION_ENABLED || '').toLowerCase() === 'true') {
+        kraVerification = await checkKraPin(kraPinNumber);
+
+        if (kraVerification.status === 'invalid' || kraVerification.status === 'invalid_format') {
+          return res.status(422).json({
+            success: false,
+            code: 'KRA_PIN_INVALID',
+            message: 'KRA could not validate this PIN. Check the PIN and try again.',
+          });
+        }
+
+        if (kraVerification.status === 'inactive') {
+          return res.status(422).json({
+            success: false,
+            code: 'KRA_PIN_INACTIVE',
+            message: 'KRA reports that this PIN is not active. Please check your PIN status with KRA.',
+          });
+        }
+
+        if (kraVerification.status === 'provider_unavailable') {
+          return res.status(503).json({
+            success: false,
+            code: 'KRA_VERIFICATION_UNAVAILABLE',
+            message: 'KRA verification is temporarily unavailable. No application has been rejected; please retry later.',
+          });
+        }
+
+        kraVerification.nameMatch = namesMatch(name, kraVerification.taxpayerName)
+          ? 'match'
+          : 'review';
       }
 
       const existingUser = await User.findOne({ email });
@@ -232,6 +275,15 @@ router.post(
           mpesaPhone: phone,
           kraPin: kraPinNumber,
           kraPinDocument: kraUpload.public_id,
+          kraPinVerification: {
+            status: kraVerification.status,
+            provider: kraVerification.provider || 'KRA',
+            responseCode: kraVerification.responseCode || '',
+            pinStatus: kraVerification.pinStatus || '',
+            taxpayerType: kraVerification.taxpayerType || '',
+            nameMatch: kraVerification.nameMatch || 'not_checked',
+            checkedAt: kraVerification.checkedAt || null,
+          },
           applicationDate: now,
         },
       });
