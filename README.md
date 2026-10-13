@@ -117,7 +117,7 @@ npm start
 Admin users must be authenticated and authorized through the backend. Role verification happens on the server; the frontend should not be trusted for administration.
 
 ## Testing
-The backend has been syntax-checked successfully. Full runtime flow tests require a reachable MongoDB instance and correctly configured email/SMS credentials. When the database is available, the following flow should be verified:
+Run `npm test` for the message/attachment encryption round-trip and tamper-detection tests. The CI workflow also syntax-checks backend JavaScript. Full runtime flow tests require a reachable MongoDB instance and correctly configured email/SMS credentials. When the database is available, the following flow should be verified:
 - Registration
 - Email/SMS verification
 - Login
