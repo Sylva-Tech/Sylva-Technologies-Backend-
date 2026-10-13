@@ -1802,7 +1802,11 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
     }
   } catch (error) {
     console.error('M-Pesa deposit initiation failed:', error.response?.data || error.message);
-    return res.status(502).json({ success: false, message: 'Unable to start the deposit. Check the number and try again.' });
+    return res.status(502).json({
+      success: false,
+      message: 'Unable to start the deposit. Check the transaction status before trying again.',
+      ...(transaction?._id ? { data: { transactionId: String(transaction._id), status: transaction.status || 'pending' } } : {}),
+    });
   }
 });
 
