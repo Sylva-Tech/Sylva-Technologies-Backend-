@@ -13,6 +13,10 @@ const SENDERS = {
   orders: 'Sylva Technologies <order@sylvatechnologies.co.ke>',
   payment: 'Sylva Technologies <payment@sylvatechnologies.co.ke>',
   admin: 'Sylva Technologies <admin@sylvatechnologies.co.ke>',
+  verification: 'Sylva Technologies <verification@sylvatechnologies.co.ke>',
+  resetpassword: 'Sylva Technologies <resetpassword@sylvatechnologies.co.ke>',
+  sellers: 'Sylva Technologies <sellers@sylvatechnologies.co.ke>',
+  noreply: 'Sylva Technologies <no-reply@sylvatechnologies.co.ke>',
 };
 const sendLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false });
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
