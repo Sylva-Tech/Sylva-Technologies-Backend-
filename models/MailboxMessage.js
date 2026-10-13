@@ -24,6 +24,8 @@ const schema = new mongoose.Schema({
   bcc: [{ type: String, trim: true, lowercase: true }],
   subject: { type: String, default: '(No subject)', trim: true, maxlength: 300 },
   text: { type: String, default: '', maxlength: 100000 },
+  signatureName: { type: String, default: '', trim: true, maxlength: 100 },
+  signatureTitle: { type: String, default: '', trim: true, maxlength: 120 },
   html: { type: String, default: '', maxlength: 250000 },
   attachments: { type: [attachmentSchema], default: [] },
   senderAlias: { type: String, default: 'support', trim: true },
