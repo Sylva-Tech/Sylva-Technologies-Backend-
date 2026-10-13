@@ -249,7 +249,7 @@ router.post('/drafts', protect, adminOnly, async (req, res) => {
         { _id: req.body.id, direction: 'outbound', folder: 'drafts' },
         { $set: values },
         { new: true, runValidators: true }
-      );
+      ).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion');
       if (!draft) return res.status(404).json({ success: false, message: 'Draft not found.' });
     } else {
       draft = await MailboxMessage.create(values);
