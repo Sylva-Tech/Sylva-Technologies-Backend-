@@ -906,111 +906,53 @@ router.post(
       }
 
       /*
-       * Move available -> pending.
+       * Reserve funds atomically. The query rechecks the balance and pending
+       * payout condition at write time, so concurrent requests cannot spend
+       * the same available funds or create multiple pending payouts.
        */
-      wallet.availableBalance =
-        roundMoney(
-          availableBalance -
-            amount
-        );
-
-      wallet.pendingBalance =
-        roundMoney(
-          pendingBalance +
-            amount
-        );
-
-      wallet.lastUpdatedAt =
-        new Date();
-
-      /*
-       * Create transaction ID.
-       */
-      const transactionId =
-        new mongoose.Types.ObjectId();
-
-      const now =
-        new Date();
-
-      const transactionReference =
-        `payout-${Date.now()}-${transactionId
-          .toString()
-          .slice(-6)}`;
-
-      /*
-       * Create payout transaction.
-       */
-      const transaction = {
-        _id: transactionId,
-
-        type: 'debit',
-
-        amount,
-
-        category:
-          'payout_request',
-
-        status:
-          'pending',
-
-        description:
-          (user.role === 'seller' ? 'Seller' : 'Customer') + ' wallet withdrawal request submitted for admin review.',
-
-        reference:
-          transactionReference,
-
-        relatedOrder:
-          null,
-
-        createdAt:
-          now,
-
-        processedAt:
-          null,
-
-        updatedAt:
-          now,
-
-        metadata: {
-          payoutMethod,
-
-          destination:
-            payoutDestination,
-
-          requestedAt:
-            now.toISOString(),
+      const updateFilter = {
+        _id: user._id,
+        isVerified: true,
+        role: user.role,
+        accountStatus: user.role === 'seller' ? { $in: ['active', 'warning'] } : 'active',
+        'wallet.availableBalance': { $gte: amount },
+        'wallet.transactions': {
+          $not: { $elemMatch: { category: 'payout_request', status: 'pending' } },
         },
       };
+      if (user.role === 'seller') {
+        updateFilter.sellerStatus = 'approved';
+        updateFilter.storeStatus = 'active';
+      }
 
-      /*
-       * Add newest transaction first.
-       */
-      wallet.transactions.unshift(
-        transaction
+      const updatedUser = await User.findOneAndUpdate(
+        updateFilter,
+        {
+          $inc: {
+            'wallet.availableBalance': -amount,
+            'wallet.pendingBalance': amount,
+          },
+          $set: { 'wallet.lastUpdatedAt': now },
+          $push: { 'wallet.transactions': { $each: [transaction], $position: 0 } },
+        },
+        { new: true, runValidators: true }
       );
 
-      /*
-       * Save wallet.
-       */
-      await user.save();
+      if (!updatedUser) {
+        return res.status(409).json({
+          success: false,
+          message: 'Your wallet changed or a withdrawal is already pending. Refresh your wallet and try again.',
+        });
+      }
 
-      /*
-       * Return safe response.
-       */
+      const savedTransaction = updatedUser.wallet.transactions.id(transactionId);
+
       return res.status(201).json({
         success: true,
-
-        message:
-          'Withdrawal request submitted successfully and is awaiting payout processing.',
-
+        message: 'Withdrawal request submitted successfully and is awaiting payout processing.',
         data: {
-          wallet:
-            serializeWallet(user),
-
-          transaction:
-            serializeSellerTransaction(
-              transaction
-            ),
+          wallet: serializeWallet(updatedUser),
+          transaction: serializeSellerTransaction(savedTransaction || transaction),
         },
       });
     } catch (error) {
