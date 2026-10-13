@@ -27,7 +27,7 @@ const safeAttachments = list => (Array.isArray(list) ? list : []).slice(0, 10).m
 
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
-    const allowedFolders = ['inbox', 'sent', 'drafts', 'archive', 'trash'];
+    const allowedFolders = ['inbox', 'outbox', 'sent', 'drafts', 'archive', 'trash'];
     const folder = allowedFolders.includes(req.query.folder) ? req.query.folder : 'inbox';
     const query = { folder };
     const messages = await MailboxMessage.find(query)
@@ -38,6 +38,35 @@ router.get('/', protect, adminOnly, async (req, res) => {
   } catch (e) {
     console.error('Mailbox list failed:', e.message);
     return res.status(500).json({ success: false, message: 'Unable to load mailbox messages.' });
+  }
+});
+
+router.get('/:id/attachments', protect, adminOnly, async (req, res) => {
+  try {
+    const message = await MailboxMessage.findById(req.params.id).select('direction providerEmailId attachments');
+    if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
+    if (message.direction !== 'inbound' || !message.providerEmailId || !resend) {
+      return res.json({ success: true, attachments: (message.attachments || []).map(item => ({ ...item.toObject(), downloadUrl: '' })) });
+    }
+    const { data, error } = await resend.emails.receiving.attachments.list({ emailId: message.providerEmailId });
+    if (error) {
+      console.error('Received attachment lookup failed:', error.message);
+      return res.status(502).json({ success: false, message: 'Unable to retrieve attachment links.' });
+    }
+    const items = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+    return res.json({
+      success: true,
+      attachments: items.map(item => ({
+        filename: String(item.filename || 'attachment').slice(0, 255),
+        contentType: String(item.content_type || item.contentType || 'application/octet-stream'),
+        size: Number(item.size || 0),
+        downloadUrl: String(item.download_url || item.downloadUrl || ''),
+      })),
+    });
+  } catch (e) {
+    if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid message identifier.' });
+    console.error('Mailbox attachment lookup failed:', e.message);
+    return res.status(500).json({ success: false, message: 'Unable to load attachments.' });
   }
 });
 
@@ -122,7 +151,7 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
     if (!resend) return res.status(503).json({ success: false, message: 'Email sending is not configured on the server.' });
     const fromAddress = (from.match(/<([^>]+)>/) || [])[1];
     record = await MailboxMessage.create({
-      direction: 'outbound', folder: 'sent', from: fromAddress, senderAlias, to, cc, bcc,
+      direction: 'outbound', folder: 'outbox', from: fromAddress, senderAlias, to, cc, bcc,
       subject, text, attachments: safeAttachments(inputAttachments.map(file => ({ ...file, size: Math.floor(String(file.content || '').length * 0.75) }))),
       status: 'queued', isRead: true, sentAt: new Date(), lastStatusAt: new Date(),
     });
@@ -138,6 +167,8 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
       return res.status(502).json({ success: false, message: 'The email provider could not send this message. Check sender verification and try again.', messageId: record._id });
     }
     record.providerMessageId = data?.id || undefined;
+    record.providerEmailId = data?.id || '';
+    record.folder = 'sent';
     record.status = 'sent';
     record.events.push({ type: 'email.sent', details: { providerMessageId: data?.id || '' } });
     record.lastStatusAt = new Date();
@@ -205,7 +236,7 @@ router.post('/events/resend', async (req, res) => {
   };
   if (!statusMap[type] || !providerMessageId) return res.status(200).json({ success: true, ignored: true });
   try {
-    const message = await MailboxMessage.findOne({ providerMessageId });
+    const message = await MailboxMessage.findOne({ $or: [{ providerEmailId: providerMessageId }, { providerMessageId }] });
     if (!message) return res.status(200).json({ success: true, unmatched: true });
     message.status = statusMap[type];
     message.lastStatusAt = new Date();
