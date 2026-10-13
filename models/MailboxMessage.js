@@ -27,6 +27,11 @@ const schema = new mongoose.Schema({
   signatureName: { type: String, default: '', trim: true, maxlength: 100 },
   signatureTitle: { type: String, default: '', trim: true, maxlength: 120 },
   html: { type: String, default: '', maxlength: 250000 },
+  // Message subject/body are stored as authenticated ciphertext for new records.
+  contentCiphertext: { type: String, default: '', select: false },
+  contentIv: { type: String, default: '', select: false },
+  contentAuthTag: { type: String, default: '', select: false },
+  contentEncryptionVersion: { type: Number, default: 0, select: false },
   attachments: { type: [attachmentSchema], default: [] },
   senderAlias: { type: String, default: 'support', trim: true },
   status: {
