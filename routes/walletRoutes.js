@@ -1804,7 +1804,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       return res.status(202).json({
         success: true,
         message: 'Deposit request sent. Enter your M-Pesa PIN; the wallet updates after payment is confirmed.',
-        data: { reference: accountDisplayName, accountReference: accountLabel, checkoutRequestId: response.data.CheckoutRequestID, amount, phone: '+' + phone },
+        data: { transactionId: String(transaction._id), reference: accountDisplayName, accountReference: accountLabel, checkoutRequestId: response.data.CheckoutRequestID, amount, phone: '+' + phone, status: 'pending' },
       });
     } catch (providerError) {
       transaction.status = 'failed';
