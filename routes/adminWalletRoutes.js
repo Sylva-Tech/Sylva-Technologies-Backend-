@@ -10,6 +10,13 @@ async function platformWallet() {
   if (!wallet) wallet = await AdminWallet.create({ key: 'platform', currency: 'KES' });
   return wallet;
 }
+function normalizeKenyanPayoutPhone(value) {
+  let phone = String(value || '').trim().replace(/[\\s-]/g, '');
+  if (/^0[17]\\d{8}$/.test(phone)) return '254' + phone.slice(1);
+  if (/^\\+254[17]\\d{8}$/.test(phone)) return phone.slice(1);
+  if (/^254[17]\\d{8}$/.test(phone)) return phone;
+  return '';
+}
 function safe(wallet) {
   return {
     currency: wallet.currency,
@@ -121,14 +128,12 @@ router.post('/withdrawals', protect, adminOnly, requireVerified, async (req, res
   const method = String(req.body?.method || '').toLowerCase();
   let destination = String(req.body?.destination || '').trim();
   if (!Number.isFinite(amount) || amount < 100 || Math.round(amount * 100) !== amount * 100) return res.status(400).json({ success: false, message: 'Enter a valid withdrawal amount of at least KSh 100.' });
-  if (method === 'mpesa') {
-    destination = destination.replace(/[\s-]/g, '');
-    if (/^0[17]\d{8}$/.test(destination)) destination = '254' + destination.slice(1);
-    if (/^\+254[17]\d{8}$/.test(destination)) destination = destination.slice(1);
-    if (!/^254[17]\d{8}$/.test(destination)) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan M-Pesa phone number.' });
+  if (method === 'mpesa' || method === 'airtel_money') {
+    destination = normalizeKenyanPayoutPhone(destination);
+    if (!destination) return res.status(400).json({ success: false, message: method === 'airtel_money' ? 'Enter a valid Kenyan Airtel Money phone number.' : 'Enter a valid Kenyan M-Pesa phone number.' });
   } else if (method === 'bank') {
     if (destination.length < 5 || destination.length > 200) return res.status(400).json({ success: false, message: 'Enter valid bank payout details.' });
-  } else return res.status(400).json({ success: false, message: 'Choose M-Pesa or bank.' });
+  } else return res.status(400).json({ success: false, message: 'Choose M-Pesa, Airtel Money, or bank.' });
   try {
     const wallet = await platformWallet();
     if (Number(wallet.availableBalance || 0) < amount) return res.status(409).json({ success: false, message: 'Insufficient available platform funds.' });
