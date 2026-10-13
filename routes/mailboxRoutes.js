@@ -78,6 +78,15 @@ router.get('/', protect, adminOnly, async (req, res) => {
   }
 });
 
+router.get('/encryption-status', protect, adminOnly, async (req, res) => {
+  try {
+    getKey();
+    return res.json({ success: true, configured: true, algorithm: 'AES-256-GCM' });
+  } catch (e) {
+    return res.status(503).json({ success: true, configured: false, algorithm: 'AES-256-GCM', message: e.message });
+  }
+});
+
 router.get('/:id/attachments', protect, adminOnly, async (req, res) => {
   try {
     const message = await MailboxMessage.findById(req.params.id).select('direction providerEmailId attachments');
@@ -219,14 +228,7 @@ router.post('/drafts', protect, adminOnly, async (req, res) => {
   }
 });
 
-router.get('/encryption-status', protect, adminOnly, async (req, res) => {
-  try {
-    getKey();
-    return res.json({ success: true, configured: true, algorithm: 'AES-256-GCM' });
-  } catch (e) {
-    return res.status(503).json({ success: true, configured: false, algorithm: 'AES-256-GCM', message: e.message });
-  }
-});
+
 
 // One-time, bounded migration for attachment records saved before encryption was enabled.
 // Run repeatedly until remaining is zero; raw legacy bytes are encrypted before each update.
@@ -257,7 +259,7 @@ router.post('/attachments/encrypt-legacy', protect, adminOnly, async (req, res) 
     }
     const remaining = await MailboxDocument.countDocuments({
       $or: [
-        { encryptionVersion: { $ne: 1 } },
+        { encryptionVersion: mongoose.trusted({ $ne: 1 }) },
         { encryptionIv: '' },
         { encryptionAuthTag: '' },
       ],
