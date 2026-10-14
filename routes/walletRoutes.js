@@ -2219,6 +2219,66 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
     if (!tx || tx.category !== 'mpesa_topup') {
       return res.status(404).json({ success: false, message: 'Deposit transaction was not found in your wallet.' });
     }
+
+    // Reconcile pending requests against Safaricom when a CheckoutRequestID exists.
+    // Never credit from a status query; only the verified callback can credit funds.
+    if (tx.status === 'pending' && tx.metadata?.checkoutRequestID) {
+      try {
+        const shortcode = process.env.MPESA_SHORTCODE;
+        const passkey = process.env.MPESA_PASSKEY;
+        if (shortcode && passkey) {
+          const credentials = await getMpesaAccessToken();
+          const timestamp = getMpesaTimestamp();
+          const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
+          const queryResponse = await axios.post(credentials.host + '/mpesa/stkpushquery/v1/query', {
+            BusinessShortCode: shortcode,
+            Password: password,
+            Timestamp: timestamp,
+            CheckoutRequestID: String(tx.metadata.checkoutRequestID),
+          }, {
+            headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' },
+            timeout: 15000,
+          });
+          const resultCode = String(queryResponse.data?.ResultCode ?? '');
+          const resultDescription = String(queryResponse.data?.ResultDesc || queryResponse.data?.ResponseDescription || '');
+          // Safaricom's terminal customer-cancelled, timeout and insufficient-funds
+          // codes can be marked failed. Other/non-terminal responses remain pending.
+          const terminalFailures = new Set(['1032', '1037', '1']);
+          if (terminalFailures.has(resultCode)) {
+            const now = new Date();
+            const ownerFilter = isAdmin
+              ? { _id: owner._id, transactions: { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } }
+              : { _id: owner._id, 'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } };
+            const failedDescription = resultCode === '1032'
+              ? 'M-Pesa deposit cancelled by the customer.'
+              : resultCode === '1037'
+                ? 'M-Pesa deposit timed out without payment confirmation.'
+                : 'M-Pesa deposit failed. Safaricom did not confirm sufficient funds or successful payment.';
+            const update = isAdmin
+              ? { $set: { 'transactions.$.status': 'failed', 'transactions.$.description': failedDescription, 'transactions.$.processedAt': now, 'transactions.$.updatedAt': now, 'transactions.$.metadata.providerResultCode': resultCode, 'transactions.$.metadata.providerResultDescription': resultDescription } }
+              : { $set: { 'wallet.transactions.$.status': 'failed', 'wallet.transactions.$.description': failedDescription, 'wallet.transactions.$.processedAt': now, 'wallet.transactions.$.updatedAt': now, 'wallet.transactions.$.metadata.providerResultCode': resultCode, 'wallet.transactions.$.metadata.providerResultDescription': resultDescription } };
+            await (isAdmin ? AdminWallet : User).updateOne(ownerFilter, update);
+            const refreshed = isAdmin
+              ? await AdminWallet.findOne({ _id: owner._id, 'transactions._id': transactionId })
+              : await User.findOne({ _id: owner._id, 'wallet.transactions._id': transactionId });
+            const refreshedTx = isAdmin ? refreshed?.transactions.id(transactionId) : refreshed?.wallet?.transactions?.id(transactionId);
+            if (refreshedTx) {
+              return res.json({ success: true, data: {
+                transactionId: String(refreshedTx._id), status: refreshedTx.status,
+                amount: roundMoney(refreshedTx.amount), reference: refreshedTx.reference || '',
+                description: refreshedTx.description || '', createdAt: refreshedTx.createdAt || null,
+                updatedAt: refreshedTx.updatedAt || null, processedAt: refreshedTx.processedAt || null,
+                reconciliationRequired: refreshedTx.metadata?.reconciliationRequired === true,
+              } });
+            }
+          }
+        }
+      } catch (reconcileError) {
+        // A temporary Safaricom/query outage must not be mistaken for payment failure.
+        console.warn('M-Pesa deposit status reconciliation deferred:', reconcileError.response?.data || reconcileError.message);
+      }
+    }
+
     return res.json({ success: true, data: {
       transactionId: String(tx._id),
       status: tx.status,
