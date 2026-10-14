@@ -341,6 +341,7 @@ const isInternationalSeller = (user) => (
   user?.role === 'seller' &&
   String(user.sellerProfile?.country || 'KE').toUpperCase() !== 'KE' &&
   user.sellerStatus === 'approved' &&
+  user.sellerProfile?.identityVerificationStatus === 'verified' &&
   ['active', 'warning'].includes(user.accountStatus) &&
   user.storeStatus === 'active' &&
   user.isVerified === true
