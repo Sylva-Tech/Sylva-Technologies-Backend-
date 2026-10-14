@@ -101,7 +101,9 @@ const checkPinById = async ({ taxpayerType, taxpayerID, expectedPin }) => {
       if (hasPin || hasName) break;
 
       const nested = payload.data || payload.Data || payload.response ||
-        payload.Response || payload.result || payload.Result || payload.payload;
+        payload.Response || payload.responseData || payload.ResponseData ||
+        payload.responseBody || payload.ResponseBody || payload.result ||
+        payload.Result || payload.resultData || payload.ResultData || payload.payload;
       if (!nested || typeof nested !== 'object') break;
       payload = nested;
     }
