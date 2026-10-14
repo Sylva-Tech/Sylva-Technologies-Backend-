@@ -2243,8 +2243,9 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
           const resultDescription = String(queryResponse.data?.ResultDesc || queryResponse.data?.ResponseDescription || '');
           // Safaricom's terminal customer-cancelled, timeout and insufficient-funds
           // codes can be marked failed. Other/non-terminal responses remain pending.
-          const terminalFailures = new Set(['1032', '1037', '1']);
-          if (terminalFailures.has(resultCode)) {
+          const terminalFailure = ['1032', '1037'].includes(resultCode) ||
+            (resultCode === '1' && /insufficient|balance|funds/i.test(resultDescription));
+          if (terminalFailure) {
             const now = new Date();
             const ownerFilter = isAdmin
               ? { _id: owner._id, transactions: { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } }
@@ -2253,7 +2254,7 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
               ? 'M-Pesa deposit cancelled by the customer.'
               : resultCode === '1037'
                 ? 'M-Pesa deposit timed out without payment confirmation.'
-                : 'M-Pesa deposit failed. Safaricom did not confirm sufficient funds or successful payment.';
+                : 'M-Pesa deposit failed. Safaricom reported insufficient funds or an unsuccessful payment.';
             const update = isAdmin
               ? { $set: { 'transactions.$.status': 'failed', 'transactions.$.description': failedDescription, 'transactions.$.processedAt': now, 'transactions.$.updatedAt': now, 'transactions.$.metadata.providerResultCode': resultCode, 'transactions.$.metadata.providerResultDescription': resultDescription } }
               : { $set: { 'wallet.transactions.$.status': 'failed', 'wallet.transactions.$.description': failedDescription, 'wallet.transactions.$.processedAt': now, 'wallet.transactions.$.updatedAt': now, 'wallet.transactions.$.metadata.providerResultCode': resultCode, 'wallet.transactions.$.metadata.providerResultDescription': resultDescription } };
