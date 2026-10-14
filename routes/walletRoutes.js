@@ -1173,14 +1173,29 @@ router.get(
   async (req, res) => {
     try {
       const payoutAccounts = await User.find({
-        role: mongoose.trusted({ $in: ['seller', 'customer'] }),
         $or: [
-          { 'wallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
-          { 'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
+          {
+            role: 'seller',
+            'wallet.transactions': {
+              $elemMatch: { category: 'payout_request', status: 'pending' },
+            },
+          },
+          {
+            role: 'customer',
+            'wallet.transactions': {
+              $elemMatch: { category: 'payout_request', status: 'pending' },
+            },
+          },
+          {
+            role: 'seller',
+            'usdWallet.transactions': {
+              $elemMatch: { category: 'payout_request', status: 'pending' },
+            },
+          },
         ],
       })
-          .select('name email phone role sellerProfile wallet usdWallet')
-          .lean();
+        .select('name email phone role sellerProfile wallet usdWallet')
+        .lean();
 
       const pendingPayouts =
         [];
@@ -2450,15 +2465,24 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
       } },
     ]);
     const pendingPayouts = await User.countDocuments({
-      role: mongoose.trusted({ $in: ['seller', 'customer'] }),
       $or: [
-        { 'wallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
-        { 'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
+        {
+          role: 'seller',
+          'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
+        },
+        {
+          role: 'customer',
+          'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
+        },
+        {
+          role: 'seller',
+          'usdWallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
+        },
       ],
     });
     const pendingUsdPayouts = await User.countDocuments({
       role: 'seller',
-      'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }),
+      'usdWallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
     });
     const requiredMpesaSettings = [
       'MPESA_CONSUMER_KEY',
