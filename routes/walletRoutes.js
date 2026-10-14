@@ -1044,7 +1044,10 @@ router.get(
     try {
       const payoutAccounts = await User.find(
         mongoose.trusted({
-          role: { $in: ['seller', 'customer'] },
+          $or: [
+            { role: 'seller' },
+            { role: 'customer' },
+          ],
           'wallet.transactions': {
             $elemMatch: {
               category: 'payout_request',
@@ -1930,10 +1933,10 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
         accountsWithWallets: { $sum: 1 },
       } },
     ]);
-    const pendingPayouts = await User.countDocuments({
-      role: { $in: ['seller', 'customer'] },
+    const pendingPayouts = await User.countDocuments(mongoose.trusted({
+      $or: [{ role: 'seller' }, { role: 'customer' }],
       'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
-    });
+    }));
     const requiredMpesaSettings = [
       'MPESA_CONSUMER_KEY',
       'MPESA_CONSUMER_SECRET',
