@@ -1147,16 +1147,12 @@ router.get(
     try {
       const payoutAccounts = await User.find({
         role: mongoose.trusted({ $in: ['seller', 'customer'] }),
-        'wallet.transactions': mongoose.trusted({
-          $elemMatch: {
-            category: 'payout_request',
-            status: 'pending',
-          },
-        }),
+        $or: [
+          { 'wallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
+          { 'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
+        ],
       })
-          .select(
-            'name email phone role sellerProfile wallet'
-          )
+          .select('name email phone role sellerProfile wallet usdWallet')
           .lean();
 
       const pendingPayouts =
@@ -1250,6 +1246,26 @@ router.get(
             createdAt:
               entry.createdAt ||
               null,
+          });
+        }
+      }
+
+      // Include pending USD-wallet payouts in the same admin review queue.
+      for (const seller of payoutAccounts) {
+        for (const entry of (Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [])) {
+          if (entry.category !== 'payout_request' || entry.status !== 'pending') continue;
+          pendingPayouts.push({
+            _id: entry._id,
+            account: { role: seller.role, _id: seller._id, name: seller.name || '', email: seller.email || '', phone: seller.phone || '', storeName: seller.sellerProfile?.storeName || '', mpesaPhone: seller.sellerProfile?.mpesaPhone || '' },
+            seller: { _id: seller._id, name: seller.name || '', email: seller.email || '', phone: seller.phone || '', storeName: seller.sellerProfile?.storeName || '', mpesaPhone: seller.sellerProfile?.mpesaPhone || '' },
+            type: entry.type || 'debit',
+            amount: roundMoney(entry.amount || 0),
+            currency: 'USD',
+            status: entry.status,
+            payoutMethod: entry.metadata?.payoutMethod || 'paypal',
+            destination: entry.metadata?.destination || '',
+            reference: entry.reference || '',
+            createdAt: entry.createdAt || null,
           });
         }
       }
