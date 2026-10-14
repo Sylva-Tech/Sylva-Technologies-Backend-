@@ -972,7 +972,7 @@ if (paymentMethod === 'M-Pesa') {
     if (!['CustomerPayBillOnline', 'CustomerBuyGoodsOnline'].includes(transactionType)) {
       throw new Error('MPESA_TRANSACTION_TYPE must be CustomerPayBillOnline or CustomerBuyGoodsOnline.');
     }
-    if (transactionType === 'CustomerBuyGoodsOnline' && !/^\\d{5,10}$/.test(tillNumber)) {
+    if (transactionType === 'CustomerBuyGoodsOnline' && !/^\d{5,10}$/.test(tillNumber)) {
       throw new Error('M-Pesa Till configuration is incomplete. Set MPESA_TILL_NUMBER to the approved Buy Goods Till number.');
     }
     const partyB = transactionType === 'CustomerBuyGoodsOnline' ? tillNumber : shortcode;
