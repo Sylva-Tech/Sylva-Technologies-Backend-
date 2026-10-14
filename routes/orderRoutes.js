@@ -27,6 +27,21 @@ const {
 
 const router = express.Router();
 
+// Fail closed: never send a request to Production because MPESA_ENV is missing
+// or misspelled. Sandbox remains the safe default until Go Live is approved.
+const getMpesaEnvironment = () => {
+  const environment = String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase();
+  if (!['sandbox', 'production'].includes(environment)) {
+    throw new Error('Invalid M-Pesa environment. Set MPESA_ENV to sandbox or production.');
+  }
+  return environment;
+};
+
+const getMpesaHost = () => getMpesaEnvironment() === 'sandbox'
+  ? 'https://sandbox.safaricom.co.ke'
+  : 'https://api.safaricom.co.ke';
+
+
 const ORDER_STATUSES = [
   'Pending',
   'Confirmed',
@@ -976,9 +991,7 @@ if (paymentMethod === 'M-Pesa') {
       throw new Error('M-Pesa Till configuration is incomplete. Set MPESA_TILL_NUMBER to the approved Buy Goods Till number.');
     }
     const partyB = transactionType === 'CustomerBuyGoodsOnline' ? tillNumber : shortcode;
-    const host = process.env.MPESA_ENV === 'sandbox'
-      ? 'https://sandbox.safaricom.co.ke'
-      : 'https://api.safaricom.co.ke';
+    const host = getMpesaHost();
     const callbackUrl = process.env.MPESA_ORDER_CALLBACK_URL ||
       'https://sylva-technologies-backend.onrender.com/api/orders/mpesa/callback';
     const phoneInput = String(customerDetails.phone || '').replace(/[\s()+-]/g, '');
@@ -1278,9 +1291,7 @@ router.post('/mpesa/callback', async (req, res) => {
     if (!key || !secret || !shortcode || !passkey) {
       return res.status(503).json({ ResultCode: 1, ResultDesc: 'Payment verification is not configured.' });
     }
-    const host = process.env.MPESA_ENV === 'sandbox'
-      ? 'https://sandbox.safaricom.co.ke'
-      : 'https://api.safaricom.co.ke';
+    const host = getMpesaHost();
     const auth = Buffer.from(key + ':' + secret).toString('base64');
     const tokenResponse = await axios.get(
       host + '/oauth/v1/generate?grant_type=client_credentials',
