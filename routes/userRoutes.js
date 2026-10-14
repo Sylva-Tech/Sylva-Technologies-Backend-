@@ -42,6 +42,99 @@ router.patch('/:id/admin-review', protect, adminOnly, async (req, res) => {
   }
 });
 
+router.put(
+  '/me/profile',
+  protect,
+  sellerUpload.single('profilePicture'),
+  async (req, res) => {
+    try {
+      const user = await User.findById(req.user._id).select('+profilePicturePublicId');
+      if (!user || user.accountDeleted) {
+        return res.status(404).json({ success: false, message: 'Account not found.' });
+      }
+
+      const name = req.body?.name;
+      const email = req.body?.email;
+      const phone = req.body?.phone;
+      const bio = req.body?.bio;
+      const currentPassword = String(req.body?.currentPassword || '');
+      const newPassword = String(req.body?.newPassword || '');
+
+      if (name !== undefined) {
+        const value = String(name).trim();
+        if (value.length < 2 || value.length > 100) {
+          return res.status(400).json({ success: false, message: 'Name must be between 2 and 100 characters.' });
+        }
+        user.name = value;
+      }
+
+      if (email !== undefined) {
+        const value = String(email).trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) || value.length > 150) {
+          return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
+        }
+        if (value !== user.email) {
+          const existing = await User.findOne({ email: value, _id: { $ne: user._id } }).select('_id');
+          if (existing) return res.status(409).json({ success: false, message: 'That email address is already in use.' });
+          user.email = value;
+          user.isVerified = false;
+          user.emailVerified = false;
+        }
+      }
+
+      if (phone !== undefined) {
+        const value = String(phone).trim();
+        if (value.length > 30) return res.status(400).json({ success: false, message: 'Phone number is too long.' });
+        user.phone = value;
+      }
+
+      if (bio !== undefined) {
+        const value = String(bio).trim();
+        if (value.length > 500) return res.status(400).json({ success: false, message: 'Bio cannot exceed 500 characters.' });
+        user.bio = value;
+      }
+
+      if (newPassword) {
+        if (!currentPassword || !(await user.matchPassword(currentPassword))) {
+          return res.status(400).json({ success: false, message: 'Enter your current password to change it.' });
+        }
+        if (newPassword.length < 8) {
+          return res.status(400).json({ success: false, message: 'New password must be at least 8 characters.' });
+        }
+        if (newPassword === currentPassword) {
+          return res.status(400).json({ success: false, message: 'Choose a password different from your current password.' });
+        }
+        user.password = newPassword;
+      }
+
+      if (req.file) {
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(req.file.mimetype)) {
+          return res.status(400).json({ success: false, message: 'Profile pictures must be JPG, PNG or WEBP images.' });
+        }
+        const uploaded = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: 'sylva/profile-pictures', resource_type: 'image', type: 'upload', transformation: [{ width: 600, height: 600, crop: 'fill', gravity: 'face', quality: 'auto', fetch_format: 'auto' }] },
+            (error, result) => error ? reject(error) : resolve(result)
+          );
+          stream.end(req.file.buffer);
+        });
+        user.profilePicture = uploaded.secure_url;
+        user.profilePicturePublicId = uploaded.public_id;
+      }
+
+      await user.save();
+      const safeUser = user.toObject();
+      delete safeUser.password;
+      delete safeUser.profilePicturePublicId;
+
+      return res.json({ success: true, message: 'Profile updated successfully.', data: { user: safeUser } });
+    } catch (error) {
+      console.error('Update own profile error:', error);
+      return res.status(500).json({ success: false, message: error.message || 'Unable to update your profile.' });
+    }
+  }
+);
+
 router.delete('/me', protect, async (req, res) => {
   try {
     if (!req.user || !req.user._id) {
