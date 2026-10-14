@@ -1226,6 +1226,7 @@ router.get(
                   0
               ),
 
+            currency: 'KES',
             status:
               entry.status,
 
@@ -2035,7 +2036,9 @@ router.post('/topup/paypal/create-order', protect, payoutRateLimit, async (req, 
     const order = orderResponse.data;
     const approvalUrl = order?.links?.find((link) => link.rel === 'approve')?.href;
     if (!order?.id || !approvalUrl) throw new Error('PayPal did not return an approval URL.');
-    transaction.metadata = { ...transaction.metadata, paypalOrderId: order.id };
+    const savedTx = wallet.transactions.id(transaction._id);
+    if (!savedTx) throw new Error('PayPal deposit transaction could not be saved.');
+    savedTx.metadata = { ...(savedTx.metadata || {}), paypalOrderId: order.id };
     await user.save();
     return res.status(201).json({
       success: true,
@@ -2088,7 +2091,7 @@ router.post('/topup/paypal/capture', protect, payoutRateLimit, async (req, res) 
     const captureResponse = await axios.post(
       paypalApiBase() + '/v2/checkout/orders/' + encodeURIComponent(orderId) + '/capture',
       {},
-      { headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' }, timeout: 20000 }
+      { headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json', 'PayPal-Request-Id': 'sylva-capture-' + String(tx._id) }, timeout: 20000 }
     );
     const order = captureResponse.data;
     const purchase = order?.purchase_units?.find((item) => String(item.reference_id || '') === String(tx._id));
