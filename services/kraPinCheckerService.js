@@ -92,11 +92,31 @@ const checkPinById = async ({ taxpayerType, taxpayerID, expectedPin }) => {
       }
     );
 
-    const taxpayerPin = String(response.data?.TaxpayerPIN || '').trim().toUpperCase();
-    const taxpayerName = String(response.data?.TaxpayerName || '').trim();
+    // Some gateway responses wrap the API payload in data/Response/Result.
+    // Unwrap known envelope keys without logging or returning taxpayer data.
+    let payload = response.data;
+    for (let depth = 0; depth < 3 && payload && typeof payload === 'object'; depth += 1) {
+      const hasPin = payload.TaxpayerPIN || payload.taxpayerPIN || payload.taxpayerPin;
+      const hasName = payload.TaxpayerName || payload.taxpayerName;
+      if (hasPin || hasName) break;
+
+      const nested = payload.data || payload.Data || payload.response ||
+        payload.Response || payload.result || payload.Result || payload.payload;
+      if (!nested || typeof nested !== 'object') break;
+      payload = nested;
+    }
+
+    const taxpayerPin = String(
+      payload?.TaxpayerPIN || payload?.taxpayerPIN || payload?.taxpayerPin || ''
+    ).trim().toUpperCase();
+    const taxpayerName = String(
+      payload?.TaxpayerName || payload?.taxpayerName || payload?.taxpayername || ''
+    ).trim();
 
     if (!taxpayerPin || !taxpayerName) {
-      const error = new Error('KRA returned an incomplete PIN Checker response.');
+      const error = new Error(
+        'KRA responded, but the response did not include the expected TaxpayerPIN and TaxpayerName fields. Confirm the GavaConnect app is subscribed to PIN Checker BY ID and check its test response format.'
+      );
       error.statusCode = 502;
       throw error;
     }
