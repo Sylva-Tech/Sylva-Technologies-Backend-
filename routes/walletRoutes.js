@@ -1781,7 +1781,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       return res.status(202).json({
         success: true,
         message: 'Deposit request sent. Enter your M-Pesa PIN; the wallet updates after payment is confirmed.',
-        data: { reference: accountDisplayName, accountReference: accountLabel, checkoutRequestId: response.data.CheckoutRequestID, amount, phone: '+' + phone },
+        data: { transactionId: String(transactionId), status: 'pending', reference: accountDisplayName, accountReference: accountLabel, checkoutRequestId: response.data.CheckoutRequestID, amount, phone: '+' + phone },
       });
     } catch (providerError) {
       transaction.status = 'failed';
@@ -1808,6 +1808,41 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
   } catch (error) {
     console.error('M-Pesa deposit initiation failed:', error.response?.data || error.message);
     return res.status(502).json({ success: false, message: 'Unable to start the deposit. Check the number and try again.' });
+  }
+});
+
+/* Read the signed-in user's own deposit status. This endpoint never credits funds;
+   only the Safaricom callback and server-side payment verification can do that. */
+router.get('/topup/status/:transactionId', protect, async (req, res) => {
+  try {
+    const transactionId = String(req.params.transactionId || '');
+    if (!mongoose.isValidObjectId(transactionId)) {
+      return res.status(400).json({ success: false, message: 'Invalid deposit reference.' });
+    }
+
+    const user = await User.findById(req.user._id).select('role wallet.transactions');
+    let transaction = user?.wallet?.transactions?.id(transactionId);
+
+    if (!transaction && user?.role === 'admin') {
+      const platformWallet = await AdminWallet.findOne({ key: 'platform', transactions: { $elemMatch: { _id: transactionId, category: 'mpesa_topup' } } });
+      transaction = platformWallet?.transactions?.id(transactionId);
+    }
+
+    if (!transaction || transaction.category !== 'mpesa_topup') {
+      return res.status(404).json({ success: false, message: 'Deposit reference was not found for this account.' });
+    }
+
+    return res.json({ success: true, data: {
+      transactionId: String(transaction._id),
+      status: transaction.status || 'pending',
+      amount: roundMoney(transaction.amount),
+      reference: transaction.reference || '',
+      reconciliationRequired: Boolean(transaction.metadata?.reconciliationRequired),
+      processedAt: transaction.processedAt || null,
+    } });
+  } catch (error) {
+    console.error('M-Pesa deposit status lookup failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to check deposit status right now.' });
   }
 });
 
