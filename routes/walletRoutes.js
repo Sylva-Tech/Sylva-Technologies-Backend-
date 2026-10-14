@@ -1707,7 +1707,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
         message: 'M-Pesa configuration error: MPESA_TRANSACTION_TYPE must be CustomerPayBillOnline or CustomerBuyGoodsOnline.',
       });
     }
-    if (transactionType === 'CustomerBuyGoodsOnline' && !/^\\d{5,10}$/.test(tillNumber)) {
+    if (transactionType === 'CustomerBuyGoodsOnline' && !/^\d{5,10}$/.test(tillNumber)) {
       return res.status(503).json({
         success: false,
         message: 'M-Pesa Till configuration is incomplete. Set MPESA_TILL_NUMBER to the approved Buy Goods Till number.',
