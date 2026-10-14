@@ -2011,7 +2011,7 @@ router.post('/topup/paypal/create-order', protect, payoutRateLimit, async (req, 
     await user.save();
 
     const accessToken = await getPayPalAccessToken();
-    const frontendUrl = String(process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://www.sylvatechnologies.co.ke').replace(/\/$/, '');
+    const frontendUrl = String(process.env.FRONTEND_URL || 'https://www.sylvatechnologies.co.ke').replace(/\/$/, '');
     const orderResponse = await axios.post(
       paypalApiBase() + '/v2/checkout/orders',
       {
