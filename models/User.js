@@ -667,6 +667,33 @@ const userSchema = new mongoose.Schema(
     },
 
     /* ==========================================
+     * SEPARATE INTERNATIONAL USD WALLET
+     * PayPal deposits are credited only after the
+     * backend captures and verifies the PayPal order.
+     * This balance is never mixed with the KES wallet.
+     * ========================================== */
+    usdWallet: {
+      currency: { type: String, default: 'USD', enum: ['USD'] },
+      availableBalance: { type: Number, default: 0, min: 0 },
+      pendingBalance: { type: Number, default: 0, min: 0 },
+      lastUpdatedAt: { type: Date, default: null },
+      transactions: [{
+        _id: { type: mongoose.Schema.Types.ObjectId, default: () => new mongoose.Types.ObjectId() },
+        type: { type: String, enum: ['credit', 'debit'], default: 'credit' },
+        amount: { type: Number, default: 0, min: 0 },
+        currency: { type: String, default: 'USD', enum: ['USD'] },
+        category: { type: String, default: 'manual_adjustment', trim: true, maxlength: 100 },
+        status: { type: String, enum: ['pending', 'completed', 'paid', 'rejected', 'failed', 'reversed'], default: 'completed' },
+        description: { type: String, default: '', trim: true, maxlength: 500 },
+        reference: { type: String, default: '', trim: true, maxlength: 150 },
+        createdAt: { type: Date, default: Date.now },
+        updatedAt: { type: Date, default: Date.now },
+        processedAt: { type: Date, default: null },
+        metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+      }],
+    },
+
+    /* ==========================================
      * EMAIL / ACCOUNT VERIFICATION
      * ========================================== */
 
