@@ -9,6 +9,7 @@ const VerificationToken = require('../models/VerificationToken');
 const sellerUpload = require('../middleware/sellerUpload');
 const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
 const cloudinary = require('../config/cloudinary');
+const { checkPinById } = require('../services/kraPinCheckerService');
 
 const {
   sendVerificationCodeAndLinkEmail,
@@ -125,6 +126,37 @@ const safeUser = (user) => {
  * REGISTER
  * POST /api/auth/register
  * ============================================================ */
+
+/*
+ * KRA PIN CHECKER BY ID
+ * POST /api/auth/kra/pin-checker-by-id
+ * Consumer credentials stay server-side; never accept them from the browser.
+ */
+router.post('/kra/pin-checker-by-id', async (req, res) => {
+  try {
+    const result = await checkPinById({
+      taxpayerType: req.body?.TaxpayerType,
+      taxpayerID: req.body?.TaxpayerID,
+      expectedPin: req.body?.expectedPin,
+    });
+
+    return res.json({
+      success: true,
+      verified: result.verified,
+      pinMatches: result.pinMatches,
+      taxpayerName: result.taxpayerName,
+      message: result.pinMatches
+        ? 'KRA confirmed that the supplied ID and PIN match.'
+        : 'KRA found the ID, but the returned PIN does not match the PIN entered.',
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 503).json({
+      success: false,
+      verified: false,
+      message: error.message || 'KRA PIN Checker is temporarily unavailable.',
+    });
+  }
+});
 
 /*
  * SELLER REGISTRATION
