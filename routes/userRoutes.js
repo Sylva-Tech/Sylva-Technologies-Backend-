@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 
 const User = require('../models/User');
 const Order = require('../models/Order');
@@ -78,7 +79,6 @@ router.put(
           if (existing) return res.status(409).json({ success: false, message: 'That email address is already in use.' });
           user.email = value;
           user.isVerified = false;
-          user.emailVerified = false;
         }
       }
 
@@ -137,48 +137,56 @@ router.put(
 
 router.delete('/me', protect, async (req, res) => {
   try {
-    if (!req.user || !req.user._id) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required.',
-      });
+    const currentPassword = String(req.body?.currentPassword || '');
+    const user = await User.findById(req.user._id);
+    if (!user || user.accountDeleted) {
+      return res.status(404).json({ success: false, message: 'Account not found.' });
+    }
+    if (!currentPassword || !(await user.matchPassword(currentPassword))) {
+      return res.status(401).json({ success: false, message: 'Your current password is required to confirm account deletion.' });
     }
 
-    if (req.user.role === 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Admin accounts cannot be deleted from this endpoint.',
-      });
+    if (user.role === 'admin') {
+      const activeAdmins = await User.countDocuments({ role: 'admin', accountDeleted: false });
+      if (activeAdmins <= 1) {
+        return res.status(409).json({ success: false, message: 'This is the only active administrator. Create and verify another administrator before deleting this account.' });
+      }
     }
 
-    const deletedUser = await User.findById(req.user._id);
-
-    if (!deletedUser) {
-      return res.status(404).json({
-        success: false,
-        message: 'User account not found.',
-      });
+    const available = Number(user.wallet?.availableBalance || 0);
+    const pending = Number(user.wallet?.pendingBalance || 0);
+    if (available > 0 || pending > 0) {
+      return res.status(409).json({ success: false, message: 'Please withdraw your available wallet funds and resolve pending transactions before deleting your account.' });
     }
+    const pendingWalletAction = (user.wallet?.transactions || []).some(tx =>
+      tx.status === 'pending' && ['payout_request', 'mpesa_topup'].includes(tx.category)
+    );
+    if (pendingWalletAction) {
+      return res.status(409).json({ success: false, message: 'Please wait for pending wallet deposits or withdrawals to be resolved before deleting your account.' });
+    }
+
+    // Preserve order and financial history; disable access and anonymize sign-in details.
+    user.accountDeleted = true;
+    user.deletedAt = new Date();
+    user.name = 'Deleted Sylva account';
+    user.email = 'deleted-' + String(user._id) + '@deleted.sylva.invalid';
+    user.phone = '';
+    user.bio = '';
+    user.profilePicture = '';
+    user.profilePicturePublicId = '';
+    user.isVerified = false;
+    user.password = crypto.randomBytes(48).toString('hex');
+    await user.save();
 
     await Promise.all([
-      User.findByIdAndDelete(req.user._id),
-      Order.deleteMany({ customer: req.user._id }),
-      Order.deleteMany({ customerEmail: req.user.email }),
-      Notification.deleteMany({ user: req.user._id }),
-      VerificationToken.deleteMany({ user: req.user._id }),
+      Notification.deleteMany({ user: user._id }),
+      VerificationToken.deleteMany({ user: user._id }),
     ]);
 
-    return res.json({
-      success: true,
-      message: 'Your account and all associated records have been deleted successfully.',
-    });
+    return res.json({ success: true, message: 'Your account has been deactivated and your sign-in details anonymized. Historical order and financial records are retained for recordkeeping.' });
   } catch (error) {
     console.error('Delete current user error:', error);
-
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Unable to delete your account.',
-    });
+    return res.status(500).json({ success: false, message: 'Unable to delete your account right now.' });
   }
 });
 
