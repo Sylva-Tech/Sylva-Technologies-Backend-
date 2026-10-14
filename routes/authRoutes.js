@@ -111,6 +111,7 @@ const createJwt = (user) => {
 const safeUser = (user) => {
   return {
     id: user._id,
+    _id: user._id,
     name: user.name,
     email: user.email,
     phone: user.phone || '',
@@ -1663,11 +1664,10 @@ router.get(
           decoded.id
         ).select('-password');
 
-      if (!user) {
+      if (!user || user.accountDeleted) {
         return res.status(401).json({
           success: false,
-          message:
-            'User account could not be found.',
+          message: 'This account is no longer active. Please log in with an active account.',
         });
       }
 
