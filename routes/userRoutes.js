@@ -147,7 +147,8 @@ router.delete('/me', protect, async (req, res) => {
     }
 
     if (user.role === 'admin') {
-      const activeAdmins = await User.countDocuments({ role: 'admin', accountDeleted: false });
+      const adminAccounts = await User.find({ role: 'admin' }).select('accountDeleted');
+      const activeAdmins = adminAccounts.filter(account => !account.accountDeleted).length;
       if (activeAdmins <= 1) {
         return res.status(409).json({ success: false, message: 'This is the only active administrator. Create and verify another administrator before deleting this account.' });
       }
