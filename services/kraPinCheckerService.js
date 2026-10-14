@@ -92,32 +92,71 @@ const checkPinById = async ({ taxpayerType, taxpayerID, expectedPin }) => {
       }
     );
 
-    // Some gateway responses wrap the API payload in data/Response/Result.
-    // Unwrap known envelope keys without logging or returning taxpayer data.
-    let payload = response.data;
-    for (let depth = 0; depth < 3 && payload && typeof payload === 'object'; depth += 1) {
-      const hasPin = payload.TaxpayerPIN || payload.taxpayerPIN || payload.taxpayerPin;
-      const hasName = payload.TaxpayerName || payload.taxpayerName;
-      if (hasPin || hasName) break;
+    // KRA/GavaConnect may wrap the response in different envelopes. Search
+    // nested objects rather than assuming a single "data" or "payload" shape.
+    const root = response.data;
+    const queue = [{ value: root, depth: 0 }];
+    const visited = new Set();
+    let taxpayerPin = '';
+    let taxpayerName = '';
+    let kraErrorCode = '';
+    let kraErrorMessage = '';
 
-      const nested = payload.data || payload.Data || payload.response ||
-        payload.Response || payload.responseData || payload.ResponseData ||
-        payload.responseBody || payload.ResponseBody || payload.result ||
-        payload.Result || payload.resultData || payload.ResultData || payload.payload;
-      if (!nested || typeof nested !== 'object') break;
-      payload = nested;
+    while (queue.length) {
+      const { value, depth } = queue.shift();
+      if (!value || typeof value !== 'object' || visited.has(value) || depth > 6) continue;
+      visited.add(value);
+
+      const pin = value.TaxpayerPIN || value.taxpayerPIN || value.taxpayerPin ||
+        value.taxpayer_pin || value.KRAPIN || value.KraPIN || value.Pin;
+      const name = value.TaxpayerName || value.taxpayerName || value.taxpayername ||
+        value.taxpayer_name || value.Name || value.name;
+      if (pin && name) {
+        taxpayerPin = String(pin).trim().toUpperCase();
+        taxpayerName = String(name).trim();
+        break;
+      }
+
+      const code = value.ErrorCode ?? value.errorCode ?? value.error_code ??
+        value.ResponseCode ?? value.responseCode;
+      const message = value.ErrorMessage ?? value.errorMessage ?? value.error_message ??
+        value.Message ?? value.message;
+      if (code !== undefined && code !== null && String(code).trim() !== '') {
+        kraErrorCode = String(code).trim();
+        if (message) kraErrorMessage = String(message).trim();
+      }
+
+      for (const nested of Object.values(value)) {
+        if (nested && typeof nested === 'object') queue.push({ value: nested, depth: depth + 1 });
+        // A few gateways serialize their nested payload as a JSON string.
+        else if (typeof nested === 'string' && /^[\s]*[[{]/.test(nested)) {
+          try {
+            const parsed = JSON.parse(nested);
+            if (parsed && typeof parsed === 'object') queue.push({ value: parsed, depth: depth + 1 });
+          } catch { /* Ignore non-JSON strings. */ }
+        }
+      }
     }
 
-    const taxpayerPin = String(
-      payload?.TaxpayerPIN || payload?.taxpayerPIN || payload?.taxpayerPin || ''
-    ).trim().toUpperCase();
-    const taxpayerName = String(
-      payload?.TaxpayerName || payload?.taxpayerName || payload?.taxpayername || ''
-    ).trim();
+    // Some sandbox errors arrive with HTTP 200, so inspect the body as well.
+    if (kraErrorCode === '30002') {
+      const error = new Error('KRA could not verify this ID. Check the number and taxpayer type.');
+      error.statusCode = 422;
+      throw error;
+    }
+    if (kraErrorCode && (!taxpayerPin || !taxpayerName)) {
+      const error = new Error(
+        `KRA PIN Checker returned error ${kraErrorCode}${kraErrorMessage ? `: ${kraErrorMessage}` : ''}.`
+      );
+      error.statusCode = kraErrorCode === '400' ? 422 : 502;
+      throw error;
+    }
 
     if (!taxpayerPin || !taxpayerName) {
+      // Avoid logging taxpayer information; provide only safe response-shape diagnostics.
+      const rootKeys = root && typeof root === 'object' ? Object.keys(root).slice(0, 20).join(', ') : typeof root;
       const error = new Error(
-        'KRA responded, but the response did not include the expected TaxpayerPIN and TaxpayerName fields. Confirm the GavaConnect app is subscribed to PIN Checker BY ID and check its test response format.'
+        `KRA responded without TaxpayerPIN/TaxpayerName. Top-level response keys: ${rootKeys || '(none)'}. Confirm TCOO2 is subscribed to PIN Checker BY ID and compare the raw test response structure.`
       );
       error.statusCode = 502;
       throw error;
