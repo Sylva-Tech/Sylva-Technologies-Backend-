@@ -982,9 +982,10 @@ if (paymentMethod === 'M-Pesa') {
     if (!String(callbackUrl).startsWith('https://')) {
       throw new Error('The M-Pesa order callback URL must use HTTPS.');
     }
-    const amount = Math.round(Number(orderTotal));
-    if (!Number.isSafeInteger(amount) || amount < 1) {
-      throw new Error('The order total is not valid for M-Pesa payment.');
+    const rawTotal = Number(orderTotal);
+    const amount = Math.round(rawTotal);
+    if (!Number.isSafeInteger(amount) || amount < 1 || amount > 150000 || rawTotal !== amount) {
+      throw new Error('M-Pesa checkout requires a whole-KSh order total between KSh 1 and KSh 150,000.');
     }
     const auth = Buffer.from(key + ':' + secret).toString('base64');
     const tokenResponse = await axios.get(
