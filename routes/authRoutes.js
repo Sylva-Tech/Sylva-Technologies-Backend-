@@ -114,6 +114,8 @@ const safeUser = (user) => {
     name: user.name,
     email: user.email,
     phone: user.phone || '',
+    bio: user.bio || '',
+    profilePicture: user.profilePicture || '',
     role: user.role,
     sellerStatus: user.sellerStatus,
     accountStatus: user.accountStatus,
