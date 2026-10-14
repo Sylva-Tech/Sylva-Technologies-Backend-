@@ -1873,12 +1873,16 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
     });
 
     let message = 'Unable to start the M-Pesa deposit. Please verify the phone number and try again.';
-    if (providerCode === '400.002.02' || /invalid business shortcode/i.test(providerMessage)) {
-      message = 'M-Pesa configuration error: the business shortcode does not match the selected Daraja environment. Please contact support; no wallet funds were added.';
+    if (/invalid transaction.?type/i.test(providerMessage)) {
+      message = 'M-Pesa configuration error: Safaricom rejected the configured transaction type. Confirm that MPESA_TRANSACTION_TYPE is supported for this Daraja app and that the shortcode, Till/PayBill setup, and credentials all belong to the selected environment. For sandbox testing, use the sandbox shortcode and passkey supplied in the Daraja test app; do not combine them with a live Till. No wallet funds were added.';
+    } else if (/invalid business shortcode/i.test(providerMessage)) {
+      message = 'M-Pesa configuration error: Safaricom rejected the business shortcode for this request. Confirm the shortcode and environment with the Daraja app configuration. No wallet funds were added.';
     } else if (/invalid access token|unauthorized|invalid consumer key/i.test(providerMessage)) {
       message = 'M-Pesa configuration error: Daraja credentials are not valid for the selected environment. Please contact support; no wallet funds were added.';
     } else if (/passkey|password/i.test(providerMessage) && /invalid|incorrect|error/i.test(providerMessage)) {
       message = 'M-Pesa configuration error: the STK passkey or shortcode is incorrect. Please contact support; no wallet funds were added.';
+    } else if (providerCode === '400.002.02') {
+      message = 'M-Pesa configuration error: Safaricom rejected the STK request (400.002.02). Check the exact provider message and verify the transaction type, shortcode, and environment together. No wallet funds were added.';
     }
 
     return res.status(502).json({ success: false, message });
