@@ -1081,7 +1081,7 @@ router.post('/payout-request-usd', protect, payoutRateLimit, async (req, res) =>
       return res.status(403).json({ success: false, message: 'USD withdrawals are available to verified, approved sellers registered outside Kenya.' });
     }
     const amount = Number(req.body?.amount);
-    if (!Number.isFinite(amount) || Math.round(amount * 100) !== amount * 100 || amount < 10 || amount > 10000) {
+    if (!Number.isFinite(amount) || Math.round(amount * 100) / 100 !== amount || amount < 10 || amount > 10000) {
       return res.status(400).json({ success: false, message: 'Enter a USD withdrawal amount between $10.00 and $10,000.00.' });
     }
     const destination = String(req.body?.destination || '').trim().toLowerCase();
@@ -2065,6 +2065,29 @@ router.post('/topup/paypal/create-order', protect, payoutRateLimit, async (req, 
       success: false,
       message: error.statusCode === 503 ? error.message : 'Unable to start PayPal deposit. No USD wallet credit was made.',
     });
+  }
+});
+
+router.post('/topup/paypal/cancel', protect, async (req, res) => {
+  try {
+    const orderId = String(req.body?.orderId || '').trim();
+    if (!/^[A-Z0-9-]{8,80}$/i.test(orderId)) return res.status(400).json({ success: false, message: 'Invalid PayPal order reference.' });
+    const user = await User.findById(req.user._id);
+    if (!isInternationalSeller(user)) return res.status(403).json({ success: false, message: 'Only verified international sellers can cancel a USD wallet deposit.' });
+    const tx = user.usdWallet?.transactions?.find((entry) => entry.metadata?.paypalOrderId === orderId);
+    if (!tx) return res.status(404).json({ success: false, message: 'PayPal deposit was not found in this wallet.' });
+    if (tx.status === 'completed') return res.status(409).json({ success: false, message: 'This payment is already completed and cannot be cancelled here.' });
+    if (tx.status === 'pending') {
+      tx.status = 'failed';
+      tx.description = 'PayPal checkout was cancelled before wallet credit.';
+      tx.processedAt = new Date();
+      tx.updatedAt = new Date();
+      await user.save();
+    }
+    return res.json({ success: true, message: 'PayPal checkout was cancelled. No USD wallet credit was made.', data: { status: tx.status } });
+  } catch (error) {
+    console.error('PayPal cancel error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to update the cancelled PayPal deposit.' });
   }
 });
 
