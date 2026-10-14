@@ -2049,7 +2049,7 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
       mpesaConfiguration: {
         configured: missingMpesaSettings.length === 0,
         missing: missingMpesaSettings,
-        environment: process.env.MPESA_ENV === 'sandbox' ? 'sandbox' : 'production',
+        environment: String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase(),
         callbackPath: '/api/wallet/topup/stk/callback',
         expectedCallbackUrl: 'https://sylva-technologies-backend.onrender.com/api/wallet/topup/stk/callback',
       },
