@@ -681,10 +681,9 @@ router.post('/login', async (req, res) => {
       email: normalizedEmail,
     });
 
-    if (!user) {
+    if (!user || user.accountDeleted) {
       return res.status(401).json({
-        message:
-          'Invalid email or password.',
+        message: 'Invalid email or password.',
       });
     }
 
