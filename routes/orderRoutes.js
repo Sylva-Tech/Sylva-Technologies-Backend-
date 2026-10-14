@@ -149,6 +149,7 @@ const applySellerSettlement = async (order) => {
 
     const settlementReference = `order:${order.orderNumber}`;
     const sellerCountry = String(seller.sellerProfile?.country || 'KE').toUpperCase();
+    if ((seller.wallet?.transactions || []).some((tx) => tx.reference === settlementReference)) continue;
     const orderCurrency = String(order.currency || 'KES').toUpperCase();
     const now = new Date();
 
