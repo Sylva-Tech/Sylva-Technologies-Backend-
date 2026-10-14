@@ -72,7 +72,7 @@ const checkPinById = async ({ taxpayerType, taxpayerID, expectedPin }) => {
     error.statusCode = 400;
     throw error;
   }
-  if (!/^[A-Z]\\d{9}[A-Z]$/.test(normalizedExpectedPin)) {
+  if (!/^[A-Z]\d{9}[A-Z]$/.test(normalizedExpectedPin)) {
     const error = new Error('Enter the KRA PIN to compare with the ID lookup.');
     error.statusCode = 400;
     throw error;
