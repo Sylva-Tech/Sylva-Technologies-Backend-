@@ -1071,6 +1071,73 @@ router.post(
 |--------------------------------------------------------------------------
 */
 
+/* USD-only PayPal withdrawal request. Payouts are manually processed by an
+   authorized admin; requesting one does not send money automatically. */
+router.post('/payout-request-usd', protect, payoutRateLimit, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!isInternationalSeller(user)) {
+      return res.status(403).json({ success: false, message: 'USD withdrawals are available to verified, approved sellers registered outside Kenya.' });
+    }
+    const amount = Number(req.body?.amount);
+    if (!Number.isFinite(amount) || Math.round(amount * 100) !== amount * 100 || amount < 10 || amount > 10000) {
+      return res.status(400).json({ success: false, message: 'Enter a USD withdrawal amount between $10.00 and $10,000.00.' });
+    }
+    const destination = String(req.body?.destination || '').trim().toLowerCase();
+    if (destination.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(destination)) {
+      return res.status(400).json({ success: false, message: 'Enter a valid email address for your PayPal account.' });
+    }
+    const wallet = ensureUsdWallet(user);
+    if (wallet.transactions.some((entry) => entry.category === 'payout_request' && entry.status === 'pending')) {
+      return res.status(409).json({ success: false, message: 'You already have a pending USD withdrawal request.' });
+    }
+    const now = new Date();
+    const transaction = {
+      _id: new mongoose.Types.ObjectId(),
+      type: 'debit',
+      amount: roundMoney(amount),
+      currency: 'USD',
+      category: 'payout_request',
+      status: 'pending',
+      description: 'USD PayPal withdrawal awaiting administrator processing.',
+      reference: 'USD-PAYOUT-' + new mongoose.Types.ObjectId().toString().slice(-8).toUpperCase(),
+      createdAt: now,
+      updatedAt: now,
+      processedAt: null,
+      metadata: { walletCurrency: 'USD', payoutMethod: 'paypal', destination, requestedAt: now.toISOString() },
+    };
+    const updatedUser = await User.findOneAndUpdate(
+      {
+        _id: user._id,
+        isVerified: true,
+        role: 'seller',
+        sellerStatus: 'approved',
+        storeStatus: 'active',
+        accountStatus: user.accountStatus,
+        'usdWallet.availableBalance': mongoose.trusted({ $gte: amount }),
+        'usdWallet.transactions': mongoose.trusted({ $not: { $elemMatch: { category: 'payout_request', status: 'pending' } } }),
+      },
+      {
+        $inc: { 'usdWallet.availableBalance': -amount, 'usdWallet.pendingBalance': amount },
+        $set: { 'usdWallet.lastUpdatedAt': now },
+        $push: { 'usdWallet.transactions': { $each: [transaction], $position: 0 } },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!updatedUser) {
+      return res.status(409).json({ success: false, message: 'Your USD wallet changed or another withdrawal is pending. Refresh and try again.' });
+    }
+    return res.status(201).json({
+      success: true,
+      message: 'USD withdrawal request submitted. An administrator must send and confirm the PayPal payout.',
+      data: { wallet: serializeUsdWallet(updatedUser), currency: 'USD', transactionId: String(transaction._id), status: 'pending' },
+    });
+  } catch (error) {
+    console.error('USD payout request error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to create the USD withdrawal request.' });
+  }
+});
+
 router.get(
   '/admin/payouts',
   protect,
