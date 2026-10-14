@@ -298,6 +298,7 @@ const serializeUsdWallet = (user) => {
         payoutMethod: entry.metadata?.payoutMethod || undefined,
         destination: entry.metadata?.destination || undefined,
         rejectionReason: entry.metadata?.rejectionReason || undefined,
+        paypalOrderId: entry.metadata?.paypalOrderId || undefined,
       },
     }));
   return {
