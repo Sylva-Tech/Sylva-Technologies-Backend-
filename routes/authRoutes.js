@@ -121,6 +121,8 @@ const safeUser = (user) => {
   };
 };
 
+const AFRICAN_COUNTRY_CODES = new Set('DZ AO BJ BW BF BI CV CM CF TD KM CG CD CI DJ EG GQ ER SZ ET GA GM GH GN GW KE LS LR LY MG MW ML MR MU MA MZ NA NE NG RW ST SN SC SL SO ZA SS SD TZ TG TN UG ZM ZW'.split(' '));
+
 /* ============================================================
  * REGISTER
  * POST /api/auth/register
@@ -135,7 +137,8 @@ router.post(
   sellerUpload.fields([
     { name: 'idFront', maxCount: 1 },
     { name: 'idBack', maxCount: 1 },
-    { name: 'kraPin', maxCount: 1 },
+    { name: 'taxDocument', maxCount: 1 },
+    { name: 'kraPin', maxCount: 1 }, // backward compatibility for older clients
   ]),
   async (req, res) => {
     const uploadedDocuments = [];
@@ -145,28 +148,32 @@ router.post(
       const name = String(req.body?.officialName || '').trim();
       const email = normalizeEmail(req.body?.email);
       const phone = String(req.body?.mpesaPhone || '').trim().replace(/\s+/g, '');
+      const country = String(req.body?.country || '').trim().toUpperCase();
       const password = String(req.body?.password || '');
       const confirmPassword = String(req.body?.confirmPassword || '');
       const storeName = String(req.body?.storeName || '').trim();
       const storeProfile = String(req.body?.storeProfile || '').trim();
       const idType = String(req.body?.idType || '').trim();
       const idNumber = String(req.body?.idNumber || '').trim();
-      const kraPinNumber = String(req.body?.kraPinNumber || '').trim().toUpperCase();
+      const taxIdentifier = String(req.body?.taxIdentifier || req.body?.kraPinNumber || '').trim().toUpperCase();
       const privacyAccepted = String(req.body?.privacyPolicyAccepted) === 'true';
       const termsAccepted = String(req.body?.termsAndConditionsAccepted) === 'true';
       const files = req.files || {};
       const idFront = files.idFront?.[0];
       const idBack = files.idBack?.[0];
-      const kraPinFile = files.kraPin?.[0];
+      const taxDocumentFile = files.taxDocument?.[0] || files.kraPin?.[0];
 
-      if (!name || name.length < 2 || !email || !phone || !password || !storeName || !storeProfile || !idType || !idNumber || !kraPinNumber) {
-        return res.status(400).json({ success: false, message: 'Complete all required account, store, ID and KRA PIN fields.' });
+      if (!name || name.length < 2 || !email || !phone || !country || !password || !storeName || !storeProfile || !idType || !idNumber || !taxIdentifier) {
+        return res.status(400).json({ success: false, message: 'Complete all required account, country, store, ID and tax identification fields.' });
+      }
+      if (!AFRICAN_COUNTRY_CODES.has(country)) {
+        return res.status(400).json({ success: false, message: 'Select a supported African country.' });
       }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
       }
-      if (!/^\+254[17]\d{8}$/.test(phone)) {
-        return res.status(400).json({ success: false, message: 'Enter a valid Kenyan mobile number in +254 format.' });
+      if (!/^\+[1-9]\d{7,14}$/.test(phone)) {
+        return res.status(400).json({ success: false, message: 'Enter a valid international mobile number including the + country calling code.' });
       }
       if (password.length < 6 || password !== confirmPassword) {
         return res.status(400).json({ success: false, message: 'Use a password of at least 6 characters and confirm it correctly.' });
@@ -177,8 +184,11 @@ router.post(
       if (idNumber.length < 5 || idNumber.length > 50) {
         return res.status(400).json({ success: false, message: 'Enter a valid ID or passport number.' });
       }
-      if (!/^[A-Z]\d{9}[A-Z]$/.test(kraPinNumber)) {
+      if (country === 'KE' && !/^[A-Z]\d{9}[A-Z]$/.test(taxIdentifier)) {
         return res.status(400).json({ success: false, message: 'Enter a valid KRA PIN number, for example A123456789B.' });
+      }
+      if (country !== 'KE' && (taxIdentifier.length < 3 || taxIdentifier.length > 50)) {
+        return res.status(400).json({ success: false, message: 'Enter the tax identifier issued by your country (3–50 characters).' });
       }
       if (storeName.length < 2 || storeName.length > 100 || storeProfile.length < 20 || storeProfile.length > 1000) {
         return res.status(400).json({ success: false, message: 'Enter a store name and a store description between 20 and 1000 characters.' });
@@ -186,8 +196,8 @@ router.post(
       if (!privacyAccepted || !termsAccepted) {
         return res.status(400).json({ success: false, message: 'Accept the Privacy Policy and Terms & Conditions to continue.' });
       }
-      if (!idFront || !idBack || !kraPinFile) {
-        return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your KRA PIN certificate.' });
+      if (!idFront || !idBack || !taxDocumentFile) {
+        return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your country-issued tax document.' });
       }
 
       const existingUser = await User.findOne({ email });
@@ -195,12 +205,12 @@ router.post(
         return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
       }
 
-      const [frontUpload, backUpload, kraUpload] = await Promise.all([
+      const [frontUpload, backUpload, taxUpload] = await Promise.all([
         uploadBufferToCloudinary(idFront.buffer),
         uploadBufferToCloudinary(idBack.buffer),
-        uploadBufferToCloudinary(kraPinFile.buffer),
+        uploadBufferToCloudinary(taxDocumentFile.buffer),
       ]);
-      uploadedDocuments.push(frontUpload, backUpload, kraUpload);
+      uploadedDocuments.push(frontUpload, backUpload, taxUpload);
 
       const now = new Date();
       createdUser = await User.create({
@@ -221,6 +231,9 @@ router.post(
         },
         sellerProfile: {
           officialName: name,
+          country,
+          identityVerificationStatus: 'pending',
+          identityVerificationProvider: 'manual_review',
           idType,
           idNumber,
           idFrontDocument: frontUpload.public_id,
@@ -230,8 +243,10 @@ router.post(
           storeEmail: email,
           storePhone: phone,
           mpesaPhone: phone,
-          kraPin: kraPinNumber,
-          kraPinDocument: kraUpload.public_id,
+          kraPin: country === 'KE' ? taxIdentifier : '',
+          taxIdentifier,
+          taxDocument: taxUpload.public_id,
+          kraPinDocument: taxUpload.public_id,
           applicationDate: now,
         },
       });

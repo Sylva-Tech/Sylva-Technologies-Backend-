@@ -5,10 +5,38 @@ const User = require('../models/User');
 const { protect, adminOnly, requireVerified } = require('../middleware/authMiddleware');
 const router = express.Router();
 
+const financialActionWindows = new Map();
+const financialActionRateLimit = (req, res, next) => {
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000;
+  const key = String(req.user?._id || 'anonymous') + ':' + String(req.ip || req.socket?.remoteAddress || 'unknown');
+  let record = financialActionWindows.get(key);
+  if (!record || now - record.startedAt >= windowMs) {
+    record = { startedAt: now, count: 0 };
+  }
+  record.count += 1;
+  financialActionWindows.set(key, record);
+  for (const [storedKey, stored] of financialActionWindows.entries()) {
+    if (now - stored.startedAt >= windowMs) financialActionWindows.delete(storedKey);
+  }
+  if (record.count > 8) {
+    res.set('Retry-After', String(Math.ceil((windowMs - (now - record.startedAt)) / 1000)));
+    return res.status(429).json({ success: false, message: 'Too many wallet actions. Wait before trying again.' });
+  }
+  next();
+};
+
 async function platformWallet() {
   let wallet = await AdminWallet.findOne({ key: 'platform' });
   if (!wallet) wallet = await AdminWallet.create({ key: 'platform', currency: 'KES' });
   return wallet;
+}
+function normalizeKenyanPayoutPhone(value) {
+  let phone = String(value || '').trim().replace(/[\s-]/g, '');
+  if (/^0[17]\d{8}$/.test(phone)) return '254' + phone.slice(1);
+  if (/^\+254[17]\d{8}$/.test(phone)) return phone.slice(1);
+  if (/^254[17]\d{8}$/.test(phone)) return phone;
+  return '';
 }
 function safe(wallet) {
   return {
@@ -40,7 +68,7 @@ router.get('/', protect, adminOnly, requireVerified, async (req, res) => {
   }
 });
 
-router.post('/transfer-out', protect, adminOnly, requireVerified, async (req, res) => {
+router.post('/transfer-out', protect, adminOnly, requireVerified, financialActionRateLimit, async (req, res) => {
   const amount = Number(req.body?.amount);
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!Number.isFinite(amount) || amount < 100 || Math.round(amount * 100) !== amount * 100 || !email) {
@@ -81,7 +109,7 @@ router.post('/transfer-out', protect, adminOnly, requireVerified, async (req, re
   }
 });
 
-router.post('/transfer-in', protect, requireVerified, async (req, res) => {
+router.post('/transfer-in', protect, requireVerified, financialActionRateLimit, async (req, res) => {
   const amount = Number(req.body?.amount);
   if (!['customer', 'seller'].includes(req.user.role)) return res.status(403).json({ success: false, message: 'Only customer and seller wallets can transfer funds to the platform wallet.' });
   if (req.user.accountStatus !== 'active' || (req.user.role === 'seller' && (req.user.sellerStatus !== 'approved' || req.user.storeStatus !== 'active'))) return res.status(403).json({ success: false, message: 'Your account is not eligible to transfer funds.' });
@@ -116,35 +144,45 @@ router.post('/transfer-in', protect, requireVerified, async (req, res) => {
   } finally { await session.endSession(); }
 });
 
-router.post('/withdrawals', protect, adminOnly, requireVerified, async (req, res) => {
+router.post('/withdrawals', protect, adminOnly, requireVerified, financialActionRateLimit, async (req, res) => {
   const amount = Number(req.body?.amount);
   const method = String(req.body?.method || '').toLowerCase();
   let destination = String(req.body?.destination || '').trim();
-  if (!Number.isFinite(amount) || amount < 100 || Math.round(amount * 100) !== amount * 100) return res.status(400).json({ success: false, message: 'Enter a valid withdrawal amount of at least KSh 100.' });
-  if (method === 'mpesa') {
-    destination = destination.replace(/[\s-]/g, '');
-    if (/^0[17]\d{8}$/.test(destination)) destination = '254' + destination.slice(1);
-    if (/^\+254[17]\d{8}$/.test(destination)) destination = destination.slice(1);
-    if (!/^254[17]\d{8}$/.test(destination)) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan M-Pesa phone number.' });
+  if (!Number.isFinite(amount) || amount < 50 || Math.round(amount * 100) !== amount * 100) return res.status(400).json({ success: false, message: 'Enter a valid withdrawal amount of at least KSh 50.' });
+  if (method === 'mpesa' || method === 'airtel_money') {
+    destination = normalizeKenyanPayoutPhone(destination);
+    if (!destination) return res.status(400).json({ success: false, message: method === 'airtel_money' ? 'Enter a valid Kenyan Airtel Money phone number.' : 'Enter a valid Kenyan M-Pesa phone number.' });
   } else if (method === 'bank') {
     if (destination.length < 5 || destination.length > 200) return res.status(400).json({ success: false, message: 'Enter valid bank payout details.' });
-  } else return res.status(400).json({ success: false, message: 'Choose M-Pesa or bank.' });
+  } else return res.status(400).json({ success: false, message: 'Choose M-Pesa, Airtel Money, or bank.' });
   try {
-    const wallet = await platformWallet();
-    if (Number(wallet.availableBalance || 0) < amount) return res.status(409).json({ success: false, message: 'Insufficient available platform funds.' });
+    await platformWallet();
     const ref = 'WITHDRAW-' + new mongoose.Types.ObjectId().toString().toUpperCase();
-    wallet.availableBalance = Number((wallet.availableBalance - amount).toFixed(2));
-    wallet.pendingBalance = Number((wallet.pendingBalance + amount).toFixed(2));
-    wallet.lastUpdatedAt = new Date();
-    wallet.transactions.push({ type: 'debit', amount, category: 'withdrawal_request', status: 'pending', description: 'Platform withdrawal awaiting external payout processing.', reference: ref, metadata: { payoutMethod: method, destination, requestedBy: String(req.user._id) } });
-    await wallet.save();
-    return res.status(202).json({ success: true, message: 'Withdrawal request saved and funds reserved. The M-Pesa or bank transfer still needs to be sent and confirmed externally.', data: { reference: ref, amount, method, status: 'pending' } });
+    const now = new Date();
+    const updated = await AdminWallet.findOneAndUpdate(
+      { key: 'platform', availableBalance: mongoose.trusted({ $gte: amount }) },
+      {
+        $inc: { availableBalance: -amount, pendingBalance: amount },
+        $set: { lastUpdatedAt: now },
+        $push: { transactions: {
+          type: 'debit', amount, category: 'withdrawal_request', status: 'pending',
+          description: 'Platform withdrawal awaiting external payout processing.',
+          reference: ref,
+          metadata: { payoutMethod: method, destination, requestedBy: String(req.user._id), requestedAt: now.toISOString() },
+          createdAt: now, updatedAt: now,
+        } },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!updated) return res.status(409).json({ success: false, message: 'Insufficient available platform funds or wallet changed. Refresh and try again.' });
+    return res.status(202).json({ success: true, message: 'Withdrawal request saved and funds reserved. The external M-Pesa, Airtel Money or bank payout must still be sent and confirmed.', data: { reference: ref, amount, method, status: 'pending' } });
   } catch (error) {
+    console.error('Platform withdrawal request error:', error.message);
     return res.status(500).json({ success: false, message: 'Unable to create withdrawal request.' });
   }
 });
 
-router.patch('/withdrawals/:transactionId', protect, adminOnly, requireVerified, async (req, res) => {
+router.patch('/withdrawals/:transactionId', protect, adminOnly, requireVerified, financialActionRateLimit, async (req, res) => {
   const decision = String(req.body?.decision || '').toLowerCase();
   const reason = String(req.body?.reason || '').trim().slice(0, 300);
   if (!['paid', 'rejected'].includes(decision)) return res.status(400).json({ success: false, message: 'Choose paid or rejected.' });
@@ -154,16 +192,36 @@ router.patch('/withdrawals/:transactionId', protect, adminOnly, requireVerified,
     const wallet = await platformWallet();
     const tx = wallet.transactions.id(req.params.transactionId);
     if (!tx || tx.category !== 'withdrawal_request' || tx.status !== 'pending') return res.status(404).json({ success: false, message: 'Pending withdrawal not found.' });
-    if (Number(wallet.pendingBalance || 0) < Number(tx.amount || 0)) return res.status(409).json({ success: false, message: 'Platform pending balance does not cover this withdrawal.' });
-    wallet.pendingBalance = Number((wallet.pendingBalance - tx.amount).toFixed(2));
-    tx.status = decision === 'paid' ? 'paid' : 'rejected';
-    tx.processedAt = new Date();
-    tx.description = decision === 'paid' ? 'External payout confirmed as sent by admin.' : 'Withdrawal rejected; funds returned to available platform balance.';
-    tx.metadata = { ...(tx.metadata || {}), reviewedBy: String(req.user._id), reviewedAt: new Date().toISOString(), ...(decision === 'rejected' ? { rejectionReason: reason } : {}) };
-    if (decision === 'rejected') wallet.availableBalance = Number((wallet.availableBalance + tx.amount).toFixed(2));
-    wallet.lastUpdatedAt = new Date();
-    await wallet.save();
-    return res.json({ success: true, message: decision === 'paid' ? 'Marked paid. Only do this after the external M-Pesa/bank transfer is complete.' : 'Withdrawal rejected and funds returned.', data: safe(wallet) });
+    const amount = Number(tx.amount || 0);
+    if (!Number.isFinite(amount) || amount < 50) return res.status(409).json({ success: false, message: 'Withdrawal amount is invalid and requires review.' });
+    const now = new Date();
+    const update = {
+      $inc: {
+        pendingBalance: -amount,
+        ...(decision === 'rejected' ? { availableBalance: amount } : {}),
+      },
+      $set: {
+        lastUpdatedAt: now,
+        'transactions.$.status': decision === 'paid' ? 'paid' : 'rejected',
+        'transactions.$.processedAt': now,
+        'transactions.$.updatedAt': now,
+        'transactions.$.description': decision === 'paid' ? 'External payout confirmed as sent by admin.' : 'Withdrawal rejected; funds returned to available platform balance.',
+        'transactions.$.metadata.reviewedBy': String(req.user._id),
+        'transactions.$.metadata.reviewedAt': now.toISOString(),
+        ...(decision === 'rejected' ? { 'transactions.$.metadata.rejectionReason': reason } : {}),
+      },
+    };
+    const updated = await AdminWallet.findOneAndUpdate(
+      {
+        key: 'platform',
+        pendingBalance: mongoose.trusted({ $gte: amount }),
+        transactions: mongoose.trusted({ $elemMatch: { _id: tx._id, category: 'withdrawal_request', status: 'pending' } }),
+      },
+      update,
+      { new: true, runValidators: true }
+    );
+    if (!updated) return res.status(409).json({ success: false, message: 'This withdrawal was already processed or the pending balance changed. Refresh and review the ledger.' });
+    return res.json({ success: true, message: decision === 'paid' ? 'Marked paid. Only do this after the external M-Pesa, Airtel Money or bank transfer is complete.' : 'Withdrawal rejected and funds returned.', data: safe(updated) });
   } catch (error) {
     console.error('Platform withdrawal review error:', error.message);
     return res.status(500).json({ success: false, message: 'Unable to update withdrawal request.' });

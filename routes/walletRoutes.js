@@ -37,21 +37,13 @@ const payoutRateLimitStore = new Map();
 const PAYOUT_RATE_WINDOW_MS = 15 * 60 * 1000;
 const PAYOUT_RATE_MAX_REQUESTS = 5;
 
-const getClientIp = (req) => {
-  const forwarded = req.headers['x-forwarded-for'];
-
-  if (forwarded) {
-    return String(forwarded)
-      .split(',')[0]
-      .trim();
-  }
-
-  return (
-    req.ip ||
-    req.socket?.remoteAddress ||
-    'unknown'
-  );
-};
+const getClientIp = (req) => (
+  // app.js configures Express trust proxy; use its resolved client IP rather
+  // than trusting a caller-supplied X-Forwarded-For header directly.
+  req.ip ||
+  req.socket?.remoteAddress ||
+  'unknown'
+);
 
 const cleanupRateLimitStore = () => {
   const now = Date.now();
@@ -275,6 +267,87 @@ const serializeSellerTransaction = (
   };
 };
 
+const ensureUsdWallet = (user) => {
+  if (!user.usdWallet) user.usdWallet = {};
+  const wallet = user.usdWallet;
+  wallet.currency = 'USD';
+  wallet.availableBalance = roundMoney(wallet.availableBalance || 0);
+  wallet.pendingBalance = roundMoney(wallet.pendingBalance || 0);
+  wallet.transactions = Array.isArray(wallet.transactions) ? wallet.transactions : [];
+  wallet.lastUpdatedAt = wallet.lastUpdatedAt || new Date();
+  user.usdWallet = wallet;
+  return wallet;
+};
+
+const serializeUsdWallet = (user) => {
+  const wallet = ensureUsdWallet(user);
+  const transactions = [...wallet.transactions]
+    .sort((a, b) => new Date(b.createdAt || b.processedAt || 0) - new Date(a.createdAt || a.processedAt || 0))
+    .map((entry) => ({
+      _id: entry._id,
+      type: entry.type || 'credit',
+      amount: roundMoney(entry.amount || 0),
+      currency: 'USD',
+      category: entry.category || 'manual_adjustment',
+      status: entry.status || 'pending',
+      description: entry.description || '',
+      reference: entry.reference || '',
+      createdAt: entry.createdAt || null,
+      processedAt: entry.processedAt || null,
+      metadata: {
+        payoutMethod: entry.metadata?.payoutMethod || undefined,
+        destination: entry.metadata?.destination || undefined,
+        rejectionReason: entry.metadata?.rejectionReason || undefined,
+        paypalOrderId: entry.metadata?.paypalOrderId || undefined,
+      },
+    }));
+  return {
+    currency: 'USD',
+    availableBalance: roundMoney(wallet.availableBalance),
+    pendingBalance: roundMoney(wallet.pendingBalance),
+    totalBalance: roundMoney(wallet.availableBalance + wallet.pendingBalance),
+    lastUpdatedAt: wallet.lastUpdatedAt || null,
+    transactions,
+  };
+};
+
+const paypalApiBase = () => (
+  String(process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'sandbox').toLowerCase() === 'live'
+    ? 'https://api-m.paypal.com'
+    : 'https://api-m.sandbox.paypal.com'
+);
+
+const getPayPalAccessToken = async () => {
+  const clientId = process.env.PAYPAL_CLIENT_ID;
+  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    const error = new Error('PayPal is not configured on the server.');
+    error.statusCode = 503;
+    throw error;
+  }
+  const response = await axios.post(
+    paypalApiBase() + '/v1/oauth2/token',
+    'grant_type=client_credentials',
+    {
+      auth: { username: clientId, password: clientSecret },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 15000,
+    }
+  );
+  if (!response.data?.access_token) throw new Error('PayPal did not return an access token.');
+  return response.data.access_token;
+};
+
+const isInternationalSeller = (user) => (
+  user?.role === 'seller' &&
+  String(user.sellerProfile?.country || 'KE').toUpperCase() !== 'KE' &&
+  user.sellerStatus === 'approved' &&
+  user.sellerProfile?.identityVerificationStatus === 'verified' &&
+  ['active', 'warning'].includes(user.accountStatus) &&
+  user.storeStatus === 'active' &&
+  user.isVerified === true
+);
+
 /*
 |--------------------------------------------------------------------------
 | Serialize complete seller wallet
@@ -403,11 +476,11 @@ const validatePayoutAmount = (
     };
   }
 
-  if (amount < 100) {
+  if (amount < 50) {
     return {
       valid: false,
       message:
-        'The minimum payout amount is KSh 100.',
+        'The minimum withdrawal amount is KSh 50.',
     };
   }
 
@@ -492,7 +565,8 @@ const validatePayoutDestination = (
   ).trim();
 
   if (
-    payoutMethod === 'mpesa'
+    payoutMethod === 'mpesa' ||
+    payoutMethod === 'airtel_money'
   ) {
     const normalized =
       normalizeKenyanPhone(value);
@@ -500,15 +574,29 @@ const validatePayoutDestination = (
     if (!normalized) {
       return {
         valid: false,
-        message:
-          'Please provide a valid Kenyan M-Pesa phone number.',
+        message: payoutMethod === 'airtel_money'
+          ? 'Please provide a valid Kenyan Airtel Money phone number.'
+          : 'Please provide a valid Kenyan M-Pesa phone number.',
       };
     }
 
     return {
       valid: true,
-      destination:
-        normalized,
+      destination: normalized,
+    };
+  }
+
+  if (payoutMethod === 'paypal') {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) || value.length > 254) {
+      return {
+        valid: false,
+        message: 'Enter a valid email address linked to the recipient PayPal account.',
+      };
+    }
+
+    return {
+      valid: true,
+      destination: value.toLowerCase(),
     };
   }
 
@@ -543,7 +631,7 @@ const validatePayoutDestination = (
   return {
     valid: false,
     message:
-      'Unsupported payout method. Choose M-Pesa or bank.',
+      'Unsupported payout method. Choose M-Pesa, Airtel Money, PayPal, or bank.',
   };
 };
 
@@ -580,9 +668,20 @@ router.get(
         });
       }
 
+      const walletData = serializeWallet(user);
+      const international = user.role === 'seller' &&
+        String(user.sellerProfile?.country || 'KE').toUpperCase() !== 'KE';
       return res.json({
         success: true,
-        data: serializeWallet(user),
+        data: {
+          ...walletData,
+          usdWallet: international ? serializeUsdWallet(user) : null,
+          sellerCountry: user.role === 'seller' ? (user.sellerProfile?.country || 'KE') : null,
+          sellerStatus: user.role === 'seller' ? (user.sellerStatus || 'pending') : null,
+          sellerEmailVerified: user.role === 'seller' ? user.isVerified === true : null,
+          sellerStoreStatus: user.role === 'seller' ? (user.storeStatus || 'inactive') : null,
+          sellerIdentityVerificationStatus: user.role === 'seller' ? (user.sellerProfile?.identityVerificationStatus || 'pending') : null,
+        },
       });
     } catch (error) {
       console.error(
@@ -753,6 +852,7 @@ router.post(
       if (
         ![
           'mpesa',
+          'airtel_money',
           'bank',
         ].includes(
           payoutMethod
@@ -903,112 +1003,75 @@ router.post(
         });
       }
 
-      /*
-       * Move available -> pending.
-       */
-      wallet.availableBalance =
-        roundMoney(
-          availableBalance -
-            amount
-        );
-
-      wallet.pendingBalance =
-        roundMoney(
-          pendingBalance +
-            amount
-        );
-
-      wallet.lastUpdatedAt =
-        new Date();
-
-      /*
-       * Create transaction ID.
-       */
-      const transactionId =
-        new mongoose.Types.ObjectId();
-
-      const now =
-        new Date();
-
-      const transactionReference =
-        `payout-${Date.now()}-${transactionId
-          .toString()
-          .slice(-6)}`;
-
-      /*
-       * Create payout transaction.
-       */
+      const now = new Date();
+      const transactionId = new mongoose.Types.ObjectId();
       const transaction = {
         _id: transactionId,
-
         type: 'debit',
-
         amount,
-
-        category:
-          'payout_request',
-
-        status:
-          'pending',
-
-        description:
-          (user.role === 'seller' ? 'Seller' : 'Customer') + ' wallet withdrawal request submitted for admin review.',
-
-        reference:
-          transactionReference,
-
-        relatedOrder:
-          null,
-
-        createdAt:
-          now,
-
-        processedAt:
-          null,
-
-        updatedAt:
-          now,
-
+        category: 'payout_request',
+        status: 'pending',
+        description: 'Wallet withdrawal request awaiting administrator processing.',
+        reference: 'PAYOUT-' + transactionId.toString().slice(-8).toUpperCase(),
+        createdAt: now,
+        updatedAt: now,
+        processedAt: null,
         metadata: {
+          walletCurrency: 'KES',
           payoutMethod,
-
-          destination:
-            payoutDestination,
-
-          requestedAt:
-            now.toISOString(),
+          destination: payoutDestination,
+          requestedAt: now.toISOString(),
         },
       };
 
       /*
-       * Add newest transaction first.
+       * Reserve funds atomically. The query rechecks the balance and pending
+       * payout condition at write time, so concurrent requests cannot spend
+       * the same available funds or create multiple pending payouts.
        */
-      wallet.transactions.unshift(
-        transaction
+      const updateFilter = {
+        _id: user._id,
+        isVerified: true,
+        role: user.role,
+        accountStatus: user.accountStatus,
+        'wallet.availableBalance': mongoose.trusted({ $gte: amount }),
+        'wallet.transactions': mongoose.trusted({
+          $not: { $elemMatch: { category: 'payout_request', status: 'pending' } },
+        }),
+      };
+      if (user.role === 'seller') {
+        updateFilter.sellerStatus = 'approved';
+        updateFilter.storeStatus = 'active';
+      }
+
+      const updatedUser = await User.findOneAndUpdate(
+        updateFilter,
+        {
+          $inc: {
+            'wallet.availableBalance': -amount,
+            'wallet.pendingBalance': amount,
+          },
+          $set: { 'wallet.lastUpdatedAt': now },
+          $push: { 'wallet.transactions': { $each: [transaction], $position: 0 } },
+        },
+        { new: true, runValidators: true }
       );
 
-      /*
-       * Save wallet.
-       */
-      await user.save();
+      if (!updatedUser) {
+        return res.status(409).json({
+          success: false,
+          message: 'Your wallet changed or a withdrawal is already pending. Refresh your wallet and try again.',
+        });
+      }
 
-      /*
-       * Return safe response.
-       */
+      const savedTransaction = updatedUser.wallet.transactions.id(transactionId);
+
       return res.status(201).json({
         success: true,
-
-        message:
-          'Withdrawal request submitted successfully and is awaiting payout processing.',
-
+        message: 'Withdrawal request submitted successfully and is awaiting payout processing.',
         data: {
-          wallet:
-            serializeWallet(user),
-
-          transaction:
-            serializeSellerTransaction(
-              transaction
-            ),
+          wallet: serializeWallet(updatedUser),
+          transaction: serializeSellerTransaction(savedTransaction || transaction),
         },
       });
     } catch (error) {
@@ -1035,6 +1098,73 @@ router.post(
 |--------------------------------------------------------------------------
 */
 
+/* USD-only PayPal withdrawal request. Payouts are manually processed by an
+   authorized admin; requesting one does not send money automatically. */
+router.post('/payout-request-usd', protect, payoutRateLimit, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!isInternationalSeller(user)) {
+      return res.status(403).json({ success: false, message: 'USD withdrawals are available to verified, approved sellers registered outside Kenya.' });
+    }
+    const amount = Number(req.body?.amount);
+    if (!Number.isFinite(amount) || Math.round(amount * 100) / 100 !== amount || amount < 10 || amount > 10000) {
+      return res.status(400).json({ success: false, message: 'Enter a USD withdrawal amount between $10.00 and $10,000.00.' });
+    }
+    const destination = String(req.body?.destination || '').trim().toLowerCase();
+    if (destination.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(destination)) {
+      return res.status(400).json({ success: false, message: 'Enter a valid email address for your PayPal account.' });
+    }
+    const wallet = ensureUsdWallet(user);
+    if (wallet.transactions.some((entry) => entry.category === 'payout_request' && entry.status === 'pending')) {
+      return res.status(409).json({ success: false, message: 'You already have a pending USD withdrawal request.' });
+    }
+    const now = new Date();
+    const transaction = {
+      _id: new mongoose.Types.ObjectId(),
+      type: 'debit',
+      amount: roundMoney(amount),
+      currency: 'USD',
+      category: 'payout_request',
+      status: 'pending',
+      description: 'USD PayPal withdrawal awaiting administrator processing.',
+      reference: 'USD-PAYOUT-' + new mongoose.Types.ObjectId().toString().slice(-8).toUpperCase(),
+      createdAt: now,
+      updatedAt: now,
+      processedAt: null,
+      metadata: { walletCurrency: 'USD', payoutMethod: 'paypal', destination, requestedAt: now.toISOString() },
+    };
+    const updatedUser = await User.findOneAndUpdate(
+      {
+        _id: user._id,
+        isVerified: true,
+        role: 'seller',
+        sellerStatus: 'approved',
+        storeStatus: 'active',
+        accountStatus: user.accountStatus,
+        'usdWallet.availableBalance': mongoose.trusted({ $gte: amount }),
+        'usdWallet.transactions': mongoose.trusted({ $not: { $elemMatch: { category: 'payout_request', status: 'pending' } } }),
+      },
+      {
+        $inc: { 'usdWallet.availableBalance': -amount, 'usdWallet.pendingBalance': amount },
+        $set: { 'usdWallet.lastUpdatedAt': now },
+        $push: { 'usdWallet.transactions': { $each: [transaction], $position: 0 } },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!updatedUser) {
+      return res.status(409).json({ success: false, message: 'Your USD wallet changed or another withdrawal is pending. Refresh and try again.' });
+    }
+    return res.status(201).json({
+      success: true,
+      message: 'USD withdrawal request submitted. An administrator must send and confirm the PayPal payout.',
+      data: { wallet: serializeUsdWallet(updatedUser), currency: 'USD', transactionId: String(transaction._id), status: 'pending' },
+    });
+  } catch (error) {
+    console.error('USD payout request error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to create the USD withdrawal request.' });
+  }
+});
+
 router.get(
   '/admin/payouts',
   protect,
@@ -1042,20 +1172,14 @@ router.get(
   requireVerified,
   async (req, res) => {
     try {
-      const payoutAccounts = await User.find(
-        mongoose.trusted({
-          role: { $in: ['seller', 'customer'] },
-          'wallet.transactions': {
-            $elemMatch: {
-              category: 'payout_request',
-              status: 'pending',
-            },
-          },
-        })
-      )
-          .select(
-            'name email phone role sellerProfile wallet'
-          )
+      const payoutAccounts = await User.find({
+        role: mongoose.trusted({ $in: ['seller', 'customer'] }),
+        $or: [
+          { 'wallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
+          { 'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
+        ],
+      })
+          .select('name email phone role sellerProfile wallet usdWallet')
           .lean();
 
       const pendingPayouts =
@@ -1129,6 +1253,7 @@ router.get(
                   0
               ),
 
+            currency: 'KES',
             status:
               entry.status,
 
@@ -1149,6 +1274,26 @@ router.get(
             createdAt:
               entry.createdAt ||
               null,
+          });
+        }
+      }
+
+      // Include pending USD-wallet payouts in the same admin review queue.
+      for (const seller of payoutAccounts) {
+        for (const entry of (Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [])) {
+          if (entry.category !== 'payout_request' || entry.status !== 'pending') continue;
+          pendingPayouts.push({
+            _id: entry._id,
+            account: { role: seller.role, _id: seller._id, name: seller.name || '', email: seller.email || '', phone: seller.phone || '', storeName: seller.sellerProfile?.storeName || '', mpesaPhone: seller.sellerProfile?.mpesaPhone || '' },
+            seller: { _id: seller._id, name: seller.name || '', email: seller.email || '', phone: seller.phone || '', storeName: seller.sellerProfile?.storeName || '', mpesaPhone: seller.sellerProfile?.mpesaPhone || '' },
+            type: entry.type || 'debit',
+            amount: roundMoney(entry.amount || 0),
+            currency: 'USD',
+            status: entry.status,
+            payoutMethod: entry.metadata?.payoutMethod || 'paypal',
+            destination: entry.metadata?.destination || '',
+            reference: entry.reference || '',
+            createdAt: entry.createdAt || null,
           });
         }
       }
@@ -1303,8 +1448,10 @@ router.patch(
        */
       const seller =
         await User.findOne({
-          'wallet.transactions._id':
-            transactionId,
+          $or: [
+            { 'wallet.transactions._id': transactionId },
+            { 'usdWallet.transactions._id': transactionId },
+          ],
         });
 
       if (!seller) {
@@ -1338,15 +1485,9 @@ router.patch(
         });
       }
 
-      const wallet =
-        ensureWallet(
-          seller
-        );
-
-      const tx =
-        wallet.transactions.id(
-          transactionId
-        );
+      const isUsdPayout = (seller.usdWallet?.transactions || []).some((entry) => String(entry._id) === String(transactionId));
+      const wallet = isUsdPayout ? ensureUsdWallet(seller) : ensureWallet(seller);
+      const tx = wallet.transactions.id(transactionId);
 
       if (!tx) {
         return res.status(404).json({
@@ -1410,15 +1551,9 @@ router.patch(
         });
       }
 
-      const currentPendingBalance =
-        roundMoney(
-          wallet.pendingBalance
-        );
-
-      const currentAvailableBalance =
-        roundMoney(
-          wallet.availableBalance
-        );
+      const currentPendingBalance = roundMoney(wallet.pendingBalance);
+      const currentAvailableBalance = roundMoney(wallet.availableBalance);
+      const currencyLabel = isUsdPayout ? 'USD' : 'KES';
 
       /*
        * IMPORTANT:
@@ -1434,7 +1569,7 @@ router.patch(
         payoutAmount
       ) {
         console.error(
-          `Wallet integrity mismatch while processing payout ${transactionId} for seller ${seller._id}`
+          `Wallet integrity mismatch while processing ${currencyLabel} payout ${transactionId} for seller ${seller._id}`
         );
 
         return res.status(409).json({
@@ -1684,8 +1819,8 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       return res.status(403).json({ success: false, message: 'Verify your account first. Deposits are available to verified customers, approved active sellers, and verified administrators.' });
     }
     const amount = Number(req.body?.amount);
-    if (!Number.isSafeInteger(amount) || amount < 100 || amount > 150000) {
-      return res.status(400).json({ success: false, message: 'Enter a whole-number deposit between KSh 100 and KSh 150,000.' });
+    if (!Number.isSafeInteger(amount) || amount < 10 || amount > 150000) {
+      return res.status(400).json({ success: false, message: 'Enter a whole-number deposit between KSh 10 and KSh 150,000.' });
     }
     const phone = normalizeStkPhone(req.body?.phone || user.sellerProfile?.mpesaPhone || user.phone);
     if (!phone) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan M-Pesa phone number.' });
@@ -1716,6 +1851,30 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       });
     }
 
+    const idempotencyKey = String(req.get('Idempotency-Key') || req.body?.idempotencyKey || '').trim();
+    if (idempotencyKey && (idempotencyKey.length < 8 || idempotencyKey.length > 120 || !/^[a-zA-Z0-9._:-]+$/.test(idempotencyKey))) {
+      return res.status(400).json({ success: false, message: 'Invalid deposit request key. Please refresh the page and try again.' });
+    }
+
+    if (idempotencyKey) {
+      const existing = isAdminDeposit
+        ? await AdminWallet.findOne({ key: 'platform', transactions: { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } })
+        : await User.findOne({ _id: user._id, 'wallet.transactions': { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } });
+      const existingTx = isAdminDeposit
+        ? existing?.transactions.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey)
+        : existing?.wallet?.transactions?.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey);
+      if (existingTx) {
+        if (existingTx.status === 'failed') {
+          return res.status(409).json({ success: false, message: 'This deposit attempt has already failed. Start a new deposit request.', data: { status: existingTx.status, transactionId: String(existingTx._id) } });
+        }
+        return res.status(202).json({
+          success: true,
+          message: existingTx.status === 'completed' ? 'This deposit was already confirmed.' : 'This deposit request already exists; do not initiate another payment.',
+          data: { transactionId: String(existingTx._id), status: existingTx.status, checkoutRequestId: existingTx.metadata?.checkoutRequestID || null, amount: existingTx.amount, reference: existingTx.reference },
+        });
+      }
+    }
+
     const now = new Date();
     const transactionId = new mongoose.Types.ObjectId();
     const accountLabel = getWalletAccountLabel(user);
@@ -1725,7 +1884,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       _id: transactionId, type: 'credit', amount, category: 'mpesa_topup',
       status: 'pending', description: 'Wallet deposit awaiting M-Pesa confirmation.',
       reference: `${accountDisplayName} ${internalReference}`, createdAt: now, updatedAt: now, processedAt: null,
-      metadata: { provider: 'safaricom-daraja', phone, initiatedBy: String(user._id), walletOwnerType: isAdminDeposit ? 'platform' : 'user', accountReference: accountLabel, accountDisplayName, internalReference },
+      metadata: { provider: 'safaricom-daraja', phone, initiatedBy: String(user._id), walletOwnerType: isAdminDeposit ? 'platform' : 'user', accountReference: accountLabel, accountDisplayName, internalReference, ...(idempotencyKey ? { idempotencyKey } : {}) },
     };
     if (isAdminDeposit) {
       let platformWallet = await AdminWallet.findOne({ key: 'platform' });
@@ -1742,10 +1901,16 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       await user.save();
     }
 
+    let providerAccepted = false;
+    let stkRequestStarted = false;
+    let providerRejected = false;
+    let acceptedCheckoutRequestID = '';
+    let acceptedMerchantRequestID = '';
     try {
       const credentials = await getMpesaAccessToken();
       const timestamp = getMpesaTimestamp();
       const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
+      stkRequestStarted = true;
       const response = await axios.post(credentials.host + '/mpesa/stkpush/v1/processrequest', {
         BusinessShortCode: shortcode, Password: password, Timestamp: timestamp,
         TransactionType: 'CustomerPayBillOnline', Amount: amount, PartyA: phone,
@@ -1754,12 +1919,16 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       }, { headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' }, timeout: 20000 });
 
       if (response.data?.ResponseCode !== '0' || !response.data?.CheckoutRequestID) {
+        providerRejected = true;
         throw new Error(response.data?.ResponseDescription || 'M-Pesa did not accept the STK request.');
       }
+      providerAccepted = true;
+      acceptedCheckoutRequestID = String(response.data.CheckoutRequestID);
+      acceptedMerchantRequestID = String(response.data.MerchantRequestID || '');
       transaction.metadata = {
         ...transaction.metadata,
-        merchantRequestID: response.data.MerchantRequestID,
-        checkoutRequestID: response.data.CheckoutRequestID,
+        merchantRequestID: acceptedMerchantRequestID,
+        checkoutRequestID: acceptedCheckoutRequestID,
       };
       transaction.description = 'Deposit requested. Awaiting M-Pesa confirmation.';
       transaction.updatedAt = new Date();
@@ -1778,14 +1947,27 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       return res.status(202).json({
         success: true,
         message: 'Deposit request sent. Enter your M-Pesa PIN; the wallet updates after payment is confirmed.',
-        data: { reference: accountDisplayName, accountReference: accountLabel, checkoutRequestId: response.data.CheckoutRequestID, amount, phone: '+' + phone },
+        data: { transactionId: String(transaction._id), reference: accountDisplayName, accountReference: accountLabel, checkoutRequestId: response.data.CheckoutRequestID, amount, phone: '+' + phone, status: 'pending' },
       });
     } catch (providerError) {
-      transaction.status = 'failed';
-      transaction.description = 'Wallet deposit request could not be started.';
-      transaction.processedAt = new Date();
+      // A network timeout or server error after STK submission is ambiguous: the
+      // customer may have approved payment. Keep it pending and correlate callbacks;
+      // never label an uncertain payment failed and allow a second charge.
+      const uncertain = providerAccepted || (stkRequestStarted && !providerRejected &&
+        (!providerError.response || Number(providerError.response.status) >= 500));
+      transaction.status = uncertain ? 'pending' : 'failed';
+      transaction.description = uncertain
+        ? 'Deposit request status is uncertain; awaiting Safaricom confirmation or reconciliation.'
+        : 'Wallet deposit request could not be started.';
+      transaction.processedAt = uncertain ? null : new Date();
       transaction.updatedAt = new Date();
-      transaction.metadata = { ...transaction.metadata, providerError: 'Deposit initiation failed' };
+      transaction.metadata = {
+        ...transaction.metadata,
+        ...(acceptedCheckoutRequestID ? { checkoutRequestID: acceptedCheckoutRequestID } : {}),
+        ...(acceptedMerchantRequestID ? { merchantRequestID: acceptedMerchantRequestID } : {}),
+        ...(uncertain ? { initiationUncertain: true, reconciliationRequired: true } : {}),
+        providerError: uncertain ? 'Deposit initiation status uncertain' : 'Deposit initiation rejected',
+      };
       if (isAdminDeposit) {
         const platformWallet = await AdminWallet.findOne({ key: 'platform' });
         const savedTransaction = platformWallet?.transactions.id(transactionId);
@@ -1800,11 +1982,318 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       } else {
         await user.save();
       }
+      if (uncertain) {
+        return res.status(202).json({
+          success: true,
+          message: 'The STK request status is not yet certain. Do not pay again; Sylva is waiting for Safaricom confirmation.',
+          data: { transactionId: String(transaction._id), checkoutRequestId: acceptedCheckoutRequestID || null, amount, status: 'pending', reconciliationRequired: true },
+        });
+      }
       throw providerError;
     }
   } catch (error) {
     console.error('M-Pesa deposit initiation failed:', error.response?.data || error.message);
-    return res.status(502).json({ success: false, message: 'Unable to start the deposit. Check the number and try again.' });
+    return res.status(502).json({
+      success: false,
+      message: 'Unable to start the deposit. Check the transaction status before trying again.',
+      ...(transaction?._id ? { data: { transactionId: String(transaction._id), status: transaction.status || 'pending' } } : {}),
+    });
+  }
+});
+
+/* Authenticated deposit status: a seller can only inspect their own deposit. */
+/* PayPal USD deposits: create a server-priced order, then credit only
+   after the authenticated owner captures it and PayPal confirms USD amount/status. */
+router.post('/topup/paypal/create-order', protect, payoutRateLimit, async (req, res) => {
+  let user;
+  let transaction;
+  try {
+    user = await User.findById(req.user._id);
+    if (!isInternationalSeller(user)) {
+      return res.status(403).json({ success: false, message: 'PayPal USD deposits are available to verified, approved sellers registered outside Kenya.' });
+    }
+    const amount = Number(req.body?.amount);
+    if (!Number.isFinite(amount) || Math.round(amount * 100) !== amount * 100 || amount < 1 || amount > 10000) {
+      return res.status(400).json({ success: false, message: 'Enter a USD deposit amount between $1.00 and $10,000.00.' });
+    }
+    const wallet = ensureUsdWallet(user);
+    const now = new Date();
+    transaction = {
+      _id: new mongoose.Types.ObjectId(),
+      type: 'credit',
+      amount: roundMoney(amount),
+      currency: 'USD',
+      category: 'paypal_topup',
+      status: 'pending',
+      description: 'PayPal USD wallet deposit awaiting capture.',
+      reference: '',
+      createdAt: now,
+      updatedAt: now,
+      processedAt: null,
+      metadata: { provider: 'paypal', currency: 'USD', amount: roundMoney(amount) },
+    };
+    wallet.transactions.unshift(transaction);
+    wallet.lastUpdatedAt = now;
+    await user.save();
+
+    const accessToken = await getPayPalAccessToken();
+    const frontendUrl = String(process.env.FRONTEND_URL || 'https://www.sylvatechnologies.co.ke').replace(/\/$/, '');
+    const orderResponse = await axios.post(
+      paypalApiBase() + '/v2/checkout/orders',
+      {
+        intent: 'CAPTURE',
+        purchase_units: [{
+          reference_id: String(transaction._id),
+          custom_id: String(user._id),
+          description: 'Sylva Technologies USD wallet deposit',
+          amount: { currency_code: 'USD', value: amount.toFixed(2) },
+        }],
+        application_context: {
+          brand_name: 'Sylva Technologies',
+          user_action: 'PAY_NOW',
+          return_url: frontendUrl + '/seller/wallet?paypal=return',
+          cancel_url: frontendUrl + '/seller/wallet?paypal=cancel',
+        },
+      },
+      {
+        headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+        timeout: 20000,
+      }
+    );
+    const order = orderResponse.data;
+    const approvalUrl = order?.links?.find((link) => link.rel === 'approve')?.href;
+    if (!order?.id || !approvalUrl) throw new Error('PayPal did not return an approval URL.');
+    const savedTx = wallet.transactions.id(transaction._id);
+    if (!savedTx) throw new Error('PayPal deposit transaction could not be saved.');
+    savedTx.metadata = { ...(savedTx.metadata || {}), paypalOrderId: order.id };
+    await user.save();
+    return res.status(201).json({
+      success: true,
+      message: 'PayPal order created. Approve it on PayPal to continue.',
+      data: { transactionId: String(transaction._id), orderId: order.id, approvalUrl, currency: 'USD', amount: roundMoney(amount) },
+    });
+  } catch (error) {
+    if (user && transaction?._id) {
+      try {
+        const tx = user.usdWallet?.transactions?.id(transaction._id);
+        if (tx && tx.status === 'pending' && !tx.metadata?.paypalOrderId) {
+          tx.status = 'failed';
+          tx.description = 'PayPal order could not be created.';
+          tx.processedAt = new Date();
+          await user.save();
+        }
+      } catch (saveError) {
+        console.error('PayPal order failure ledger update error:', saveError.message);
+      }
+    }
+    console.error('PayPal create-order error:', error.response?.data || error.message);
+    return res.status(error.statusCode || 502).json({
+      success: false,
+      message: error.statusCode === 503 ? error.message : 'Unable to start PayPal deposit. No USD wallet credit was made.',
+    });
+  }
+});
+
+router.post('/topup/paypal/cancel', protect, async (req, res) => {
+  try {
+    const orderId = String(req.body?.orderId || '').trim();
+    if (!/^[A-Z0-9-]{8,80}$/i.test(orderId)) return res.status(400).json({ success: false, message: 'Invalid PayPal order reference.' });
+    const user = await User.findById(req.user._id);
+    if (!isInternationalSeller(user)) return res.status(403).json({ success: false, message: 'Only verified international sellers can cancel a USD wallet deposit.' });
+    const tx = user.usdWallet?.transactions?.find((entry) => entry.metadata?.paypalOrderId === orderId);
+    if (!tx) return res.status(404).json({ success: false, message: 'PayPal deposit was not found in this wallet.' });
+    if (tx.status === 'completed') return res.status(409).json({ success: false, message: 'This payment is already completed and cannot be cancelled here.' });
+    if (tx.status === 'pending') {
+      tx.status = 'failed';
+      tx.description = 'PayPal checkout was cancelled before wallet credit.';
+      tx.processedAt = new Date();
+      tx.updatedAt = new Date();
+      await user.save();
+    }
+    return res.json({ success: true, message: 'PayPal checkout was cancelled. No USD wallet credit was made.', data: { status: tx.status } });
+  } catch (error) {
+    console.error('PayPal cancel error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to update the cancelled PayPal deposit.' });
+  }
+});
+
+router.post('/topup/paypal/capture', protect, payoutRateLimit, async (req, res) => {
+  try {
+    const orderId = String(req.body?.orderId || '').trim();
+    if (!/^[A-Z0-9-]{8,80}$/i.test(orderId)) {
+      return res.status(400).json({ success: false, message: 'Invalid PayPal order reference.' });
+    }
+    const user = await User.findById(req.user._id);
+    if (!isInternationalSeller(user)) {
+      return res.status(403).json({ success: false, message: 'Only verified international sellers can capture PayPal wallet deposits.' });
+    }
+    const wallet = ensureUsdWallet(user);
+    let tx = wallet.transactions.find((entry) => entry.metadata?.paypalOrderId === orderId);
+    if (!tx) return res.status(404).json({ success: false, message: 'PayPal deposit was not found in this seller wallet.' });
+    if (tx.status === 'completed') {
+      return res.json({ success: true, message: 'This PayPal deposit was already credited.', data: { status: 'completed', currency: 'USD', amount: roundMoney(tx.amount), wallet: serializeUsdWallet(user) } });
+    }
+    if (tx.status !== 'pending') {
+      return res.status(409).json({ success: false, message: 'This PayPal deposit is not pending and cannot be credited.' });
+    }
+
+    const accessToken = await getPayPalAccessToken();
+    const captureResponse = await axios.post(
+      paypalApiBase() + '/v2/checkout/orders/' + encodeURIComponent(orderId) + '/capture',
+      {},
+      { headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json', 'PayPal-Request-Id': 'sylva-capture-' + String(tx._id) }, timeout: 20000 }
+    );
+    const order = captureResponse.data;
+    const purchase = order?.purchase_units?.find((item) => String(item.reference_id || '') === String(tx._id));
+    const capture = purchase?.payments?.captures?.find((item) => item.status === 'COMPLETED');
+    const captureAmount = Number(capture?.amount?.value);
+    if (
+      order?.status !== 'COMPLETED' ||
+      !purchase ||
+      String(purchase.custom_id || '') !== String(user._id) ||
+      capture?.amount?.currency_code !== 'USD' ||
+      !Number.isFinite(captureAmount) ||
+      roundMoney(captureAmount) !== roundMoney(tx.amount)
+    ) {
+      console.error('PayPal capture verification mismatch for order', orderId);
+      return res.status(409).json({ success: false, message: 'PayPal returned details that do not match this deposit. No wallet credit was made; contact support with the order reference.' });
+    }
+
+    const now = new Date();
+    const updatedUser = await User.findOneAndUpdate(
+      {
+        _id: user._id,
+        'usdWallet.transactions': mongoose.trusted({
+          $elemMatch: { _id: tx._id, status: 'pending', 'metadata.paypalOrderId': orderId },
+        }),
+      },
+      {
+        $inc: { 'usdWallet.availableBalance': roundMoney(tx.amount) },
+        $set: {
+          'usdWallet.lastUpdatedAt': now,
+          'usdWallet.transactions.$.status': 'completed',
+          'usdWallet.transactions.$.description': 'PayPal USD wallet deposit verified and credited.',
+          'usdWallet.transactions.$.reference': String(capture.id || orderId),
+          'usdWallet.transactions.$.processedAt': now,
+          'usdWallet.transactions.$.updatedAt': now,
+        },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!updatedUser) {
+      const latest = await User.findById(user._id);
+      const alreadyCredited = latest?.usdWallet?.transactions?.find((entry) => String(entry._id) === String(tx._id));
+      if (alreadyCredited?.status === 'completed') {
+        return res.json({ success: true, message: 'This PayPal deposit was already credited.', data: { status: 'completed', currency: 'USD', amount: roundMoney(tx.amount), wallet: serializeUsdWallet(latest) } });
+      }
+      return res.status(409).json({ success: false, message: 'The wallet changed while verifying this payment. Contact support before retrying.' });
+    }
+    return res.json({
+      success: true,
+      message: 'PayPal deposit verified and credited to your USD wallet.',
+      data: { status: 'completed', currency: 'USD', amount: roundMoney(tx.amount), wallet: serializeUsdWallet(updatedUser) },
+    });
+  } catch (error) {
+    console.error('PayPal capture error:', error.response?.data || error.message);
+    return res.status(error.statusCode || 502).json({
+      success: false,
+      message: error.statusCode === 503 ? error.message : 'Unable to verify/capture this PayPal payment. Your wallet was not credited; check status before retrying.',
+    });
+  }
+});
+
+router.get('/topup/status/:transactionId', protect, async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    if (!mongoose.isValidObjectId(transactionId)) {
+      return res.status(400).json({ success: false, message: 'Invalid deposit reference.' });
+    }
+    const isAdmin = req.user?.role === 'admin';
+    const owner = isAdmin
+      ? await AdminWallet.findOne({ key: 'platform', 'transactions._id': transactionId })
+      : await User.findOne({ _id: req.user._id, 'wallet.transactions._id': transactionId });
+    if (!owner) return res.status(404).json({ success: false, message: 'Deposit transaction was not found in your wallet.' });
+    const tx = isAdmin
+      ? owner.transactions.id(transactionId)
+      : owner.wallet?.transactions?.id(transactionId);
+    if (!tx || tx.category !== 'mpesa_topup') {
+      return res.status(404).json({ success: false, message: 'Deposit transaction was not found in your wallet.' });
+    }
+
+    // Reconcile pending requests against Safaricom when a CheckoutRequestID exists.
+    // Never credit from a status query; only the verified callback can credit funds.
+    if (tx.status === 'pending' && tx.metadata?.checkoutRequestID) {
+      try {
+        const shortcode = process.env.MPESA_SHORTCODE;
+        const passkey = process.env.MPESA_PASSKEY;
+        if (shortcode && passkey) {
+          const credentials = await getMpesaAccessToken();
+          const timestamp = getMpesaTimestamp();
+          const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
+          const queryResponse = await axios.post(credentials.host + '/mpesa/stkpushquery/v1/query', {
+            BusinessShortCode: shortcode,
+            Password: password,
+            Timestamp: timestamp,
+            CheckoutRequestID: String(tx.metadata.checkoutRequestID),
+          }, {
+            headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' },
+            timeout: 15000,
+          });
+          const resultCode = String(queryResponse.data?.ResultCode ?? '');
+          const resultDescription = String(queryResponse.data?.ResultDesc || queryResponse.data?.ResponseDescription || '');
+          // Safaricom's terminal customer-cancelled, timeout and insufficient-funds
+          // codes can be marked failed. Other/non-terminal responses remain pending.
+          const terminalFailure = ['1032', '1037'].includes(resultCode) ||
+            (resultCode === '1' && /insufficient|balance|funds/i.test(resultDescription));
+          if (terminalFailure) {
+            const now = new Date();
+            const ownerFilter = isAdmin
+              ? { _id: owner._id, transactions: { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } }
+              : { _id: owner._id, 'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } };
+            const failedDescription = resultCode === '1032'
+              ? 'M-Pesa deposit cancelled by the customer.'
+              : resultCode === '1037'
+                ? 'M-Pesa deposit timed out without payment confirmation.'
+                : 'M-Pesa deposit failed. Safaricom reported insufficient funds or an unsuccessful payment.';
+            const update = isAdmin
+              ? { $set: { 'transactions.$.status': 'failed', 'transactions.$.description': failedDescription, 'transactions.$.processedAt': now, 'transactions.$.updatedAt': now, 'transactions.$.metadata.providerResultCode': resultCode, 'transactions.$.metadata.providerResultDescription': resultDescription } }
+              : { $set: { 'wallet.transactions.$.status': 'failed', 'wallet.transactions.$.description': failedDescription, 'wallet.transactions.$.processedAt': now, 'wallet.transactions.$.updatedAt': now, 'wallet.transactions.$.metadata.providerResultCode': resultCode, 'wallet.transactions.$.metadata.providerResultDescription': resultDescription } };
+            await (isAdmin ? AdminWallet : User).updateOne(ownerFilter, update);
+            const refreshed = isAdmin
+              ? await AdminWallet.findOne({ _id: owner._id, 'transactions._id': transactionId })
+              : await User.findOne({ _id: owner._id, 'wallet.transactions._id': transactionId });
+            const refreshedTx = isAdmin ? refreshed?.transactions.id(transactionId) : refreshed?.wallet?.transactions?.id(transactionId);
+            if (refreshedTx) {
+              return res.json({ success: true, data: {
+                transactionId: String(refreshedTx._id), status: refreshedTx.status,
+                amount: roundMoney(refreshedTx.amount), reference: refreshedTx.reference || '',
+                description: refreshedTx.description || '', createdAt: refreshedTx.createdAt || null,
+                updatedAt: refreshedTx.updatedAt || null, processedAt: refreshedTx.processedAt || null,
+                reconciliationRequired: refreshedTx.metadata?.reconciliationRequired === true,
+              } });
+            }
+          }
+        }
+      } catch (reconcileError) {
+        // A temporary Safaricom/query outage must not be mistaken for payment failure.
+        console.warn('M-Pesa deposit status reconciliation deferred:', reconcileError.response?.data || reconcileError.message);
+      }
+    }
+
+    return res.json({ success: true, data: {
+      transactionId: String(tx._id),
+      status: tx.status,
+      amount: roundMoney(tx.amount),
+      reference: tx.reference || '',
+      description: tx.description || '',
+      createdAt: tx.createdAt || null,
+      updatedAt: tx.updatedAt || null,
+      processedAt: tx.processedAt || null,
+      reconciliationRequired: tx.metadata?.reconciliationRequired === true,
+    } });
+  } catch (error) {
+    console.error('Wallet deposit status error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to check the deposit status.' });
   }
 });
 
@@ -1827,7 +2316,17 @@ router.post('/topup/stk/callback', async (req, res) => {
     ]);
     const isPlatformDeposit = Boolean(platformWallet);
     const owner = isPlatformDeposit ? platformWallet : account;
-    if (!owner) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
+    if (!owner) {
+      const alreadyKnown = await Promise.all([
+        AdminWallet.exists({ key: 'platform', 'transactions.metadata.checkoutRequestID': checkoutRequestID }),
+        User.exists({ 'wallet.transactions.metadata.checkoutRequestID': checkoutRequestID }),
+      ]);
+      if (alreadyKnown.some(Boolean)) {
+        return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
+      }
+      // Ask Safaricom to retry rather than silently losing an uncorrelated callback.
+      return res.status(503).json({ ResultCode: 1, ResultDesc: 'Deposit transaction is not yet correlated. Please retry callback.' });
+    }
 
     const tx = isPlatformDeposit
       ? platformWallet.transactions.find((item) => item.category === 'mpesa_topup' && item.status === 'pending' && item.metadata?.checkoutRequestID === checkoutRequestID)
@@ -1875,14 +2374,25 @@ router.post('/topup/stk/callback', async (req, res) => {
     const receipt = String(field('MpesaReceiptNumber') || '');
     const paidPhone = String(field('PhoneNumber') || '');
     if (!receipt || !Number.isFinite(paidAmount) || paidAmount !== Number(tx.amount) ||
-        (paidPhone && paidPhone !== String(tx.metadata?.phone || ''))) {
+        (paidPhone && normalizeKenyanPhone(paidPhone) !== normalizeKenyanPhone(tx.metadata?.phone || ''))) {
       console.error('M-Pesa wallet callback amount/phone/receipt mismatch', { checkoutRequestID });
+      const mismatchUpdate = isPlatformDeposit
+        ? { $set: { 'transactions.$.status': 'failed', 'transactions.$.description': 'Payment confirmation needs administrator review.', 'transactions.$.processedAt': new Date(), 'transactions.$.metadata.reconciliationRequired': true } }
+        : { $set: { 'wallet.transactions.$.status': 'failed', 'wallet.transactions.$.description': 'Payment confirmation needs administrator review.', 'wallet.transactions.$.processedAt': new Date(), 'wallet.transactions.$.updatedAt': new Date(), 'wallet.transactions.$.metadata.reconciliationRequired': true } };
+      await (isPlatformDeposit ? AdminWallet : User).updateOne(ownerFilter, mismatchUpdate);
       return res.json({ ResultCode: 0, ResultDesc: 'Callback received for review.' });
     }
 
     const duplicateUserReceipt = await User.exists({ 'wallet.transactions.metadata.mpesaReceiptNumber': receipt });
     const duplicatePlatformReceipt = await AdminWallet.exists({ 'transactions.metadata.mpesaReceiptNumber': receipt });
-    if (duplicateUserReceipt || duplicatePlatformReceipt) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
+    if (duplicateUserReceipt || duplicatePlatformReceipt) {
+      console.error('M-Pesa receipt already linked to a wallet transaction; manual reconciliation required.', { checkoutRequestID });
+      const duplicateUpdate = isPlatformDeposit
+        ? { $set: { 'transactions.$.status': 'failed', 'transactions.$.description': 'Payment receipt is already linked to another transaction; administrator review required.', 'transactions.$.processedAt': new Date(), 'transactions.$.metadata.reconciliationRequired': true } }
+        : { $set: { 'wallet.transactions.$.status': 'failed', 'wallet.transactions.$.description': 'Payment receipt is already linked to another transaction; administrator review required.', 'wallet.transactions.$.processedAt': new Date(), 'wallet.transactions.$.updatedAt': new Date(), 'wallet.transactions.$.metadata.reconciliationRequired': true } };
+      await (isPlatformDeposit ? AdminWallet : User).updateOne(ownerFilter, duplicateUpdate);
+      return res.json({ ResultCode: 0, ResultDesc: 'Callback received for review.' });
+    }
 
     const now = new Date();
     const successUpdate = isPlatformDeposit
@@ -1930,9 +2440,25 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
         accountsWithWallets: { $sum: 1 },
       } },
     ]);
+    const usdResult = await User.aggregate([
+      { $match: { role: 'seller' } },
+      { $group: {
+        _id: '$role',
+        availableLiability: { $sum: '$usdWallet.availableBalance' },
+        pendingLiability: { $sum: '$usdWallet.pendingBalance' },
+        accountsWithUsdWallets: { $sum: { $cond: [{ $gt: [{ $size: { $ifNull: ['$usdWallet.transactions', []] } }, 0] }, 1, 0] } },
+      } },
+    ]);
     const pendingPayouts = await User.countDocuments({
-      role: { $in: ['seller', 'customer'] },
-      'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
+      role: mongoose.trusted({ $in: ['seller', 'customer'] }),
+      $or: [
+        { 'wallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
+        { 'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
+      ],
+    });
+    const pendingUsdPayouts = await User.countDocuments({
+      role: 'seller',
+      'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }),
     });
     const requiredMpesaSettings = [
       'MPESA_CONSUMER_KEY',
@@ -1946,7 +2472,23 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
         !missingMpesaSettings.includes('MPESA_CALLBACK_URL')) {
       missingMpesaSettings.push('MPESA_CALLBACK_URL');
     }
+    const requiredPaypalSettings = ['PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET', 'FRONTEND_URL'];
+    const missingPaypalSettings = requiredPaypalSettings.filter((name) => !String(process.env[name] || '').trim());
+    const fxRate = Number(process.env.WALLET_KES_PER_USD);
     return res.json({ success: true, data: {
+      sellerUsdAvailableLiability: roundMoney(usdResult.find((item) => item._id === 'seller')?.availableLiability || 0),
+      sellerUsdPendingLiability: roundMoney(usdResult.find((item) => item._id === 'seller')?.pendingLiability || 0),
+      sellersWithUsdWallets: usdResult.find((item) => item._id === 'seller')?.accountsWithUsdWallets || 0,
+      pendingUsdPayouts,
+      paypalConfiguration: {
+        configured: missingPaypalSettings.length === 0,
+        missing: missingPaypalSettings,
+        mode: String(process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'sandbox').toLowerCase() === 'live' ? 'live' : 'sandbox',
+      },
+      internationalSettlementFx: {
+        configured: Number.isFinite(fxRate) && fxRate > 0,
+        rateKesPerUsd: Number.isFinite(fxRate) && fxRate > 0 ? fxRate : null,
+      },
       sellerAvailableLiability: roundMoney(result.find((item) => item._id === 'seller')?.availableLiability || 0),
       sellerPendingLiability: roundMoney(result.find((item) => item._id === 'seller')?.pendingLiability || 0),
       sellersWithWallets: result.find((item) => item._id === 'seller')?.accountsWithWallets || 0,

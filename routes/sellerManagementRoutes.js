@@ -124,6 +124,10 @@ const serializeSeller = (
     storeLocation:
       item.sellerProfile?.storeLocation || '',
 
+    country: item.sellerProfile?.country || 'KE',
+    identityVerificationStatus: item.sellerProfile?.identityVerificationStatus || 'pending',
+    identityVerificationProvider: item.sellerProfile?.identityVerificationProvider || 'manual_review',
+
     officialName:
       item.sellerProfile?.officialName ||
       item.name ||
@@ -196,11 +200,9 @@ const serializeSeller = (
    * these sensitive verification fields.
    */
   if (includeSensitive) {
-    result.idNumber =
-      item.sellerProfile?.idNumber || '';
-
-    result.kraPin =
-      item.sellerProfile?.kraPin || '';
+    result.idNumber = item.sellerProfile?.idNumber || '';
+    result.kraPin = item.sellerProfile?.kraPin || '';
+    result.taxIdentifier = item.sellerProfile?.taxIdentifier || item.sellerProfile?.kraPin || '';
   }
 
   return result;
@@ -394,17 +396,20 @@ router.get(
        * Do not expose actual document paths/files.
        * Only tell the admin whether the documents exist.
        */
+      const taxDocumentRef = seller.sellerProfile?.taxDocument || seller.sellerProfile?.kraPinDocument;
       result.documents = {
         idFront: Boolean(seller.sellerProfile?.idFrontDocument),
         idBack: Boolean(seller.sellerProfile?.idBackDocument),
-        kraPin: Boolean(seller.sellerProfile?.kraPinDocument),
+        kraPin: Boolean(taxDocumentRef),
+        taxDocument: Boolean(taxDocumentRef),
       };
 
       // Short-lived, admin-only download URLs; never return raw Cloudinary IDs.
       const documentEntries = await Promise.all([
         ['idFront', seller.sellerProfile?.idFrontDocument],
         ['idBack', seller.sellerProfile?.idBackDocument],
-        ['kraPin', seller.sellerProfile?.kraPinDocument],
+        ['kraPin', taxDocumentRef],
+        ['taxDocument', taxDocumentRef],
       ].map(async ([key, publicId]) => [key, await createPrivateDocumentLink(publicId)]));
       result.documentLinks = Object.fromEntries(documentEntries);
 

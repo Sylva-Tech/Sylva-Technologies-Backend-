@@ -182,6 +182,12 @@ const orderSchema = new mongoose.Schema(
         lowercase: true,
       },
 
+      country: {
+        type: String,
+        trim: true,
+        maxlength: 100,
+      },
+
       county: {
         type: String,
         trim: true,
