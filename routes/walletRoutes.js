@@ -12,6 +12,21 @@ const {
 
 const router = express.Router();
 
+// Fail closed: a missing or misspelled environment must never select Production.
+// Sandbox is the safe default until Safaricom approves Go Live.
+const getMpesaEnvironment = () => {
+  const environment = String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase();
+  if (!['sandbox', 'production'].includes(environment)) {
+    throw new Error('Invalid M-Pesa environment. Set MPESA_ENV to sandbox or production.');
+  }
+  return environment;
+};
+
+const getMpesaHost = () => getMpesaEnvironment() === 'sandbox'
+  ? 'https://sandbox.safaricom.co.ke'
+  : 'https://api.safaricom.co.ke';
+
+
 /*
 |--------------------------------------------------------------------------
 | SECURITY / RATE LIMITING
@@ -1668,7 +1683,7 @@ const getMpesaAccessToken = async () => {
   const key = process.env.MPESA_CONSUMER_KEY;
   const secret = process.env.MPESA_CONSUMER_SECRET;
   if (!key || !secret) throw new Error('M-Pesa credentials are not configured.');
-  const host = process.env.MPESA_ENV === 'sandbox' ? 'https://sandbox.safaricom.co.ke' : 'https://api.safaricom.co.ke';
+  const host = getMpesaHost();
   const auth = Buffer.from(key + ':' + secret).toString('base64');
   const response = await axios.get(host + '/oauth/v1/generate?grant_type=client_credentials', {
     headers: { Authorization: 'Basic ' + auth }, timeout: 15000,
@@ -1732,7 +1747,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
         data: {
           missingConfiguration: missingMpesaSettings,
           requiredCallbackPath: '/api/wallet/topup/stk/callback',
-          environment: process.env.MPESA_ENV === 'sandbox' ? 'sandbox' : 'production',
+          environment: String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase(),
         },
       });
     }
