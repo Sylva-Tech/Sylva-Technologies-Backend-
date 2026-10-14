@@ -969,17 +969,17 @@ if (paymentMethod === 'M-Pesa') {
       : 'https://api.safaricom.co.ke';
     const callbackUrl = process.env.MPESA_ORDER_CALLBACK_URL ||
       'https://sylva-technologies-backend.onrender.com/api/orders/mpesa/callback';
-    const phoneInput = String(customerDetails.phone || '').replace(/[\\s()+-]/g, '');
+    const phoneInput = String(customerDetails.phone || '').replace(/[\s()+-]/g, '');
     const phone = phoneInput.startsWith('0') ? '254' + phoneInput.slice(1)
       : phoneInput.startsWith('7') || phoneInput.startsWith('1') ? '254' + phoneInput
       : phoneInput;
     if (!key || !secret || !shortcode || !passkey) {
       throw new Error('M-Pesa production credentials are not fully configured.');
     }
-    if (!/^254(?:7|1)\\d{8}$/.test(phone)) {
+    if (!/^254(?:7|1)\d{8}$/.test(phone)) {
       throw new Error('Enter a valid Kenyan M-Pesa phone number, e.g. 07XXXXXXXX.');
     }
-    if (!/^https:\\/\\//i.test(callbackUrl)) {
+    if (!String(callbackUrl).startsWith('https://')) {
       throw new Error('The M-Pesa order callback URL must use HTTPS.');
     }
     const amount = Math.round(Number(orderTotal));
@@ -1302,7 +1302,11 @@ router.post('/mpesa/callback', async (req, res) => {
     const receipt = String(field('MpesaReceiptNumber') || '');
     const phone = String(field('PhoneNumber') || '');
     const expectedAmount = Math.round(Number(order.total || 0));
-    if (!receipt || amount !== expectedAmount || (phone && !/^254(?:7|1)\\d{8}$/.test(phone))) {
+        const storedPhone = String(order.customerDetails?.phone || order.customerPhone || '').replace(/[\s()+-]/g, '');
+    const expectedPhone = storedPhone.startsWith('0') ? '254' + storedPhone.slice(1)
+      : storedPhone.startsWith('7') || storedPhone.startsWith('1') ? '254' + storedPhone
+      : storedPhone;
+    if (!receipt || amount !== expectedAmount || !/^254(?:7|1)\d{8}$/.test(phone) || phone !== expectedPhone) {
       console.error('M-Pesa order callback validation failed:', order.orderNumber);
       return res.json({ ResultCode: 0, ResultDesc: 'Callback received for review.' });
     }
