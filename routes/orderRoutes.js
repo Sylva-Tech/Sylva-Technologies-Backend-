@@ -962,8 +962,20 @@ if (paymentMethod === 'M-Pesa') {
   try {
     const key = process.env.MPESA_CONSUMER_KEY;
     const secret = process.env.MPESA_CONSUMER_SECRET;
-    const shortcode = process.env.MPESA_SHORTCODE;
+    const shortcode = String(process.env.MPESA_SHORTCODE || '').trim();
     const passkey = process.env.MPESA_PASSKEY;
+    const tillNumber = String(process.env.MPESA_TILL_NUMBER || '').trim();
+    const transactionType = String(
+      process.env.MPESA_TRANSACTION_TYPE ||
+      (tillNumber ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline')
+    ).trim();
+    if (!['CustomerPayBillOnline', 'CustomerBuyGoodsOnline'].includes(transactionType)) {
+      throw new Error('MPESA_TRANSACTION_TYPE must be CustomerPayBillOnline or CustomerBuyGoodsOnline.');
+    }
+    if (transactionType === 'CustomerBuyGoodsOnline' && !/^\\d{5,10}$/.test(tillNumber)) {
+      throw new Error('M-Pesa Till configuration is incomplete. Set MPESA_TILL_NUMBER to the approved Buy Goods Till number.');
+    }
+    const partyB = transactionType === 'CustomerBuyGoodsOnline' ? tillNumber : shortcode;
     const host = process.env.MPESA_ENV === 'sandbox'
       ? 'https://sandbox.safaricom.co.ke'
       : 'https://api.safaricom.co.ke';
@@ -1005,10 +1017,10 @@ if (paymentMethod === 'M-Pesa') {
       BusinessShortCode: shortcode,
       Password: password,
       Timestamp: timestamp,
-      TransactionType: process.env.MPESA_TRANSACTION_TYPE || 'CustomerPayBillOnline',
+      TransactionType: transactionType,
       Amount: amount,
       PartyA: phone,
-      PartyB: shortcode,
+      PartyB: partyB,
       PhoneNumber: phone,
       CallBackURL: callbackUrl,
       AccountReference: String(order.orderNumber).slice(0, 12),
