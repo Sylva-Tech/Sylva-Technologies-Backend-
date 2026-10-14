@@ -1420,8 +1420,10 @@ router.patch(
        */
       const seller =
         await User.findOne({
-          'wallet.transactions._id':
-            transactionId,
+          $or: [
+            { 'wallet.transactions._id': transactionId },
+            { 'usdWallet.transactions._id': transactionId },
+          ],
         });
 
       if (!seller) {
@@ -1455,15 +1457,9 @@ router.patch(
         });
       }
 
-      const wallet =
-        ensureWallet(
-          seller
-        );
-
-      const tx =
-        wallet.transactions.id(
-          transactionId
-        );
+      const isUsdPayout = (seller.usdWallet?.transactions || []).some((entry) => String(entry._id) === String(transactionId));
+      const wallet = isUsdPayout ? ensureUsdWallet(seller) : ensureWallet(seller);
+      const tx = wallet.transactions.id(transactionId);
 
       if (!tx) {
         return res.status(404).json({
@@ -1527,15 +1523,9 @@ router.patch(
         });
       }
 
-      const currentPendingBalance =
-        roundMoney(
-          wallet.pendingBalance
-        );
-
-      const currentAvailableBalance =
-        roundMoney(
-          wallet.availableBalance
-        );
+      const currentPendingBalance = roundMoney(wallet.pendingBalance);
+      const currentAvailableBalance = roundMoney(wallet.availableBalance);
+      const currencyLabel = isUsdPayout ? 'USD' : 'KES';
 
       /*
        * IMPORTANT:
@@ -1551,7 +1541,7 @@ router.patch(
         payoutAmount
       ) {
         console.error(
-          `Wallet integrity mismatch while processing payout ${transactionId} for seller ${seller._id}`
+          `Wallet integrity mismatch while processing ${currencyLabel} payout ${transactionId} for seller ${seller._id}`
         );
 
         return res.status(409).json({
