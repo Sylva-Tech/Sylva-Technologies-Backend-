@@ -267,6 +267,85 @@ const serializeSellerTransaction = (
   };
 };
 
+const ensureUsdWallet = (user) => {
+  if (!user.usdWallet) user.usdWallet = {};
+  const wallet = user.usdWallet;
+  wallet.currency = 'USD';
+  wallet.availableBalance = roundMoney(wallet.availableBalance || 0);
+  wallet.pendingBalance = roundMoney(wallet.pendingBalance || 0);
+  wallet.transactions = Array.isArray(wallet.transactions) ? wallet.transactions : [];
+  wallet.lastUpdatedAt = wallet.lastUpdatedAt || new Date();
+  user.usdWallet = wallet;
+  return wallet;
+};
+
+const serializeUsdWallet = (user) => {
+  const wallet = ensureUsdWallet(user);
+  const transactions = [...wallet.transactions]
+    .sort((a, b) => new Date(b.createdAt || b.processedAt || 0) - new Date(a.createdAt || a.processedAt || 0))
+    .map((entry) => ({
+      _id: entry._id,
+      type: entry.type || 'credit',
+      amount: roundMoney(entry.amount || 0),
+      currency: 'USD',
+      category: entry.category || 'manual_adjustment',
+      status: entry.status || 'pending',
+      description: entry.description || '',
+      reference: entry.reference || '',
+      createdAt: entry.createdAt || null,
+      processedAt: entry.processedAt || null,
+      metadata: {
+        payoutMethod: entry.metadata?.payoutMethod || undefined,
+        destination: entry.metadata?.destination || undefined,
+        rejectionReason: entry.metadata?.rejectionReason || undefined,
+      },
+    }));
+  return {
+    currency: 'USD',
+    availableBalance: roundMoney(wallet.availableBalance),
+    pendingBalance: roundMoney(wallet.pendingBalance),
+    totalBalance: roundMoney(wallet.availableBalance + wallet.pendingBalance),
+    lastUpdatedAt: wallet.lastUpdatedAt || null,
+    transactions,
+  };
+};
+
+const paypalApiBase = () => (
+  String(process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'sandbox').toLowerCase() === 'live'
+    ? 'https://api-m.paypal.com'
+    : 'https://api-m.sandbox.paypal.com'
+);
+
+const getPayPalAccessToken = async () => {
+  const clientId = process.env.PAYPAL_CLIENT_ID;
+  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    const error = new Error('PayPal is not configured on the server.');
+    error.statusCode = 503;
+    throw error;
+  }
+  const response = await axios.post(
+    paypalApiBase() + '/v1/oauth2/token',
+    'grant_type=client_credentials',
+    {
+      auth: { username: clientId, password: clientSecret },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 15000,
+    }
+  );
+  if (!response.data?.access_token) throw new Error('PayPal did not return an access token.');
+  return response.data.access_token;
+};
+
+const isInternationalSeller = (user) => (
+  user?.role === 'seller' &&
+  String(user.sellerProfile?.country || 'KE').toUpperCase() !== 'KE' &&
+  user.sellerStatus === 'approved' &&
+  ['active', 'warning'].includes(user.accountStatus) &&
+  user.storeStatus === 'active' &&
+  user.isVerified === true
+);
+
 /*
 |--------------------------------------------------------------------------
 | Serialize complete seller wallet
@@ -587,9 +666,16 @@ router.get(
         });
       }
 
+      const walletData = serializeWallet(user);
+      const international = user.role === 'seller' &&
+        String(user.sellerProfile?.country || 'KE').toUpperCase() !== 'KE';
       return res.json({
         success: true,
-        data: serializeWallet(user),
+        data: {
+          ...walletData,
+          usdWallet: international ? serializeUsdWallet(user) : null,
+          sellerCountry: user.role === 'seller' ? (user.sellerProfile?.country || 'KE') : null,
+        },
       });
     } catch (error) {
       console.error(
@@ -1815,6 +1901,181 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
 });
 
 /* Authenticated deposit status: a seller can only inspect their own deposit. */
+/* PayPal USD deposits: create a server-priced order, then credit only
+   after the authenticated owner captures it and PayPal confirms USD amount/status. */
+router.post('/topup/paypal/create-order', protect, payoutRateLimit, async (req, res) => {
+  let user;
+  let transaction;
+  try {
+    user = await User.findById(req.user._id);
+    if (!isInternationalSeller(user)) {
+      return res.status(403).json({ success: false, message: 'PayPal USD deposits are available to verified, approved sellers registered outside Kenya.' });
+    }
+    const amount = Number(req.body?.amount);
+    if (!Number.isFinite(amount) || Math.round(amount * 100) !== amount * 100 || amount < 1 || amount > 10000) {
+      return res.status(400).json({ success: false, message: 'Enter a USD deposit amount between $1.00 and $10,000.00.' });
+    }
+    const wallet = ensureUsdWallet(user);
+    const now = new Date();
+    transaction = {
+      _id: new mongoose.Types.ObjectId(),
+      type: 'credit',
+      amount: roundMoney(amount),
+      currency: 'USD',
+      category: 'paypal_topup',
+      status: 'pending',
+      description: 'PayPal USD wallet deposit awaiting capture.',
+      reference: '',
+      createdAt: now,
+      updatedAt: now,
+      processedAt: null,
+      metadata: { provider: 'paypal', currency: 'USD', amount: roundMoney(amount) },
+    };
+    wallet.transactions.unshift(transaction);
+    wallet.lastUpdatedAt = now;
+    await user.save();
+
+    const accessToken = await getPayPalAccessToken();
+    const frontendUrl = String(process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://www.sylvatechnologies.co.ke').replace(/\/$/, '');
+    const orderResponse = await axios.post(
+      paypalApiBase() + '/v2/checkout/orders',
+      {
+        intent: 'CAPTURE',
+        purchase_units: [{
+          reference_id: String(transaction._id),
+          custom_id: String(user._id),
+          description: 'Sylva Technologies USD wallet deposit',
+          amount: { currency_code: 'USD', value: amount.toFixed(2) },
+        }],
+        application_context: {
+          brand_name: 'Sylva Technologies',
+          user_action: 'PAY_NOW',
+          return_url: frontendUrl + '/seller/wallet?paypal=return',
+          cancel_url: frontendUrl + '/seller/wallet?paypal=cancel',
+        },
+      },
+      {
+        headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+        timeout: 20000,
+      }
+    );
+    const order = orderResponse.data;
+    const approvalUrl = order?.links?.find((link) => link.rel === 'approve')?.href;
+    if (!order?.id || !approvalUrl) throw new Error('PayPal did not return an approval URL.');
+    transaction.metadata = { ...transaction.metadata, paypalOrderId: order.id };
+    await user.save();
+    return res.status(201).json({
+      success: true,
+      message: 'PayPal order created. Approve it on PayPal to continue.',
+      data: { transactionId: String(transaction._id), orderId: order.id, approvalUrl, currency: 'USD', amount: roundMoney(amount) },
+    });
+  } catch (error) {
+    if (user && transaction?._id) {
+      try {
+        const tx = user.usdWallet?.transactions?.id(transaction._id);
+        if (tx && tx.status === 'pending' && !tx.metadata?.paypalOrderId) {
+          tx.status = 'failed';
+          tx.description = 'PayPal order could not be created.';
+          tx.processedAt = new Date();
+          await user.save();
+        }
+      } catch (saveError) {
+        console.error('PayPal order failure ledger update error:', saveError.message);
+      }
+    }
+    console.error('PayPal create-order error:', error.response?.data || error.message);
+    return res.status(error.statusCode || 502).json({
+      success: false,
+      message: error.statusCode === 503 ? error.message : 'Unable to start PayPal deposit. No USD wallet credit was made.',
+    });
+  }
+});
+
+router.post('/topup/paypal/capture', protect, payoutRateLimit, async (req, res) => {
+  try {
+    const orderId = String(req.body?.orderId || '').trim();
+    if (!/^[A-Z0-9-]{8,80}$/i.test(orderId)) {
+      return res.status(400).json({ success: false, message: 'Invalid PayPal order reference.' });
+    }
+    const user = await User.findById(req.user._id);
+    if (!isInternationalSeller(user)) {
+      return res.status(403).json({ success: false, message: 'Only verified international sellers can capture PayPal wallet deposits.' });
+    }
+    const wallet = ensureUsdWallet(user);
+    let tx = wallet.transactions.find((entry) => entry.metadata?.paypalOrderId === orderId);
+    if (!tx) return res.status(404).json({ success: false, message: 'PayPal deposit was not found in this seller wallet.' });
+    if (tx.status === 'completed') {
+      return res.json({ success: true, message: 'This PayPal deposit was already credited.', data: { status: 'completed', currency: 'USD', amount: roundMoney(tx.amount), wallet: serializeUsdWallet(user) } });
+    }
+    if (tx.status !== 'pending') {
+      return res.status(409).json({ success: false, message: 'This PayPal deposit is not pending and cannot be credited.' });
+    }
+
+    const accessToken = await getPayPalAccessToken();
+    const captureResponse = await axios.post(
+      paypalApiBase() + '/v2/checkout/orders/' + encodeURIComponent(orderId) + '/capture',
+      {},
+      { headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' }, timeout: 20000 }
+    );
+    const order = captureResponse.data;
+    const purchase = order?.purchase_units?.find((item) => String(item.reference_id || '') === String(tx._id));
+    const capture = purchase?.payments?.captures?.find((item) => item.status === 'COMPLETED');
+    const captureAmount = Number(capture?.amount?.value);
+    if (
+      order?.status !== 'COMPLETED' ||
+      !purchase ||
+      String(purchase.custom_id || '') !== String(user._id) ||
+      capture?.amount?.currency_code !== 'USD' ||
+      !Number.isFinite(captureAmount) ||
+      roundMoney(captureAmount) !== roundMoney(tx.amount)
+    ) {
+      console.error('PayPal capture verification mismatch for order', orderId);
+      return res.status(409).json({ success: false, message: 'PayPal returned details that do not match this deposit. No wallet credit was made; contact support with the order reference.' });
+    }
+
+    const now = new Date();
+    const updatedUser = await User.findOneAndUpdate(
+      {
+        _id: user._id,
+        'usdWallet.transactions': mongoose.trusted({
+          $elemMatch: { _id: tx._id, status: 'pending', 'metadata.paypalOrderId': orderId },
+        }),
+      },
+      {
+        $inc: { 'usdWallet.availableBalance': roundMoney(tx.amount) },
+        $set: {
+          'usdWallet.lastUpdatedAt': now,
+          'usdWallet.transactions.$.status': 'completed',
+          'usdWallet.transactions.$.description': 'PayPal USD wallet deposit verified and credited.',
+          'usdWallet.transactions.$.reference': String(capture.id || orderId),
+          'usdWallet.transactions.$.processedAt': now,
+          'usdWallet.transactions.$.updatedAt': now,
+        },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!updatedUser) {
+      const latest = await User.findById(user._id);
+      const alreadyCredited = latest?.usdWallet?.transactions?.find((entry) => String(entry._id) === String(tx._id));
+      if (alreadyCredited?.status === 'completed') {
+        return res.json({ success: true, message: 'This PayPal deposit was already credited.', data: { status: 'completed', currency: 'USD', amount: roundMoney(tx.amount), wallet: serializeUsdWallet(latest) } });
+      }
+      return res.status(409).json({ success: false, message: 'The wallet changed while verifying this payment. Contact support before retrying.' });
+    }
+    return res.json({
+      success: true,
+      message: 'PayPal deposit verified and credited to your USD wallet.',
+      data: { status: 'completed', currency: 'USD', amount: roundMoney(tx.amount), wallet: serializeUsdWallet(updatedUser) },
+    });
+  } catch (error) {
+    console.error('PayPal capture error:', error.response?.data || error.message);
+    return res.status(error.statusCode || 502).json({
+      success: false,
+      message: error.statusCode === 503 ? error.message : 'Unable to verify/capture this PayPal payment. Your wallet was not credited; check status before retrying.',
+    });
+  }
+});
+
 router.get('/topup/status/:transactionId', protect, async (req, res) => {
   try {
     const { transactionId } = req.params;
