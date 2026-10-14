@@ -182,6 +182,7 @@ router.post(
       const storeName = String(req.body?.storeName || '').trim();
       const storeProfile = String(req.body?.storeProfile || '').trim();
       const idType = String(req.body?.idType || '').trim();
+      const taxpayerType = String(req.body?.taxpayerType || '').trim().toUpperCase();
       const idNumber = String(req.body?.idNumber || '').trim();
       const kraPinNumber = String(req.body?.kraPinNumber || '').trim().toUpperCase();
       const privacyAccepted = String(req.body?.privacyPolicyAccepted) === 'true';
@@ -220,6 +221,28 @@ router.post(
       }
       if (!idFront || !idBack || !kraPinFile) {
         return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your KRA PIN certificate.' });
+      }
+
+      // Enforce KRA's PIN Checker BY ID server-side; frontend checks alone can be bypassed.
+      let kraVerification;
+      try {
+        kraVerification = await checkPinById({
+          taxpayerType,
+          taxpayerID: idNumber,
+          expectedPin: kraPinNumber,
+        });
+      } catch (verificationError) {
+        return res.status(verificationError.statusCode || 503).json({
+          success: false,
+          message: verificationError.message || 'KRA PIN verification is temporarily unavailable.',
+        });
+      }
+
+      if (!kraVerification.pinMatches) {
+        return res.status(422).json({
+          success: false,
+          message: 'The KRA PIN returned for this ID does not match the PIN entered. Check the details and try again.',
+        });
       }
 
       const existingUser = await User.findOne({ email });
