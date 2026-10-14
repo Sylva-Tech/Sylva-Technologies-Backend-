@@ -1693,9 +1693,27 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
     const phone = normalizeStkPhone(req.body?.phone || user.sellerProfile?.mpesaPhone || user.phone);
     if (!phone) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan M-Pesa phone number.' });
 
-    const shortcode = process.env.MPESA_SHORTCODE;
+    const shortcode = String(process.env.MPESA_SHORTCODE || '').trim();
     const passkey = process.env.MPESA_PASSKEY;
     const callbackUrl = process.env.MPESA_CALLBACK_URL;
+    const tillNumber = String(process.env.MPESA_TILL_NUMBER || '').trim();
+    const transactionType = String(
+      process.env.MPESA_TRANSACTION_TYPE ||
+      (tillNumber ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline')
+    ).trim();
+    if (!['CustomerPayBillOnline', 'CustomerBuyGoodsOnline'].includes(transactionType)) {
+      return res.status(503).json({
+        success: false,
+        message: 'M-Pesa configuration error: MPESA_TRANSACTION_TYPE must be CustomerPayBillOnline or CustomerBuyGoodsOnline.',
+      });
+    }
+    if (transactionType === 'CustomerBuyGoodsOnline' && !/^\\d{5,10}$/.test(tillNumber)) {
+      return res.status(503).json({
+        success: false,
+        message: 'M-Pesa Till configuration is incomplete. Set MPESA_TILL_NUMBER to the approved Buy Goods Till number.',
+      });
+    }
+    const partyB = transactionType === 'CustomerBuyGoodsOnline' ? tillNumber : shortcode;
     const requiredMpesaSettings = [
       'MPESA_CONSUMER_KEY',
       'MPESA_CONSUMER_SECRET',
@@ -1751,8 +1769,8 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
       const response = await axios.post(credentials.host + '/mpesa/stkpush/v1/processrequest', {
         BusinessShortCode: shortcode, Password: password, Timestamp: timestamp,
-        TransactionType: 'CustomerPayBillOnline', Amount: amount, PartyA: phone,
-        PartyB: shortcode, PhoneNumber: phone, CallBackURL: callbackUrl,
+        TransactionType: transactionType, Amount: amount, PartyA: phone,
+        PartyB: partyB, PhoneNumber: phone, CallBackURL: callbackUrl,
         AccountReference: accountLabel, TransactionDesc: 'Deposit',
       }, { headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' }, timeout: 20000 });
 
