@@ -1846,9 +1846,29 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       error.message ||
       ''
     );
+    // Safe diagnostics only: never log the Consumer Secret, passkey, access token,
+    // phone number, or complete credential values.
+    const diagnosticEnvironment = String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase();
+    const diagnosticShortcode = String(process.env.MPESA_SHORTCODE || '').trim();
+    const diagnosticTill = String(process.env.MPESA_TILL_NUMBER || '').trim();
+    const diagnosticTransactionType = String(
+      process.env.MPESA_TRANSACTION_TYPE ||
+      (diagnosticTill ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline')
+    ).trim();
     console.error('M-Pesa deposit initiation failed:', {
       code: providerCode || undefined,
       message: providerMessage,
+      environment: diagnosticEnvironment,
+      apiHost: diagnosticEnvironment === 'sandbox'
+        ? 'https://sandbox.safaricom.co.ke'
+        : diagnosticEnvironment === 'production'
+          ? 'https://api.safaricom.co.ke'
+          : 'invalid-environment',
+      shortcodeConfigured: Boolean(diagnosticShortcode),
+      shortcodeLastTwo: diagnosticShortcode ? diagnosticShortcode.slice(-2) : undefined,
+      tillConfigured: Boolean(diagnosticTill),
+      tillLastTwo: diagnosticTill ? diagnosticTill.slice(-2) : undefined,
+      transactionType: diagnosticTransactionType,
       providerResponse: error.response?.data || undefined,
     });
 
