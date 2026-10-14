@@ -105,6 +105,9 @@ const sanitizeSeller = (
       '',
 
     sellerProfile: {
+      country: sellerProfile.country || 'KE',
+      identityVerificationStatus: sellerProfile.identityVerificationStatus || 'pending',
+      identityVerificationProvider: sellerProfile.identityVerificationProvider || 'manual_review',
       officialName:
         sellerProfile.officialName ||
         '',
@@ -148,17 +151,13 @@ const sanitizeSeller = (
    * returned when explicitly requested.
    */
   if (includeSensitive) {
-    data.sellerProfile.idFrontDocument =
-      sellerProfile.idFrontDocument ||
-      '';
-
-    data.sellerProfile.idBackDocument =
-      sellerProfile.idBackDocument ||
-      '';
-
-    data.sellerProfile.kraPinDocument =
-      sellerProfile.kraPinDocument ||
-      '';
+    data.sellerProfile.idType = sellerProfile.idType || '';
+    data.sellerProfile.idNumber = sellerProfile.idNumber || '';
+    data.sellerProfile.taxIdentifier = sellerProfile.taxIdentifier || sellerProfile.kraPin || '';
+    data.sellerProfile.idFrontDocument = sellerProfile.idFrontDocument || '';
+    data.sellerProfile.idBackDocument = sellerProfile.idBackDocument || '';
+    data.sellerProfile.taxDocument = sellerProfile.taxDocument || sellerProfile.kraPinDocument || '';
+    data.sellerProfile.kraPinDocument = sellerProfile.kraPinDocument || sellerProfile.taxDocument || '';
   }
 
   return data;
