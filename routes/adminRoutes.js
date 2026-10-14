@@ -711,27 +711,23 @@ router.put(
       }
 
       if (
-        seller.sellerStatus ===
-        'approved'
+        seller.sellerStatus === 'approved' &&
+        seller.sellerProfile?.identityVerificationStatus === 'verified'
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'This seller account is already approved.',
-        });
+        return res.status(400).json({ success: false, message: 'This seller account and its identity documents are already approved.' });
       }
 
       if (
-        seller.sellerStatus !==
-          'pending' &&
-        seller.sellerStatus !==
-          'rejected'
+        seller.sellerStatus !== 'pending' &&
+        seller.sellerStatus !== 'rejected' &&
+        seller.sellerStatus !== 'approved'
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'This account does not have a seller application.',
-        });
+        return res.status(400).json({ success: false, message: 'This account does not have a seller application.' });
+      }
+
+      const identityProfile = seller.sellerProfile || {};
+      if (!identityProfile.idFrontDocument || !identityProfile.idBackDocument || !(identityProfile.taxDocument || identityProfile.kraPinDocument)) {
+        return res.status(400).json({ success: false, message: 'Cannot approve identity verification until the ID front, ID back and country-issued tax document are available for review.' });
       }
 
       if (
@@ -745,6 +741,10 @@ router.put(
 
       seller.sellerStatus =
         'approved';
+
+      // This route is the manual identity-document review decision point.
+      seller.sellerProfile.identityVerificationStatus = 'verified';
+      seller.sellerProfile.identityVerificationProvider = 'manual_review';
 
       /*
        * Approval controls seller
