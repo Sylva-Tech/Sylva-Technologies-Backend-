@@ -2330,11 +2330,25 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
         accountsWithWallets: { $sum: 1 },
       } },
     ]);
+    const usdResult = await User.aggregate([
+      { $match: { role: 'seller' } },
+      { $group: {
+        _id: '$role',
+        availableLiability: { $sum: '$usdWallet.availableBalance' },
+        pendingLiability: { $sum: '$usdWallet.pendingBalance' },
+        accountsWithUsdWallets: { $sum: { $cond: [{ $gt: [{ $size: { $ifNull: ['$usdWallet.transactions', []] } }, 0] }, 1, 0] } },
+      } },
+    ]);
     const pendingPayouts = await User.countDocuments({
       role: mongoose.trusted({ $in: ['seller', 'customer'] }),
-      'wallet.transactions': mongoose.trusted({
-        $elemMatch: { category: 'payout_request', status: 'pending' },
-      }),
+      $or: [
+        { 'wallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
+        { 'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
+      ],
+    });
+    const pendingUsdPayouts = await User.countDocuments({
+      role: 'seller',
+      'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }),
     });
     const requiredMpesaSettings = [
       'MPESA_CONSUMER_KEY',
@@ -2348,7 +2362,23 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
         !missingMpesaSettings.includes('MPESA_CALLBACK_URL')) {
       missingMpesaSettings.push('MPESA_CALLBACK_URL');
     }
+    const requiredPaypalSettings = ['PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET', 'FRONTEND_URL'];
+    const missingPaypalSettings = requiredPaypalSettings.filter((name) => !String(process.env[name] || '').trim());
+    const fxRate = Number(process.env.WALLET_KES_PER_USD);
     return res.json({ success: true, data: {
+      sellerUsdAvailableLiability: roundMoney(usdResult.find((item) => item._id === 'seller')?.availableLiability || 0),
+      sellerUsdPendingLiability: roundMoney(usdResult.find((item) => item._id === 'seller')?.pendingLiability || 0),
+      sellersWithUsdWallets: usdResult.find((item) => item._id === 'seller')?.accountsWithUsdWallets || 0,
+      pendingUsdPayouts,
+      paypalConfiguration: {
+        configured: missingPaypalSettings.length === 0,
+        missing: missingPaypalSettings,
+        mode: String(process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'sandbox').toLowerCase() === 'live' ? 'live' : 'sandbox',
+      },
+      internationalSettlementFx: {
+        configured: Number.isFinite(fxRate) && fxRate > 0,
+        rateKesPerUsd: Number.isFinite(fxRate) && fxRate > 0 ? fxRate : null,
+      },
       sellerAvailableLiability: roundMoney(result.find((item) => item._id === 'seller')?.availableLiability || 0),
       sellerPendingLiability: roundMoney(result.find((item) => item._id === 'seller')?.pendingLiability || 0),
       sellersWithWallets: result.find((item) => item._id === 'seller')?.accountsWithWallets || 0,
