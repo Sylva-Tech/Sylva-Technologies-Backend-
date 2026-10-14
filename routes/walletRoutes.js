@@ -998,6 +998,27 @@ router.post(
         });
       }
 
+      const now = new Date();
+      const transactionId = new mongoose.Types.ObjectId();
+      const transaction = {
+        _id: transactionId,
+        type: 'debit',
+        amount,
+        category: 'payout_request',
+        status: 'pending',
+        description: 'Wallet withdrawal request awaiting administrator processing.',
+        reference: 'PAYOUT-' + transactionId.toString().slice(-8).toUpperCase(),
+        createdAt: now,
+        updatedAt: now,
+        processedAt: null,
+        metadata: {
+          walletCurrency: 'KES',
+          payoutMethod,
+          destination: payoutDestination,
+          requestedAt: now.toISOString(),
+        },
+      };
+
       /*
        * Reserve funds atomically. The query rechecks the balance and pending
        * payout condition at write time, so concurrent requests cannot spend
