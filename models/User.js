@@ -32,6 +32,39 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
 
+    bio: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: [500, 'Bio cannot exceed 500 characters'],
+    },
+
+    profilePicture: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 1000,
+    },
+
+    profilePicturePublicId: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 300,
+      select: false,
+    },
+
+    accountDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
+
     password: {
       type: String,
       required: [true, 'Password is required'],
