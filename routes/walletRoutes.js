@@ -1806,8 +1806,29 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       throw providerError;
     }
   } catch (error) {
-    console.error('M-Pesa deposit initiation failed:', error.response?.data || error.message);
-    return res.status(502).json({ success: false, message: 'Unable to start the deposit. Check the number and try again.' });
+    const providerCode = String(error.response?.data?.errorCode || '');
+    const providerMessage = String(
+      error.response?.data?.errorMessage ||
+      error.response?.data?.ResponseDescription ||
+      error.message ||
+      ''
+    );
+    console.error('M-Pesa deposit initiation failed:', {
+      code: providerCode || undefined,
+      message: providerMessage,
+      providerResponse: error.response?.data || undefined,
+    });
+
+    let message = 'Unable to start the M-Pesa deposit. Please verify the phone number and try again.';
+    if (providerCode === '400.002.02' || /invalid business shortcode/i.test(providerMessage)) {
+      message = 'M-Pesa configuration error: the business shortcode does not match the selected Daraja environment. Please contact support; no wallet funds were added.';
+    } else if (/invalid access token|unauthorized|invalid consumer key/i.test(providerMessage)) {
+      message = 'M-Pesa configuration error: Daraja credentials are not valid for the selected environment. Please contact support; no wallet funds were added.';
+    } else if (/passkey|password/i.test(providerMessage) && /invalid|incorrect|error/i.test(providerMessage)) {
+      message = 'M-Pesa configuration error: the STK passkey or shortcode is incorrect. Please contact support; no wallet funds were added.';
+    }
+
+    return res.status(502).json({ success: false, message });
   }
 });
 
