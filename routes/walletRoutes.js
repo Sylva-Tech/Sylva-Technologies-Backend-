@@ -677,6 +677,9 @@ router.get(
           ...walletData,
           usdWallet: international ? serializeUsdWallet(user) : null,
           sellerCountry: user.role === 'seller' ? (user.sellerProfile?.country || 'KE') : null,
+          sellerStatus: user.role === 'seller' ? (user.sellerStatus || 'pending') : null,
+          sellerStoreStatus: user.role === 'seller' ? (user.storeStatus || 'inactive') : null,
+          sellerIdentityVerificationStatus: user.role === 'seller' ? (user.sellerProfile?.identityVerificationStatus || 'pending') : null,
         },
       });
     } catch (error) {
