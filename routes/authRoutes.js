@@ -9,6 +9,7 @@ const VerificationToken = require('../models/VerificationToken');
 const sellerUpload = require('../middleware/sellerUpload');
 const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
 const cloudinary = require('../config/cloudinary');
+const { checkPinById } = require('../services/kraPinCheckerService');
 
 const {
   sendVerificationCodeAndLinkEmail,
@@ -129,6 +130,37 @@ const AFRICAN_COUNTRY_CODES = new Set('DZ AO BJ BW BF BI CV CM CF TD KM CG CD CI
  * ============================================================ */
 
 /*
+ * KRA PIN CHECKER BY ID
+ * POST /api/auth/kra/pin-checker-by-id
+ * Consumer credentials stay server-side; never accept them from the browser.
+ */
+router.post('/kra/pin-checker-by-id', async (req, res) => {
+  try {
+    const result = await checkPinById({
+      taxpayerType: req.body?.TaxpayerType,
+      taxpayerID: req.body?.TaxpayerID,
+      expectedPin: req.body?.expectedPin,
+    });
+
+    return res.json({
+      success: true,
+      verified: result.verified,
+      pinMatches: result.pinMatches,
+      taxpayerName: result.taxpayerName,
+      message: result.pinMatches
+        ? 'KRA confirmed that the supplied ID and PIN match.'
+        : 'KRA found the ID, but the returned PIN does not match the PIN entered.',
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 503).json({
+      success: false,
+      verified: false,
+      message: error.message || 'KRA PIN Checker is temporarily unavailable.',
+    });
+  }
+});
+
+/*
  * SELLER REGISTRATION
  * Requires typed ID/KRA PIN details and matching private document uploads.
  */
@@ -154,6 +186,7 @@ router.post(
       const storeName = String(req.body?.storeName || '').trim();
       const storeProfile = String(req.body?.storeProfile || '').trim();
       const idType = String(req.body?.idType || '').trim();
+      const taxpayerType = String(req.body?.taxpayerType || '').trim().toUpperCase();
       const idNumber = String(req.body?.idNumber || '').trim();
       const taxIdentifier = String(req.body?.taxIdentifier || req.body?.kraPinNumber || '').trim().toUpperCase();
       const privacyAccepted = String(req.body?.privacyPolicyAccepted) === 'true';
@@ -198,6 +231,28 @@ router.post(
       }
       if (!idFront || !idBack || !taxDocumentFile) {
         return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your country-issued tax document.' });
+      }
+
+      // Enforce KRA's PIN Checker BY ID server-side; frontend checks alone can be bypassed.
+      let kraVerification;
+      try {
+        kraVerification = await checkPinById({
+          taxpayerType,
+          taxpayerID: idNumber,
+          expectedPin: kraPinNumber,
+        });
+      } catch (verificationError) {
+        return res.status(verificationError.statusCode || 503).json({
+          success: false,
+          message: verificationError.message || 'KRA PIN verification is temporarily unavailable.',
+        });
+      }
+
+      if (!kraVerification.pinMatches) {
+        return res.status(422).json({
+          success: false,
+          message: 'The KRA PIN returned for this ID does not match the PIN entered. Check the details and try again.',
+        });
       }
 
       const existingUser = await User.findOne({ email });
