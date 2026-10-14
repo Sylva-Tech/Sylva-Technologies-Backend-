@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
+const axios = require('axios');
 
 const Order = require('../models/Order');
 const User = require('../models/User');
@@ -553,10 +554,10 @@ const createOrderFromRequest = async ({
       });
     }
 
-    if (paymentMethod !== 'Paystack') {
+    if (!['Paystack', 'M-Pesa'].includes(paymentMethod)) {
       return res.status(400).json({
         success: false,
-        message: 'Only Paystack online payments are currently accepted.',
+        message: 'Choose Paystack or M-Pesa to pay for your order.',
       });
     }
 
@@ -955,6 +956,94 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
 */
 
 let paystackPayment = null;
+let mpesaPayment = null;
+
+if (paymentMethod === 'M-Pesa') {
+  try {
+    const key = process.env.MPESA_CONSUMER_KEY;
+    const secret = process.env.MPESA_CONSUMER_SECRET;
+    const shortcode = process.env.MPESA_SHORTCODE;
+    const passkey = process.env.MPESA_PASSKEY;
+    const host = process.env.MPESA_ENV === 'sandbox'
+      ? 'https://sandbox.safaricom.co.ke'
+      : 'https://api.safaricom.co.ke';
+    const callbackUrl = process.env.MPESA_ORDER_CALLBACK_URL ||
+      'https://sylva-technologies-backend.onrender.com/api/orders/mpesa/callback';
+    const phoneInput = String(customerDetails.phone || '').replace(/[\\s()+-]/g, '');
+    const phone = phoneInput.startsWith('0') ? '254' + phoneInput.slice(1)
+      : phoneInput.startsWith('7') || phoneInput.startsWith('1') ? '254' + phoneInput
+      : phoneInput;
+    if (!key || !secret || !shortcode || !passkey) {
+      throw new Error('M-Pesa production credentials are not fully configured.');
+    }
+    if (!/^254(?:7|1)\\d{8}$/.test(phone)) {
+      throw new Error('Enter a valid Kenyan M-Pesa phone number, e.g. 07XXXXXXXX.');
+    }
+    if (!/^https:\\/\\//i.test(callbackUrl)) {
+      throw new Error('The M-Pesa order callback URL must use HTTPS.');
+    }
+    const amount = Math.round(Number(orderTotal));
+    if (!Number.isSafeInteger(amount) || amount < 1) {
+      throw new Error('The order total is not valid for M-Pesa payment.');
+    }
+    const auth = Buffer.from(key + ':' + secret).toString('base64');
+    const tokenResponse = await axios.get(
+      host + '/oauth/v1/generate?grant_type=client_credentials',
+      { headers: { Authorization: 'Basic ' + auth }, timeout: 15000 }
+    );
+    const token = tokenResponse.data?.access_token;
+    if (!token) throw new Error('Safaricom did not return an access token.');
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date());
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const timestamp = values.year + values.month + values.day + values.hour + values.minute + values.second;
+    const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
+    const stkResponse = await axios.post(host + '/mpesa/stkpush/v1/processrequest', {
+      BusinessShortCode: shortcode,
+      Password: password,
+      Timestamp: timestamp,
+      TransactionType: process.env.MPESA_TRANSACTION_TYPE || 'CustomerPayBillOnline',
+      Amount: amount,
+      PartyA: phone,
+      PartyB: shortcode,
+      PhoneNumber: phone,
+      CallBackURL: callbackUrl,
+      AccountReference: String(order.orderNumber).slice(0, 12),
+      TransactionDesc: 'Sylva order ' + order.orderNumber,
+    }, {
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      timeout: 20000,
+    });
+    if (String(stkResponse.data?.ResponseCode) !== '0' || !stkResponse.data?.CheckoutRequestID) {
+      throw new Error(stkResponse.data?.ResponseDescription || 'Safaricom did not accept the M-Pesa request.');
+    }
+    order.paymentReference = 'MPESA_STK:' + stkResponse.data.CheckoutRequestID;
+    await order.save();
+    mpesaPayment = {
+      checkoutRequestId: stkResponse.data.CheckoutRequestID,
+      customerMessage: stkResponse.data.CustomerMessage || 'Check your phone and enter your M-Pesa PIN to complete payment.',
+      amount,
+      phone: '+' + phone,
+      orderNumber: order.orderNumber,
+    };
+  } catch (mpesaError) {
+    console.error('M-Pesa order payment initialization failed:', mpesaError.response?.data || mpesaError.message);
+    try {
+      for (const item of preparedItems) {
+        await Product.updateOne({ _id: item.product }, { $inc: { stock: item.quantity } });
+      }
+      await Order.findByIdAndDelete(order._id);
+    } catch (rollbackError) {
+      console.error('M-Pesa order rollback error:', rollbackError.message);
+    }
+    return res.status(502).json({
+      success: false,
+      message: mpesaError.message || 'Unable to start M-Pesa payment. Please try again.',
+    });
+  }
+}
 
 if (paymentMethod === 'Paystack') {
   try {
@@ -1082,12 +1171,12 @@ if (paymentMethod === 'Paystack') {
 
  return res.status(201).json({
   success: true,
-  message:
-    paymentMethod === 'Paystack'
-      ? 'Order created. Continue to Paystack to complete your payment.'
-      : 'Order created successfully.',
+  message: paymentMethod === 'Paystack'
+    ? 'Order created. Continue to Paystack to complete your payment.'
+    : 'M-Pesa prompt sent. Enter your PIN on your phone; the order will be confirmed after Safaricom verifies payment.',
   data: populatedOrder,
   payment: paystackPayment,
+  mpesaPayment,
 });
 
   } catch (error) {
@@ -1139,6 +1228,126 @@ router.post(
   }
 );
 
+
+/*
+|--------------------------------------------------------------------------
+| M-PESA ORDER CALLBACK AND STATUS
+|--------------------------------------------------------------------------
+*/
+router.post('/mpesa/callback', async (req, res) => {
+  try {
+    const callback = req.body?.Body?.stkCallback;
+    const checkoutRequestId = String(callback?.CheckoutRequestID || '');
+    if (!checkoutRequestId) return res.status(400).json({ ResultCode: 1, ResultDesc: 'Invalid callback.' });
+
+    const order = await Order.findOne({
+      paymentMethod: 'M-Pesa',
+      paymentReference: 'MPESA_STK:' + checkoutRequestId,
+    });
+    if (!order) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
+    if (order.paymentStatus === 'Paid' || order.paymentStatus === 'Failed') {
+      return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
+    }
+    if (Number(callback.ResultCode) !== 0) {
+      const updated = await Order.findOneAndUpdate(
+        { _id: order._id, paymentStatus: 'Pending' },
+        { $set: { paymentStatus: 'Failed' } },
+        { new: true }
+      );
+      if (updated) await restoreOrderStock(updated);
+      return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
+    }
+
+    const key = process.env.MPESA_CONSUMER_KEY;
+    const secret = process.env.MPESA_CONSUMER_SECRET;
+    const shortcode = process.env.MPESA_SHORTCODE;
+    const passkey = process.env.MPESA_PASSKEY;
+    if (!key || !secret || !shortcode || !passkey) {
+      return res.status(503).json({ ResultCode: 1, ResultDesc: 'Payment verification is not configured.' });
+    }
+    const host = process.env.MPESA_ENV === 'sandbox'
+      ? 'https://sandbox.safaricom.co.ke'
+      : 'https://api.safaricom.co.ke';
+    const auth = Buffer.from(key + ':' + secret).toString('base64');
+    const tokenResponse = await axios.get(
+      host + '/oauth/v1/generate?grant_type=client_credentials',
+      { headers: { Authorization: 'Basic ' + auth }, timeout: 15000 }
+    );
+    const token = tokenResponse.data?.access_token;
+    if (!token) return res.status(503).json({ ResultCode: 1, ResultDesc: 'Unable to verify payment.' });
+
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date());
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const timestamp = values.year + values.month + values.day + values.hour + values.minute + values.second;
+    const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
+    const verification = await axios.post(host + '/mpesa/stkpushquery/v1/query', {
+      BusinessShortCode: shortcode,
+      Password: password,
+      Timestamp: timestamp,
+      CheckoutRequestID: checkoutRequestId,
+    }, {
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      timeout: 15000,
+    });
+    if (String(verification.data?.ResultCode) !== '0') {
+      return res.status(503).json({ ResultCode: 1, ResultDesc: 'Payment is not yet confirmed.' });
+    }
+
+    const items = callback.CallbackMetadata?.Item || [];
+    const field = (name) => items.find((item) => item.Name === name)?.Value;
+    const amount = Number(field('Amount'));
+    const receipt = String(field('MpesaReceiptNumber') || '');
+    const phone = String(field('PhoneNumber') || '');
+    const expectedAmount = Math.round(Number(order.total || 0));
+    if (!receipt || amount !== expectedAmount || (phone && !/^254(?:7|1)\\d{8}$/.test(phone))) {
+      console.error('M-Pesa order callback validation failed:', order.orderNumber);
+      return res.json({ ResultCode: 0, ResultDesc: 'Callback received for review.' });
+    }
+    const duplicate = await Order.exists({
+      _id: { $ne: order._id },
+      paymentMethod: 'M-Pesa',
+      paymentReference: receipt,
+      paymentStatus: 'Paid',
+    });
+    if (duplicate) return res.json({ ResultCode: 0, ResultDesc: 'Receipt already used.' });
+
+    const paidOrder = await Order.findOneAndUpdate(
+      { _id: order._id, paymentStatus: 'Pending', status: { $ne: 'Cancelled' } },
+      {
+        $set: {
+          paymentStatus: 'Paid',
+          paidAt: new Date(),
+          cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000),
+          status: order.status === 'Pending' ? 'Confirmed' : order.status,
+          paymentReference: receipt,
+        },
+      },
+      { new: true }
+    );
+    if (paidOrder) await sendPaidOrderEmails(paidOrder);
+    return res.json({ ResultCode: 0, ResultDesc: paidOrder ? 'Payment confirmed.' : 'Callback already processed.' });
+  } catch (error) {
+    console.error('M-Pesa order callback failed:', error.response?.data || error.message);
+    return res.status(500).json({ ResultCode: 1, ResultDesc: 'Callback processing failed.' });
+  }
+});
+
+router.get('/mpesa/status/:orderNumber', protect, async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      orderNumber: req.params.orderNumber,
+      customer: req.user._id,
+      paymentMethod: 'M-Pesa',
+    }).select('orderNumber paymentStatus status total paymentMethod');
+    if (!order) return res.status(404).json({ success: false, message: 'M-Pesa order not found.' });
+    return res.json({ success: true, data: order });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Unable to check M-Pesa payment status.' });
+  }
+});
 
 /*
 |--------------------------------------------------------------------------
