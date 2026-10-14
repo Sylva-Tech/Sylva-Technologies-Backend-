@@ -724,6 +724,10 @@ router.put(
         return res.status(400).json({ success: false, message: 'This account does not have a seller application.' });
       }
 
+      if (req.body?.identityReviewed !== true) {
+        return res.status(400).json({ success: false, message: 'Confirm that you have reviewed the ID front, ID back and country-issued tax document before approving identity verification.' });
+      }
+
       const identityProfile = seller.sellerProfile || {};
       if (!identityProfile.idFrontDocument || !identityProfile.idBackDocument || !(identityProfile.taxDocument || identityProfile.kraPinDocument)) {
         return res.status(400).json({ success: false, message: 'Cannot approve identity verification until the ID front, ID back and country-issued tax document are available for review.' });
