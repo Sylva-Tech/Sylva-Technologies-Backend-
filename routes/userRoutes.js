@@ -75,8 +75,10 @@ router.put(
           return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
         }
         if (value !== user.email) {
-          const existing = await User.findOne({ email: value, _id: { $ne: user._id } }).select('_id');
-          if (existing) return res.status(409).json({ success: false, message: 'That email address is already in use.' });
+          const existing = await User.findOne({ email: value }).select('_id');
+          if (existing && String(existing._id) !== String(user._id)) {
+            return res.status(409).json({ success: false, message: 'That email address is already in use.' });
+          }
           user.email = value;
           user.isVerified = false;
         }
