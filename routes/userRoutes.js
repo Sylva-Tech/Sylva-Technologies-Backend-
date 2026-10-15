@@ -101,8 +101,9 @@ router.post('/me/addresses', protect, async (req, res) => {
     if (!user.savedAddresses.some(item => item.isDefault) && user.savedAddresses.length) user.savedAddresses[0].isDefault = true;
 
     await user.save();
+    const savedAddressId = String(body.addressId || user.savedAddresses[user.savedAddresses.length - 1]?._id || '');
     const addresses = [...user.savedAddresses].sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
-    return res.status(body.addressId ? 200 : 201).json({ success: true, message: body.addressId ? 'Saved address updated.' : 'Delivery address saved.', data: addresses });
+    return res.status(body.addressId ? 200 : 201).json({ success: true, message: body.addressId ? 'Saved address updated.' : 'Delivery address saved.', savedAddressId, data: addresses });
   } catch (error) {
     console.error('Save delivery address error:', error);
     return res.status(500).json({ success: false, message: error.message || 'Unable to save this delivery address.' });
