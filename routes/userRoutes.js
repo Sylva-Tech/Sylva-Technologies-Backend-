@@ -207,19 +207,13 @@ router.put(
           if (value.length < 5 || value.length > 50) {
             return res.status(400).json({ success: false, message: 'ID number must be between 5 and 50 characters.' });
           }
-          const normalizedIdNumber = value.replace(/\\s+/g, '').toUpperCase();
-          const duplicate = await User.findOne({
-            idNumber: { $regex: '^' + normalizedIdNumber.split('').map(char => char.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\      if (idNumber !== undefined && !String(user.idNumber || '').trim()) {
-        const value = String(idNumber).trim();
-        if (value.length < 5 || value.length > 50) {
-          return res.status(400).json({ success: false, message: 'ID number must be between 5 and 50 characters.' });
+          const duplicate = await User.findOne({ idNumber: value }).select('_id');
+          if (duplicate && String(duplicate._id) !== String(user._id)) {
+            return res.status(409).json({ success: false, message: 'An account with this ID number already exists.' });
+          }
+          user.idNumber = value;
         }
-        const duplicate = await User.findOne({ idNumber: value }).select('_id');
-        if (duplicate && String(duplicate._id) !== String(user._id)) {
-          return res.status(409).json({ success: false, message: 'An account with this ID number already exists.' });
-        }
-        user.idNumber = value;
-      }')).join('') + '
+      }
 
       if (bio !== undefined) {
         const value = String(bio).trim();
