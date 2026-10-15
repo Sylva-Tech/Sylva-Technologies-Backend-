@@ -17,6 +17,25 @@ const {
 } = require('../services/emailService');
 
 const router = express.Router();
+const verifyTurnstile = require('../middleware/turnstileVerification');
+
+// Validate Turnstile tokens before sensitive account actions. Payment callbacks
+// are in orderRoutes and are intentionally not covered by this middleware.
+router.use((req, res, next) => {
+  const protectedPostPaths = new Set([
+    '/register',
+    '/login',
+    '/forgot-password',
+    '/verify-password-reset-code',
+    '/reset-password',
+  ]);
+
+  if (req.method === 'POST' && protectedPostPaths.has(req.path)) {
+    return verifyTurnstile(req, res, next);
+  }
+
+  return next();
+});
 
 /* ============================================================
  * CONFIGURATION
@@ -172,6 +191,7 @@ router.post(
     { name: 'idBack', maxCount: 1 },
     { name: 'kraPin', maxCount: 1 },
   ]),
+  verifyTurnstile,
   async (req, res) => {
     const uploadedDocuments = [];
     let createdUser = null;
