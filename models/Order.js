@@ -182,6 +182,9 @@ const orderSchema = new mongoose.Schema(
         lowercase: true,
       },
 
+      idNumber: { type: String, trim: true, maxlength: 50, default: '' },
+      customerReference: { type: String, trim: true, maxlength: 30, default: '' },
+
       country: { type: String, trim: true, default: 'Kenya' },
       county: { type: String, trim: true },
       subCounty: { type: String, trim: true },
