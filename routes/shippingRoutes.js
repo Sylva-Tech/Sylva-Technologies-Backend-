@@ -35,8 +35,10 @@ router.get('/quote', async (req, res) => {
     if (country.toLowerCase() !== 'kenya') {
       return res.status(422).json({ success: false, message: 'Online shipping rates are currently configured for Kenya only. Please contact support for international delivery.' });
     }
+    const canonicalCounty = COUNTY_DEFAULTS.find(item => item.toLowerCase() === county.toLowerCase());
+    if (!canonicalCounty) return res.status(422).json({ success: false, message: 'Choose a valid Kenyan county.' });
     await ensureDefaultRates();
-    const rate = await ShippingRate.findOne({ country: 'Kenya', county: { $regex: '^' + county.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' }, active: true }).lean();
+    const rate = await ShippingRate.findOne({ country: 'Kenya', county: canonicalCounty, active: true }).lean();
     if (!rate) return res.status(422).json({ success: false, message: 'Delivery is not currently available for this county. Please contact support.' });
     return res.json({ success: true, quote: { country: rate.country, county: rate.county, fee: rate.fee, deliveryMinDays: rate.deliveryMinDays, deliveryMaxDays: rate.deliveryMaxDays, estimate: rate.deliveryMinDays === rate.deliveryMaxDays ? `Within ${rate.deliveryMinDays} day${rate.deliveryMinDays === 1 ? '' : 's'}` : `${rate.deliveryMinDays}–${rate.deliveryMaxDays} days` } });
   } catch (error) {
@@ -81,8 +83,10 @@ module.exports.getQuote = async customerDetails => {
   const country = String(customerDetails?.country || '').trim();
   const county = String(customerDetails?.county || '').trim();
   if (country.toLowerCase() !== 'kenya' || !county) throw new Error('Choose Kenya and a county to calculate shipping.');
+  const canonicalCounty = COUNTY_DEFAULTS.find(item => item.toLowerCase() === county.toLowerCase());
+  if (!canonicalCounty) throw new Error('Choose a valid Kenyan county.');
   await ensureDefaultRates();
-  const rate = await ShippingRate.findOne({ country: 'Kenya', county: { $regex: '^' + county.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' }, active: true }).lean();
+  const rate = await ShippingRate.findOne({ country: 'Kenya', county: canonicalCounty, active: true }).lean();
   if (!rate) throw new Error('Delivery is not available for the selected county. Please contact support.');
   return { fee: rate.fee, deliveryMinDays: rate.deliveryMinDays, deliveryMaxDays: rate.deliveryMaxDays, county: rate.county, country: rate.country };
 };
