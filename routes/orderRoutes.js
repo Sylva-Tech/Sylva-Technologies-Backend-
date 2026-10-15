@@ -1137,7 +1137,9 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
         amount: orderTotal,
         reference: paystackReference,
         callbackUrl,
+        channels: paymentMethod === 'Card' ? ['card'] : undefined,
         metadata: {
+          paymentMethod,
           orderId: order._id.toString(),
           orderNumber: order.orderNumber,
           trackingCode:
@@ -1237,9 +1239,11 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
 
  return res.status(201).json({
   success: true,
-  message: paymentMethod === 'Paystack'
-    ? 'Order created. Continue to Paystack to complete your payment.'
-    : 'M-Pesa prompt sent. Enter your PIN on your phone; the order will be confirmed after Safaricom verifies payment.',
+  message: paymentMethod === 'Card'
+    ? 'Order created. Continue to Paystack to pay securely with Visa or Mastercard.'
+    : paymentMethod === 'Paystack'
+      ? 'Order created. Continue to Paystack to complete your payment.'
+      : 'M-Pesa prompt sent. Enter your PIN on your phone; the order will be confirmed after Safaricom verifies payment.',
   data: populatedOrder,
   payment: paystackPayment,
   mpesaPayment,
