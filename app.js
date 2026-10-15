@@ -19,6 +19,7 @@ const walletRoutes = require('./routes/walletRoutes');
 const adminWalletRoutes = require('./routes/adminWalletRoutes');
 const sellerManagementRoutes = require('./routes/sellerManagementRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const shippingRoutes = require('./routes/shippingRoutes');
 const {
   cloudflareOriginGuard,
   financialRateLimit,
@@ -381,6 +382,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
 
 app.use('/api/orders', orderRoutes);
+app.use('/api/shipping', shippingRoutes);
 
 app.use('/api/users', userRoutes);
 
