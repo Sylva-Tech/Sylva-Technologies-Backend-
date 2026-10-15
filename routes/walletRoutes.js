@@ -1646,7 +1646,7 @@ router.patch(
 
 
 /* SELLER M-PESA STK TOP-UP. Configure Daraja secrets in the backend environment. */
-const axios = require('axios');
+
 const normalizeStkPhone = (value) => {
   const phone = normalizeKenyanPhone(value);
   return phone && /^254(?:7|1)\d{8}$/.test(phone) ? phone : '';
