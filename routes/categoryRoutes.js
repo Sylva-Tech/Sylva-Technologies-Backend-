@@ -12,6 +12,15 @@ const buildSlug = (value) =>
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-');
 
+router.get('/admin/all', protect, adminOnly, async (req, res) => {
+  try {
+    const categories = await Category.find({}).sort({ name: 1 });
+    res.json(categories);
+  } catch (error) {
+    res.status(500).json({ message: 'Unable to fetch categories for administration.' });
+  }
+});
+
 router.get('/', async (req, res) => {
   try {
     const categories = await Category.find({
