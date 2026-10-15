@@ -548,6 +548,7 @@ const createOrderFromRequest = async ({
       items,
       deliveryFee = 0,
       customerDetails,
+      mpesaPhone = '',
       paymentMethod = 'Cash on Delivery',
       paymentReference = '',
       notes = '',
@@ -570,10 +571,10 @@ const createOrderFromRequest = async ({
       });
     }
 
-    if (!['Paystack', 'M-Pesa'].includes(paymentMethod)) {
+    if (!['Paystack', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
       return res.status(400).json({
         success: false,
-        message: 'Choose Paystack or M-Pesa to pay for your order.',
+        message: 'Choose Wallet, M-Pesa, or Paystack to pay for your order.',
       });
     }
 
@@ -936,7 +937,33 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
         }
       }
 
-      // Commit transaction
+      if (paymentMethod === 'Wallet') {
+        if (!user?._id) throw new Error('Please sign in to pay with your Sylva Wallet.');
+        const walletReference = `order:${orderNumber}`;
+        const walletDebit = await User.updateOne(
+          { _id: user._id, 'wallet.availableBalance': mongoose.trusted({ $gte: orderTotal }), 'wallet.transactions.reference': mongoose.trusted({ $ne: walletReference }) },
+          {
+            $inc: { 'wallet.availableBalance': -orderTotal },
+            $set: { 'wallet.lastUpdatedAt': new Date() },
+            $push: { 'wallet.transactions': {
+              type: 'debit', amount: orderTotal, category: 'order_payment', status: 'completed',
+              description: `Wallet payment for order ${orderNumber}.`, reference: walletReference,
+              relatedOrder: order._id, createdAt: new Date(), updatedAt: new Date(),
+            } },
+          },
+          { session }
+        );
+        if (walletDebit.modifiedCount !== 1) {
+          throw new Error('Insufficient wallet balance. Please top up your wallet or choose another payment method.');
+        }
+        await Order.updateOne(
+          { _id: order._id, paymentStatus: 'Pending' },
+          { $set: { paymentStatus: 'Paid', paidAt: new Date(), status: 'Confirmed' } },
+          { session }
+        );
+      }
+
+      // Commit stock and wallet changes together so a failed checkout cannot debit twice.
       await session.commitTransaction();
       session.endSession();
     } catch (stockError) {
@@ -954,8 +981,9 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
 
       return res.status(400).json({
         success: false,
-        message:
-          'The order could not be completed because stock changed. Please try again.',
+        message: String(stockError.message || '').includes('Insufficient wallet balance') || String(stockError.message || '').includes('pay with your Sylva Wallet')
+          ? stockError.message
+          : 'The order could not be completed because stock changed. Please try again.',
       });
     }
 
@@ -1006,7 +1034,7 @@ if (paymentMethod === 'M-Pesa') {
     const host = getMpesaHost();
     const callbackUrl = process.env.MPESA_ORDER_CALLBACK_URL ||
       'https://sylva-technologies-backend.onrender.com/api/orders/mpesa/callback';
-    const phoneInput = String(customerDetails.phone || '').replace(/[\s()+-]/g, '');
+    const phoneInput = String(mpesaPhone || customerDetails.mpesaPhone || customerDetails.phone || '').replace(/[\s()+-]/g, '');
     const phone = phoneInput.startsWith('0') ? '254' + phoneInput.slice(1)
       : phoneInput.startsWith('7') || phoneInput.startsWith('1') ? '254' + phoneInput
       : phoneInput;
