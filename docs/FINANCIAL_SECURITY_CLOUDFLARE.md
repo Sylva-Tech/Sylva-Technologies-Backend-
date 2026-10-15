@@ -40,9 +40,11 @@ Do this only after the API hostname is proxied through Cloudflare and all extern
 Generate a unique random secret locally (PowerShell example):
 
 ```powershell
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 $bytes = New-Object byte[] 32
-[System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+$rng.GetBytes($bytes)
 $secret = [Convert]::ToBase64String($bytes)
+$rng.Dispose()
 $secret
 ```
 
