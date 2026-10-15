@@ -182,10 +182,10 @@ const orderSchema = new mongoose.Schema(
         lowercase: true,
       },
 
-      county: {
-        type: String,
-        trim: true,
-      },
+      country: { type: String, trim: true, default: 'Kenya' },
+      county: { type: String, trim: true },
+      subCounty: { type: String, trim: true },
+      ward: { type: String, trim: true },
 
       deliveryLocation: {
         type: String,
