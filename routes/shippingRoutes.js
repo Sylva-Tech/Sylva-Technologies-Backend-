@@ -15,6 +15,8 @@ const DEFAULT_RATE = county => ({
 });
 
 async function ensureDefaultRates() {
+  const existingCount = await ShippingRate.countDocuments({ country: 'Kenya' });
+  if (existingCount >= COUNTY_DEFAULTS.length) return;
   const operations = COUNTY_DEFAULTS.map(county => ({
     updateOne: {
       filter: { country: 'Kenya', county },
