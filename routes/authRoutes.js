@@ -390,15 +390,24 @@ router.post('/register', async (req, res) => {
       name,
       email,
       phone,
+      idNumber,
       password,
       confirmPassword,
     } = req.body;
 
     const normalizedEmail = normalizeEmail(email);
 
-    if (!name || !normalizedEmail || !password) {
+    const normalizedIdNumber = String(idNumber || '').trim();
+
+    if (!name || !normalizedEmail || !phone || !normalizedIdNumber || !password) {
       return res.status(400).json({
-        message: 'Name, email and password are required.',
+        message: 'Name, email, phone, government ID number and password are required.',
+      });
+    }
+
+    if (normalizedIdNumber.length < 5 || normalizedIdNumber.length > 50) {
+      return res.status(400).json({
+        message: 'ID number must be between 5 and 50 characters.',
       });
     }
 
@@ -428,10 +437,16 @@ router.post('/register', async (req, res) => {
       });
     }
 
+    const duplicateId = await User.findOne({ idNumber: normalizedIdNumber }).select('_id');
+    if (duplicateId) {
+      return res.status(409).json({ message: 'An account with this ID number already exists.' });
+    }
+
     const user = await User.create({
       name: String(name).trim(),
       email: normalizedEmail,
-      phone: phone ? String(phone).trim() : '',
+      phone: String(phone).trim(),
+      idNumber: normalizedIdNumber,
       password,
       role: 'customer',
       sellerStatus: 'none',
