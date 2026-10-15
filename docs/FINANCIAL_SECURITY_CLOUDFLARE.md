@@ -101,7 +101,7 @@ Create separate rules for these path prefixes; scope to hostname `api.sylvatechn
 | `/api/orders/paystack/webhook` | Use a higher threshold appropriate to real order volume | Rate-limit only after monitoring; never challenge |
 | `/api/wallet/topup/stk/callback` | Use a higher threshold appropriate to real callback retries | Rate-limit only after monitoring; never challenge |
 
-Cloudflare rate-limit features and counting characteristics depend on plan. These are starting values, not universal production limits. Avoid a blanket “Managed Challenge” for all POST requests: it can break checkout, wallet actions, and provider callbacks. Configure a dashboard alert for repeated blocks or spikes.
+**Free-plan limitation:** Cloudflare currently allows one rate-limiting rule on the Free plan. Do not create the separate rules above if your dashboard only allows one. Instead, create one consolidated rule matching the most critical payout/transfer paths with a conservative shared threshold, and rely on the backend's per-instance limiter for the broader financial API. The Free-plan rate-limit expression/counting fields are more limited than paid plans, so use the dashboard expression builder to confirm which path conditions are available. Rate-limit features and counting characteristics depend on plan. These are starting values, not universal production limits. Avoid a blanket “Managed Challenge” for all POST requests: it can break checkout, wallet actions, and provider callbacks. Configure monitoring for repeated blocks or spikes.
 
 ## 5. Cloudflare settings that are not substitutes for backend security
 
