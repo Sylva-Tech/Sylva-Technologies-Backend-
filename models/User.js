@@ -32,6 +32,16 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Customer identity number collected during registration.
+    // Kept separate from sellerProfile.idNumber.
+    idNumber: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: [50, 'ID number cannot exceed 50 characters'],
+      select: true,
+    },
+
     bio: {
       type: String,
       default: '',
