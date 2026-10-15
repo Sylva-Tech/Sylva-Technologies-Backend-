@@ -220,6 +220,7 @@ const orderSchema = new mongoose.Schema(
     'PayPal',
     'WhatsApp Order',
     'Paystack',
+    'Card',
     'Wallet',
   ],
   default: 'Cash on Delivery',
