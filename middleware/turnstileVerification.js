@@ -3,6 +3,9 @@ const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/sit
 const allowedHostnames = new Set([
   'sylvatechnologies.co.ke',
   'www.sylvatechnologies.co.ke',
+  // Allow the stable Vercel deployment hostname used for production preview/testing.
+  // Do not use a wildcard for all *.vercel.app hosts.
+  'sylva-technologies-frontend.vercel.app',
   'localhost',
   '127.0.0.1',
 ]);
