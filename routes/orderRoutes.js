@@ -1004,10 +1004,6 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
           'name slug price images stock'
         );
 
-        if (paymentMethod === 'Wallet') {
-          await sendPaidOrderEmails(populatedOrder);
-        }
-
         /*
 |--------------------------------------------------------------------------
 | INITIALIZE PAYSTACK PAYMENT
