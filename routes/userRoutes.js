@@ -156,6 +156,7 @@ router.put(
       const name = req.body?.name;
       const email = req.body?.email;
       const phone = req.body?.phone;
+      const idNumber = req.body?.idNumber;
       const bio = req.body?.bio;
       const currentPassword = String(req.body?.currentPassword || '');
       const newPassword = String(req.body?.newPassword || '');
@@ -187,6 +188,18 @@ router.put(
         const value = String(phone).trim();
         if (value.length > 30) return res.status(400).json({ success: false, message: 'Phone number is too long.' });
         user.phone = value;
+      }
+
+      if (idNumber !== undefined && !String(user.idNumber || '').trim()) {
+        const value = String(idNumber).trim();
+        if (value.length < 5 || value.length > 50) {
+          return res.status(400).json({ success: false, message: 'ID number must be between 5 and 50 characters.' });
+        }
+        const duplicate = await User.findOne({ idNumber: value }).select('_id');
+        if (duplicate && String(duplicate._id) !== String(user._id)) {
+          return res.status(409).json({ success: false, message: 'An account with this ID number already exists.' });
+        }
+        user.idNumber = value;
       }
 
       if (bio !== undefined) {
