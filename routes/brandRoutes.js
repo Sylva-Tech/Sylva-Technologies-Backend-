@@ -4,7 +4,7 @@ const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 const buildSlug = value => String(value || '').toLowerCase().trim()
-  .replace(/[^a-z0-9\\s-]/g, '').replace(/\\s+/g, '-').replace(/-+/g, '-');
+  .replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
 
 router.get('/admin/all', protect, adminOnly, async (req, res) => {
   try {
@@ -28,7 +28,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
     if (!name) return res.status(400).json({ message: 'Brand name is required.' });
     const slug = buildSlug(name);
     if (!slug) return res.status(400).json({ message: 'Enter a valid brand name.' });
-    if (await Brand.findOne({ $or: [{ slug }, { name: { $regex: '^' + name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'), $options: 'i' } }] })) {
+    if (await Brand.findOne({ slug })) {
       return res.status(409).json({ message: 'This brand already exists.' });
     }
     const brand = await Brand.create({
