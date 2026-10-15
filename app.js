@@ -19,6 +19,11 @@ const walletRoutes = require('./routes/walletRoutes');
 const adminWalletRoutes = require('./routes/adminWalletRoutes');
 const sellerManagementRoutes = require('./routes/sellerManagementRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const {
+  cloudflareOriginGuard,
+  financialRateLimit,
+  noStoreFinancialResponses,
+} = require('./middleware/financialSecurity');
 
 const app = express();
 
@@ -170,6 +175,23 @@ app.use(
 */
 
 app.use(cors(corsOptions));
+
+/*
+|--------------------------------------------------------------------------
+| FINANCIAL API DEFENCE IN DEPTH
+|--------------------------------------------------------------------------
+|
+| Run these controls before body parsing and route handlers. Configure
+| Cloudflare edge WAF/rate rules as the first layer. CLOUDFLARE_ORIGIN_SECRET
+| remains optional until the proxied API hostname and provider callbacks are ready.
+|--------------------------------------------------------------------------
+*/
+app.use(
+  ['/api/wallet', '/api/admin-wallet', '/api/orders'],
+  noStoreFinancialResponses,
+  cloudflareOriginGuard,
+  financialRateLimit
+);
 
 /*
 |--------------------------------------------------------------------------
