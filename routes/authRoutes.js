@@ -247,31 +247,28 @@ router.post(
         return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your KRA PIN certificate.' });
       }
 
-      // Enforce KRA's PIN Checker BY ID server-side; frontend checks alone can be bypassed.
-      let kraVerification;
-      try {
-        kraVerification = await checkPinById({
-          taxpayerType,
-          taxpayerID: idNumber,
-          expectedPin: kraPinNumber,
-        });
-      } catch (verificationError) {
-        return res.status(verificationError.statusCode || 503).json({
-          success: false,
-          message: verificationError.message || 'KRA PIN verification is temporarily unavailable.',
-        });
-      }
-
-      if (!kraVerification.pinMatches) {
-        return res.status(422).json({
-          success: false,
-          message: 'The KRA PIN returned for this ID does not match the PIN entered. Check the details and try again.',
-        });
-      }
+      // KRA and identity documents are reviewed manually by an administrator.
+      // Do not block seller registration on an external KRA API response.
 
       const existingUser = await User.findOne({ email });
       if (existingUser) {
         return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
+      }
+
+      const normalizedIdNumber = idNumber.replace(/\s+/g, '').toUpperCase();
+      const normalizedKraPin = kraPinNumber.replace(/\s+/g, '').toUpperCase();
+      const existingSellerIdentity = await User.findOne({
+        $or: [
+          { 'sellerProfile.idNumber': normalizedIdNumber },
+          { 'sellerProfile.kraPin': normalizedKraPin },
+        ],
+      }).select('_id sellerProfile.storeName sellerStatus');
+
+      if (existingSellerIdentity) {
+        return res.status(409).json({
+          success: false,
+          message: 'These ID or KRA details are already associated with another seller application/store. Each seller identity can be used for only one store on Sylva Technologies.',
+        });
       }
 
       const [frontUpload, backUpload, kraUpload] = await Promise.all([
@@ -301,7 +298,7 @@ router.post(
         sellerProfile: {
           officialName: name,
           idType,
-          idNumber,
+          idNumber: normalizedIdNumber,
           idFrontDocument: frontUpload.public_id,
           idBackDocument: backUpload.public_id,
           storeName,
@@ -309,7 +306,7 @@ router.post(
           storeEmail: email,
           storePhone: phone,
           mpesaPhone: phone,
-          kraPin: kraPinNumber,
+          kraPin: normalizedKraPin,
           kraPinDocument: kraUpload.public_id,
           applicationDate: now,
         },
