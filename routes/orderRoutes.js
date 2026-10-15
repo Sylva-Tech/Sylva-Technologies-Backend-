@@ -609,10 +609,10 @@ const createOrderFromRequest = async ({
       });
     }
 
-    if (!['Paystack', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
+    if (!['Paystack', 'Card', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
       return res.status(400).json({
         success: false,
-        message: 'Choose Wallet, M-Pesa, or Paystack to pay for your order.',
+        message: 'Choose Wallet, M-Pesa, Paystack, or Visa/Mastercard to pay for your order.',
       });
     }
 
@@ -1149,7 +1149,7 @@ if (paymentMethod === 'M-Pesa') {
   }
 }
 
-if (paymentMethod === 'Paystack') {
+if (['Paystack', 'Card'].includes(paymentMethod)) {
   try {
     const paystackReference = order.orderNumber;
 
@@ -1175,7 +1175,9 @@ if (paymentMethod === 'Paystack') {
         amount: orderTotal,
         reference: paystackReference,
         callbackUrl,
+        channels: paymentMethod === 'Card' ? ['card'] : undefined,
         metadata: {
+          paymentMethod,
           orderId: order._id.toString(),
           orderNumber: order.orderNumber,
           trackingCode:
@@ -1275,9 +1277,11 @@ if (paymentMethod === 'Paystack') {
 
  return res.status(201).json({
   success: true,
-  message: paymentMethod === 'Paystack'
-    ? 'Order created. Continue to Paystack to complete your payment.'
-    : 'M-Pesa prompt sent. Enter your PIN on your phone; the order will be confirmed after Safaricom verifies payment.',
+  message: paymentMethod === 'Card'
+    ? 'Order created. Continue to Paystack to pay securely with Visa or Mastercard.'
+    : paymentMethod === 'Paystack'
+      ? 'Order created. Continue to Paystack to complete your payment.'
+      : 'M-Pesa prompt sent. Enter your PIN on your phone; the order will be confirmed after Safaricom verifies payment.',
   data: populatedOrder,
   payment: paystackPayment,
   mpesaPayment,
@@ -1485,7 +1489,7 @@ router.post('/paystack/webhook', async (req, res) => {
       const order = await Order.findOne({
         $or: [{ paymentReference: String(data.reference) }, { orderNumber: String(data.reference) }],
       });
-      if (order && order.paymentMethod === 'Paystack') {
+      if (order && ['Paystack', 'Card'].includes(order.paymentMethod)) {
         const verification = await verifyTransaction(data.reference);
         if (verification?.status && verification.data) {
           await confirmPaidOrder(order, verification.data);
@@ -1536,7 +1540,7 @@ router.post('/paystack/verify', protect, async (req, res) => {
       $or: [{ paymentReference: reference }, { orderNumber: reference }],
     });
 
-    if (!order || order.paymentMethod !== 'Paystack') {
+    if (!order || !['Paystack', 'Card'].includes(order.paymentMethod)) {
       return res.status(404).json({ success: false, message: 'No Paystack order was found for this reference.' });
     }
 
@@ -1876,7 +1880,7 @@ router.patch(
         });
       }
 
-      if (paymentStatus === 'Paid' && order.paymentMethod === 'Paystack') {
+      if (paymentStatus === 'Paid' && ['Paystack', 'Card'].includes(order.paymentMethod)) {
         return res.status(409).json({
           success: false,
           message: 'Paystack payments can only be marked paid after successful gateway verification.',
