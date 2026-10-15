@@ -191,6 +191,7 @@ router.post(
     { name: 'idBack', maxCount: 1 },
     { name: 'kraPin', maxCount: 1 },
   ]),
+  verifyTurnstile,
   async (req, res) => {
     const uploadedDocuments = [];
     let createdUser = null;
