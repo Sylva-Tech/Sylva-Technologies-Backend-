@@ -6,6 +6,7 @@ const axios = require('axios');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Product = require('../models/Product');
+const { getQuote: getShippingQuote } = require('./shippingRoutes');
 
 const {
   initializeTransaction,
@@ -624,21 +625,17 @@ const createOrderFromRequest = async ({
     |--------------------------------------------------------------------------
     */
 
-    const normalizedDeliveryFee =
-      Number(deliveryFee || 0);
-
-    if (
-      !Number.isFinite(
-        normalizedDeliveryFee
-      ) ||
-      normalizedDeliveryFee < 0
-    ) {
-      return res.status(400).json({
+    // Always calculate shipping on the server. Never trust a fee supplied by the browser.
+    let shippingQuote;
+    try {
+      shippingQuote = await getShippingQuote(customerDetails);
+    } catch (shippingError) {
+      return res.status(422).json({
         success: false,
-        message:
-          'A valid delivery fee is required.',
+        message: shippingError.message || 'Unable to calculate shipping for this location.',
       });
     }
+    const normalizedDeliveryFee = Number(shippingQuote.fee);
 
     /*
     |--------------------------------------------------------------------------
