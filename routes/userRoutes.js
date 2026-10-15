@@ -43,6 +43,105 @@ router.patch('/:id/admin-review', protect, adminOnly, async (req, res) => {
   }
 });
 
+// CUSTOMER SAVED DELIVERY ADDRESSES
+// Every operation is scoped to the authenticated account.
+router.get('/me/addresses', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('savedAddresses');
+    if (!user || user.accountDeleted) return res.status(404).json({ success: false, message: 'Account not found.' });
+    const addresses = [...(user.savedAddresses || [])].sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+    return res.json({ success: true, data: addresses });
+  } catch (error) {
+    console.error('List saved addresses error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load saved addresses.' });
+  }
+});
+
+router.post('/me/addresses', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user || user.accountDeleted) return res.status(404).json({ success: false, message: 'Account not found.' });
+
+    const body = req.body || {};
+    const required = ['fullName', 'phone', 'county', 'subCounty', 'ward', 'deliveryLocation', 'address'];
+    for (const field of required) {
+      if (!String(body[field] || '').trim()) {
+        return res.status(400).json({ success: false, message: 'Please provide ' + field + ' to save this delivery address.' });
+      }
+    }
+    const value = {
+      label: String(body.label || 'Home').trim().slice(0, 40) || 'Home',
+      fullName: String(body.fullName).trim(),
+      phone: String(body.phone).trim(),
+      email: String(body.email || '').trim().toLowerCase(),
+      country: String(body.country || 'Kenya').trim(),
+      county: String(body.county).trim(),
+      subCounty: String(body.subCounty).trim(),
+      ward: String(body.ward).trim(),
+      deliveryLocation: String(body.deliveryLocation).trim(),
+      address: String(body.address).trim(),
+      updatedAt: new Date(),
+    };
+    const makeDefault = body.isDefault === true || body.isDefault === 'true' || !(user.savedAddresses || []).some(item => item.isDefault);
+
+    if (body.addressId) {
+      const existing = user.savedAddresses.id(body.addressId);
+      if (!existing) return res.status(404).json({ success: false, message: 'Saved address not found.' });
+      Object.assign(existing, value);
+      if (makeDefault) existing.isDefault = true;
+      else if (body.isDefault === false || body.isDefault === 'false') existing.isDefault = false;
+    } else {
+      user.savedAddresses.push({ ...value, isDefault: makeDefault, createdAt: new Date() });
+    }
+
+    const defaultAddress = makeDefault
+      ? (body.addressId ? user.savedAddresses.id(body.addressId) : user.savedAddresses[user.savedAddresses.length - 1])
+      : null;
+    if (defaultAddress) user.savedAddresses.forEach(item => { item.isDefault = String(item._id) === String(defaultAddress._id); });
+    if (!user.savedAddresses.some(item => item.isDefault) && user.savedAddresses.length) user.savedAddresses[0].isDefault = true;
+
+    await user.save();
+    const savedAddressId = String(body.addressId || user.savedAddresses[user.savedAddresses.length - 1]?._id || '');
+    const addresses = [...user.savedAddresses].sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+    return res.status(body.addressId ? 200 : 201).json({ success: true, message: body.addressId ? 'Saved address updated.' : 'Delivery address saved.', savedAddressId, data: addresses });
+  } catch (error) {
+    console.error('Save delivery address error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Unable to save this delivery address.' });
+  }
+});
+
+router.patch('/me/addresses/:addressId/default', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user || user.accountDeleted) return res.status(404).json({ success: false, message: 'Account not found.' });
+    const selected = user.savedAddresses.id(req.params.addressId);
+    if (!selected) return res.status(404).json({ success: false, message: 'Saved address not found.' });
+    user.savedAddresses.forEach(item => { item.isDefault = String(item._id) === String(selected._id); });
+    await user.save();
+    return res.json({ success: true, message: 'Default delivery address updated.', data: user.savedAddresses });
+  } catch (error) {
+    console.error('Set default delivery address error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to set the default address.' });
+  }
+});
+
+router.delete('/me/addresses/:addressId', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user || user.accountDeleted) return res.status(404).json({ success: false, message: 'Account not found.' });
+    const selected = user.savedAddresses.id(req.params.addressId);
+    if (!selected) return res.status(404).json({ success: false, message: 'Saved address not found.' });
+    const wasDefault = selected.isDefault;
+    selected.deleteOne();
+    if (wasDefault && user.savedAddresses.length) user.savedAddresses[0].isDefault = true;
+    await user.save();
+    return res.json({ success: true, message: 'Saved address removed.', data: user.savedAddresses });
+  } catch (error) {
+    console.error('Delete saved address error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to remove this saved address.' });
+  }
+});
+
 router.put(
   '/me/profile',
   protect,

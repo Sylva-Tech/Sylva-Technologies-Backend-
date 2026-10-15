@@ -90,6 +90,24 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
+    savedAddresses: [
+      {
+        label: { type: String, trim: true, maxlength: 40, default: 'Home' },
+        fullName: { type: String, trim: true, maxlength: 100, required: true },
+        phone: { type: String, trim: true, maxlength: 30, required: true },
+        email: { type: String, trim: true, lowercase: true, maxlength: 150, default: '' },
+        country: { type: String, trim: true, maxlength: 80, default: 'Kenya' },
+        county: { type: String, trim: true, maxlength: 100, required: true },
+        subCounty: { type: String, trim: true, maxlength: 100, required: true },
+        ward: { type: String, trim: true, maxlength: 100, required: true },
+        deliveryLocation: { type: String, trim: true, maxlength: 250, required: true },
+        address: { type: String, trim: true, maxlength: 300, required: true },
+        isDefault: { type: Boolean, default: false },
+        createdAt: { type: Date, default: Date.now },
+        updatedAt: { type: Date, default: Date.now },
+      },
+    ],
+
     address: {
       type: String,
       default: '',
