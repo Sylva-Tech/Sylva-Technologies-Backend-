@@ -741,6 +741,27 @@ router.put(
           {};
       }
 
+      const sellerProfile = seller.sellerProfile;
+      if (
+        !String(sellerProfile.idNumber || '').trim() ||
+        !String(sellerProfile.kraPin || '').trim() ||
+        !sellerProfile.idFrontDocument ||
+        !sellerProfile.idBackDocument ||
+        !sellerProfile.kraPinDocument
+      ) {
+        return res.status(422).json({
+          success: false,
+          message: 'This application is missing the ID number, KRA PIN, or required identity/tax documents. Ask the seller to complete the application before approval.',
+        });
+      }
+
+      if (req.body?.identityReviewed !== true) {
+        return res.status(400).json({
+          success: false,
+          message: 'Confirm that you have reviewed the ID front, ID back and tax document before approving this seller.',
+        });
+      }
+
       seller.role = 'seller';
 
       seller.sellerStatus =
