@@ -593,6 +593,13 @@ const createOrderFromRequest = async ({
       });
     }
 
+    if (user && !String(user.idNumber || '').trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'A government ID number is required for delivery records. Please contact support to update your existing account before ordering.',
+      });
+    }
+
     if (!customerDetails?.deliveryLocation) {
       return res.status(400).json({
         success: false,
@@ -846,6 +853,14 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
     |--------------------------------------------------------------------------
     */
 
+    const deliveryDetails = {
+      ...customerDetails,
+      idNumber: String(user?.idNumber || '').trim(),
+      customerReference: user?._id
+        ? `CUS-${String(user._id).replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`
+        : '',
+    };
+
     const order = await Order.create({
       orderNumber,
       trackingCode: orderNumber,
@@ -877,7 +892,7 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
 
       total: orderTotal,
 
-      customerDetails,
+      customerDetails: deliveryDetails,
 
       paymentMethod,
 
