@@ -20,9 +20,9 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^9.0.0",
-    "multer": "^2.0.2",
+    "multer": "^2.5.0",
     "resend": "^6.31.0",
-    "mailparser": "^3.7.4"
+    "mailparser": "^3.9.43"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

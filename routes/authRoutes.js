@@ -257,27 +257,8 @@ router.post(
         return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your country-issued tax document.' });
       }
 
-      // Enforce KRA's PIN Checker BY ID server-side; frontend checks alone can be bypassed.
-      let kraVerification;
-      try {
-        kraVerification = await checkPinById({
-          taxpayerType,
-          taxpayerID: idNumber,
-          expectedPin: kraPinNumber,
-        });
-      } catch (verificationError) {
-        return res.status(verificationError.statusCode || 503).json({
-          success: false,
-          message: verificationError.message || 'KRA PIN verification is temporarily unavailable.',
-        });
-      }
-
-      if (!kraVerification.pinMatches) {
-        return res.status(422).json({
-          success: false,
-          message: 'The KRA PIN returned for this ID does not match the PIN entered. Check the details and try again.',
-        });
-      }
+      // KRA and identity documents are reviewed manually by an administrator.
+      // Do not block seller registration on an external KRA API response.
 
       const existingUser = await User.findOne({ email });
       if (existingUser) {
@@ -291,6 +272,7 @@ router.post(
         { 'sellerProfile.idNumber': normalizedIdNumber },
         { 'sellerProfile.taxIdentifier': normalizedTaxIdentifier },
       ];
+
       if (country === 'KE') {
         identityConditions.push({ 'sellerProfile.kraPin': normalizedTaxIdentifier });
       }
@@ -344,8 +326,8 @@ router.post(
           storeEmail: email,
           storePhone: phone,
           mpesaPhone: phone,
-          kraPin: country === 'KE' ? taxIdentifier : '',
-          taxIdentifier,
+          kraPin: country === 'KE' ? normalizedTaxIdentifier : '',
+          taxIdentifier: normalizedTaxIdentifier,
           taxDocument: taxUpload.public_id,
           kraPinDocument: taxUpload.public_id,
           applicationDate: now,

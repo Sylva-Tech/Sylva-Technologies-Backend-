@@ -250,8 +250,10 @@ const apiLimiter = rateLimit({
   skip: (req) => {
     /*
      * Health checks should remain available to Render/monitoring.
+     * The application exposes the health endpoint under /api/health, while
+     * some deployments may still use /health as a legacy alias.
      */
-    return req.path === '/health';
+    return req.path === '/api/health' || req.path === '/health';
   },
 
   message: {

@@ -252,6 +252,36 @@ const productSchema = new mongoose.Schema(
       default: false,
     },
 
+    recommended: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    recommendedReason: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 200,
+    },
+
+    highlightTags: {
+      type: [String],
+      default: [],
+      validate: {
+        validator: function (tags) {
+          return Array.isArray(tags) && tags.length <= 6;
+        },
+        message: 'A product can have a maximum of 6 highlight tags.',
+      },
+    },
+
+    isBestSeller: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     isNew: {
       type: Boolean,
       default: false,

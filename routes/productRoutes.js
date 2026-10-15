@@ -171,6 +171,8 @@ router.get('/', async (req, res) => {
       brand,
       search,
       featured,
+      recommended,
+      isBestSeller,
       flashSale,
       offer,
       inStock,
@@ -231,6 +233,14 @@ router.get('/', async (req, res) => {
      */
     if (featured === 'true') {
       filter.featured = true;
+    }
+
+    if (recommended === 'true' || req.query.isRecommended === 'true') {
+      filter.recommended = true;
+    }
+
+    if (isBestSeller === 'true') {
+      filter.isBestSeller = true;
     }
 
     /*
@@ -621,6 +631,10 @@ router.post(
         sellerNotes,
         specifications,
         isNew,
+        recommended,
+        recommendedReason,
+        highlightTags,
+        isBestSeller,
       } = req.body;
 
       if (
@@ -837,6 +851,18 @@ router.post(
             parseSpecifications(
               specifications
             ),
+
+          recommended:
+            String(recommended ?? req.body.isRecommended) === 'true',
+
+          recommendedReason:
+            recommendedReason || '',
+
+          highlightTags:
+            parseList(highlightTags),
+
+          isBestSeller:
+            String(isBestSeller) === 'true',
 
           isNew:
             String(isNew) === 'true',
@@ -1265,6 +1291,37 @@ router.put(
       }
 
       if (
+        recommended !== undefined ||
+        req.body.isRecommended !== undefined
+      ) {
+        product.recommended =
+          String(
+            recommended ?? req.body.isRecommended
+          ) === 'true';
+      }
+
+      if (
+        recommendedReason !== undefined
+      ) {
+        product.recommendedReason =
+          String(recommendedReason).trim();
+      }
+
+      if (
+        highlightTags !== undefined
+      ) {
+        product.highlightTags =
+          parseList(highlightTags);
+      }
+
+      if (
+        isBestSeller !== undefined
+      ) {
+        product.isBestSeller =
+          String(isBestSeller) === 'true';
+      }
+
+      if (
         req.files &&
         req.files.length > 0
       ) {
@@ -1687,6 +1744,10 @@ router.post(
         sellerNotes,
         images,
         seller,
+        recommended,
+        recommendedReason,
+        highlightTags,
+        isBestSeller,
       } = req.body;
 
       if (
@@ -1859,6 +1920,18 @@ router.post(
             parseSpecifications(
               specifications
             ),
+
+          recommended:
+            String(recommended ?? req.body.isRecommended) === 'true',
+
+          recommendedReason:
+            recommendedReason || '',
+
+          highlightTags:
+            parseList(highlightTags),
+
+          isBestSeller:
+            String(isBestSeller) === 'true',
 
           featured:
             Boolean(featured),
@@ -2091,6 +2164,10 @@ if (
         'shortDescription',
         'specifications',
         'featured',
+        'recommended',
+        'recommendedReason',
+        'highlightTags',
+        'isBestSeller',
         'flashSale',
         'offer',
         'offerMessage',
