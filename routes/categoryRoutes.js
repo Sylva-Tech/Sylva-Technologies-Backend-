@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const Category = require('../models/Category');
+const Product = require('../models/Product');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -126,6 +127,19 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
     if (!category) {
       return res.status(404).json({
         message: 'Category not found.',
+      });
+    }
+
+    const [productCount, childCount] = await Promise.all([
+      Product.countDocuments({ category: category._id }),
+      Category.countDocuments({ parentCategory: category._id }),
+    ]);
+
+    if (productCount || childCount) {
+      return res.status(409).json({
+        message: 'This category still has products or subcategories. Deactivate it instead, or move those records before deleting.',
+        productCount,
+        childCount,
       });
     }
 
