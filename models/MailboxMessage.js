@@ -17,7 +17,7 @@ const schema = new mongoose.Schema({
   providerMessageId: { type: String, default: undefined, trim: true, maxlength: 300 },
   providerEmailId: { type: String, default: '', trim: true, maxlength: 300 },
   direction: { type: String, enum: ['inbound', 'outbound'], required: true, index: true },
-  folder: { type: String, enum: ['inbox', 'outbox', 'sent', 'drafts', 'archive', 'trash'], default: 'inbox', index: true },
+  folder: { type: String, enum: ['inbox', 'outbox', 'sent', 'drafts', 'archive', 'spam', 'trash'], default: 'inbox', index: true },
   from: { type: String, required: true, trim: true, lowercase: true, index: true },
   to: [{ type: String, trim: true, lowercase: true }],
   cc: [{ type: String, trim: true, lowercase: true }],
