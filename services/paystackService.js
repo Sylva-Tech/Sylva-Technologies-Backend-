@@ -24,6 +24,7 @@ async function initializeTransaction({
   reference,
   callbackUrl,
   metadata = {},
+  channels,
 }) {
   if (!email) {
     throw new Error('Customer email is required.');
@@ -46,6 +47,7 @@ async function initializeTransaction({
       reference,
       callback_url: callbackUrl,
       metadata,
+      ...(Array.isArray(channels) && channels.length ? { channels } : {}),
     },
     {
       headers: getPaystackHeaders(),
