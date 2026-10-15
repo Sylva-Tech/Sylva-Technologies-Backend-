@@ -976,6 +976,10 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
           'name slug price images stock'
         );
 
+        if (paymentMethod === 'Wallet') {
+          await sendPaidOrderEmails(populatedOrder);
+        }
+
         /*
 |--------------------------------------------------------------------------
 | INITIALIZE PAYSTACK PAYMENT
@@ -1006,7 +1010,7 @@ if (paymentMethod === 'M-Pesa') {
     const host = getMpesaHost();
     const callbackUrl = process.env.MPESA_ORDER_CALLBACK_URL ||
       'https://sylva-technologies-backend.onrender.com/api/orders/mpesa/callback';
-    const phoneInput = String(customerDetails.phone || '').replace(/[\s()+-]/g, '');
+    const phoneInput = String(mpesaPhone || customerDetails.mpesaPhone || customerDetails.phone || '').replace(/[\s()+-]/g, '');
     const phone = phoneInput.startsWith('0') ? '254' + phoneInput.slice(1)
       : phoneInput.startsWith('7') || phoneInput.startsWith('1') ? '254' + phoneInput
       : phoneInput;
