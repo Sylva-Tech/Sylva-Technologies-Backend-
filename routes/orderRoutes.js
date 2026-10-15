@@ -857,7 +857,7 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
       ...customerDetails,
       idNumber: String(user?.idNumber || '').trim(),
       customerReference: user?._id
-        ? `CUS-${String(user._id).replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`
+        ? `CUS-${String(user._id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase()}`
         : '',
     };
 
