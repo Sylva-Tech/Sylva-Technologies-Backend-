@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const Category = require('../models/Category');
+const Product = require('../models/Product');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -11,6 +12,15 @@ const buildSlug = (value) =>
     .replace(/[^a-z0-9\s-]/g, '')
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-');
+
+router.get('/admin/all', protect, adminOnly, async (req, res) => {
+  try {
+    const categories = await Category.find({}).sort({ name: 1 });
+    res.json(categories);
+  } catch (error) {
+    res.status(500).json({ message: 'Unable to fetch categories for administration.' });
+  }
+});
 
 router.get('/', async (req, res) => {
   try {
@@ -117,6 +127,19 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
     if (!category) {
       return res.status(404).json({
         message: 'Category not found.',
+      });
+    }
+
+    const [productCount, childCount] = await Promise.all([
+      Product.countDocuments({ category: category._id }),
+      Category.countDocuments({ parentCategory: category._id }),
+    ]);
+
+    if (productCount || childCount) {
+      return res.status(409).json({
+        message: 'This category still has products or subcategories. Deactivate it instead, or move those records before deleting.',
+        productCount,
+        childCount,
       });
     }
 
