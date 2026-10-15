@@ -714,6 +714,23 @@ router.put(
         });
       }
 
+      const normalizedIdNumber = String(idNumber || '').replace(/\s+/g, '').toUpperCase();
+      const normalizedKraPin = String(kraPin || '').replace(/\s+/g, '').toUpperCase();
+      const duplicateSellerIdentity = await User.findOne({
+        _id: { $ne: user._id },
+        $or: [
+          { 'sellerProfile.idNumber': normalizedIdNumber },
+          { 'sellerProfile.kraPin': normalizedKraPin },
+        ],
+      }).select('_id');
+
+      if (duplicateSellerIdentity) {
+        return res.status(409).json({
+          success: false,
+          message: 'These ID or KRA details are already associated with another seller application/store. You may resubmit documents on this same account, but the same identity cannot be used to open another store.',
+        });
+      }
+
       if (
         !mpesaPhone ||
         mpesaPhone.trim().length < 7
@@ -819,7 +836,7 @@ router.put(
         idType;
 
       user.sellerProfile.idNumber =
-        idNumber.trim();
+        normalizedIdNumber;
 
       /*
        * Preserve the existing date of birth
@@ -874,7 +891,7 @@ router.put(
   typeof kraPin === 'string'
 ) {
   user.sellerProfile.kraPin =
-    kraPin.trim();
+    normalizedKraPin;
 }
 
       /*
