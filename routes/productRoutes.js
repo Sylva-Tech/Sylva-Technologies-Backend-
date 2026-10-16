@@ -188,6 +188,7 @@ router.get('/', async (req, res) => {
       featured,
       recommended,
       isBestSeller,
+      isNew,
       flashSale,
       offer,
       inStock,
@@ -256,6 +257,13 @@ router.get('/', async (req, res) => {
 
     if (isBestSeller === 'true') {
       filter.isBestSeller = true;
+    }
+
+    /*
+     * New arrival products.
+     */
+    if (isNew === 'true') {
+      filter.isNew = true;
     }
 
     /*
