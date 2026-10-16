@@ -1232,10 +1232,9 @@ router.post(
         success: false,
         message:
           'Unable to synchronize products from Google Sheet.',
-        error:
-          process.env.NODE_ENV === 'development'
-            ? error.message
-            : undefined,
+        // This endpoint is admin-protected; include the diagnostic detail
+        // without exposing service-account credentials.
+        error: error.message || 'Unknown synchronization error.',
       });
     }
   }
