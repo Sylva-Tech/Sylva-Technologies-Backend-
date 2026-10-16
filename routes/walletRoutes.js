@@ -1890,6 +1890,58 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
   }
 });
 
+/* Admin-only deposit lookup by the phone number used for M-Pesa STK payment.
+   Phone number is normalized server-side; no wallet is credited by this lookup. */
+router.get('/admin/topup/lookup', protect, adminOnly, requireVerified, async (req, res) => {
+  try {
+    const phone = normalizeKenyanPhone(req.query?.phone);
+    if (!phone) {
+      return res.status(400).json({ success: false, message: 'Enter a valid Kenyan M-Pesa phone number, e.g. 0712345678 or 254712345678.' });
+    }
+
+    const [platformWallet, matchingUsers] = await Promise.all([
+      AdminWallet.findOne({ key: 'platform' }).select('transactions'),
+      User.find({ 'wallet.transactions': { $elemMatch: { category: 'mpesa_topup', 'metadata.phone': phone } } })
+        .select('name email role wallet.transactions')
+        .limit(100),
+    ]);
+
+    const records = [];
+    for (const tx of platformWallet?.transactions || []) {
+      if (tx.category === 'mpesa_topup' && String(tx.metadata?.phone || '') === phone) {
+        records.push({
+          transactionId: String(tx._id), wallet: 'platform', amount: roundMoney(tx.amount),
+          status: tx.status || 'pending', reference: tx.reference || tx.metadata?.internalReference || '',
+          internalReference: tx.metadata?.internalReference || '', mpesaReceiptNumber: tx.metadata?.mpesaReceiptNumber || '',
+          accountDisplayName: tx.metadata?.accountDisplayName || 'Sylva Technologies',
+          createdAt: tx.createdAt || null, processedAt: tx.processedAt || null, description: tx.description || '',
+        });
+      }
+    }
+
+    for (const account of matchingUsers) {
+      for (const tx of account.wallet?.transactions || []) {
+        if (tx.category === 'mpesa_topup' && String(tx.metadata?.phone || '') === phone) {
+          records.push({
+            transactionId: String(tx._id), wallet: account.role || 'user',
+            accountName: account.name || account.email || 'Account wallet', amount: roundMoney(tx.amount),
+            status: tx.status || 'pending', reference: tx.reference || tx.metadata?.internalReference || '',
+            internalReference: tx.metadata?.internalReference || '', mpesaReceiptNumber: tx.metadata?.mpesaReceiptNumber || '',
+            accountDisplayName: tx.metadata?.accountDisplayName || '',
+            createdAt: tx.createdAt || null, processedAt: tx.processedAt || null, description: tx.description || '',
+          });
+        }
+      }
+    }
+
+    records.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    return res.json({ success: true, data: { phoneLastFour: phone.slice(-4), count: records.length, transactions: records.slice(0, 50) } });
+  } catch (error) {
+    console.error('Admin M-Pesa deposit lookup failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to retrieve deposit references right now.' });
+  }
+});
+
 /* Read the signed-in user's own deposit status. This endpoint never credits funds;
    only the Safaricom callback and server-side payment verification can do that. */
 router.get('/topup/status/:transactionId', protect, async (req, res) => {
