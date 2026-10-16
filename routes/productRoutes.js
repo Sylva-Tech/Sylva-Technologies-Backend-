@@ -43,6 +43,21 @@ const toNumber = (value, fallback = 0) => {
 };
 
 /*
+ * Normalize booleans from JSON and admin form payloads.
+ * Boolean("false") is true in JavaScript, so avoid Boolean(value).
+ */
+const parseBoolean = (value, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+
+  return fallback;
+};
+
+/*
  * Calculate discount percentage.
  */
 const calculateDiscount = (oldPrice, price) => {
@@ -1863,13 +1878,13 @@ router.post(
             ),
 
           featured:
-            Boolean(featured),
+            parseBoolean(featured),
 
           flashSale:
-            Boolean(flashSale),
+            parseBoolean(flashSale),
 
           offer:
-            Boolean(offer),
+            parseBoolean(offer),
 
           offerMessage:
             offerMessage || '',
@@ -1881,10 +1896,10 @@ router.post(
             offerEndDate || null,
 
           isNew:
-            Boolean(isNew),
+            parseBoolean(isNew),
 
           isActive:
-            isActive !== false,
+            parseBoolean(isActive, true),
 
           condition:
             condition || 'New',
@@ -2127,6 +2142,13 @@ if (
         ) {
           product[field] =
             req.body[field];
+        }
+      }
+
+      // Admin forms may submit boolean flags as strings.
+      for (const field of ['featured', 'isNew', 'flashSale', 'offer', 'isActive']) {
+        if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+          product[field] = parseBoolean(req.body[field], product[field]);
         }
       }
 
