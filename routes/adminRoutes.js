@@ -1230,10 +1230,8 @@ router.post(
 
       return res.status(500).json({
         success: false,
-        message:
-          'Unable to synchronize products from Google Sheet.',
-        // This endpoint is admin-protected; include the diagnostic detail
-        // without exposing service-account credentials.
+        message: `Unable to synchronize products from Google Sheet: ${error.message || 'Unknown synchronization error.'}`,
+        // Keep a separate field for admin tooling that reads structured errors.
         error: error.message || 'Unknown synchronization error.',
       });
     }
