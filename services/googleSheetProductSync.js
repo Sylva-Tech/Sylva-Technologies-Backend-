@@ -878,7 +878,9 @@ async function syncGoogleSheetProducts() {
         $or: [
           { source: 'google_sheet' },
           {
-            source: { $exists: false },
+            // Matches both missing and explicitly null source fields,
+            // without passing a nested $exists object to Mongoose casting.
+            source: null,
             seller: null,
             code: /^SYLT-\d+$/i,
           },
