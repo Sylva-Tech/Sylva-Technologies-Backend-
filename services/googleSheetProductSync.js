@@ -497,8 +497,10 @@ async function syncProductRow(
     description:
       String(row.description || '').trim(),
 
+    // Sheet headers are normalized to lowercase in getGoogleSheetRows().
+    // Accept both spellings so the short description survives every sync.
     shortDescription:
-      String(row.shortDescription || '').trim(),
+      String(row.shortdescription || row.shortDescription || '').trim(),
 
     price,
     oldPrice,
