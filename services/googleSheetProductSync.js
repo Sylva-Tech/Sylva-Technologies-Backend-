@@ -486,6 +486,8 @@ async function syncProductRow(
     await findSeller(row.seller);
 
   const productData = {
+    // Explicitly mark records managed by the Google Sheets import.
+    source: 'google_sheet',
     name,
     brand,
     category: category._id,
@@ -729,9 +731,22 @@ async function syncGoogleSheetProducts() {
     updated: 0,
     skipped: 0,
     failed: 0,
+    deactivated: 0,
     products: [],
     errors: [],
   };
+
+  /*
+   * An empty/blank sheet must never be interpreted as an instruction
+   * to remove the entire catalogue.
+   */
+  if (rows.length === 0) {
+    return {
+      ...result,
+      success: false,
+      message: 'Google Sheet contains no product rows. No products were changed; add valid rows before syncing.',
+    };
+  }
 
   const processedCodes =
     new Set();
@@ -846,6 +861,87 @@ async function syncGoogleSheetProducts() {
 
   result.success =
     result.failed === 0;
+
+  /*
+   * Reconcile deletions only after every spreadsheet row succeeds.
+   * If even one row fails (for example, because its category is missing),
+   * do not infer that absent products were intentionally deleted.
+   *
+   * The first condition covers products already marked as sheet-managed.
+   * The second is a cautious legacy migration for old sheet imports:
+   * seller-less SYLT-### records whose SKU exactly matches their code.
+   * Products are deactivated, not hard-deleted, so they can be restored.
+   */
+  if (result.success && rows.length > 0) {
+    const managedCandidates = await Product.find({
+      $or: [
+        { source: 'google_sheet' },
+        {
+          source: { $exists: false },
+          seller: null,
+          code: /^SYLT-\\d+$/i,
+        },
+      ],
+    })
+      .select('_id code sku source seller isActive name')
+      .lean();
+
+    const activeSheetCodes = new Set(
+      [...processedCodes].map((code) =>
+        String(code).trim().toUpperCase()
+      )
+    );
+
+    const staleIds = managedCandidates
+      .filter((product) => {
+        const code = String(product.code || '')
+          .trim()
+          .toUpperCase();
+
+        if (!code || activeSheetCodes.has(code)) {
+          return false;
+        }
+
+        if (product.source === 'google_sheet') {
+          return true;
+        }
+
+        // Only classify a legacy record as sheet-owned when its old SKU
+        // exactly matches the SYLT product code used by this importer.
+        return (
+          !product.source &&
+          !product.seller &&
+          String(product.sku || '').trim().toUpperCase() === code
+        );
+      })
+      .map((product) => product._id);
+
+    if (staleIds.length > 0) {
+      const deactivation = await Product.updateMany(
+        { _id: { $in: staleIds } },
+        {
+          $set: {
+            isActive: false,
+            source: 'google_sheet',
+          },
+        }
+      );
+
+      result.deactivated =
+        deactivation.modifiedCount ??
+        deactivation.nModified ??
+        0;
+
+      result.products.push({
+        action: 'deactivated',
+        count: result.deactivated,
+        reason: 'Products previously managed by Google Sheets are missing from the latest successful sheet import.',
+      });
+    }
+  } else if (result.failed > 0) {
+    result.message =
+      'Some spreadsheet rows failed. No missing products were deactivated; fix the listed errors and run the sync again.';
+  }
 
   return result;
 }
