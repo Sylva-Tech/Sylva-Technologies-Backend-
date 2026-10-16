@@ -55,6 +55,18 @@ const productSchema = new mongoose.Schema(
       trim: true,
     },
 
+    /*
+     * Track product ownership for safe spreadsheet reconciliation.
+     * Existing records remain unmarked until a successful sheet sync
+     * identifies them; seller/manual products are never pruned by sync.
+     */
+    source: {
+      type: String,
+      enum: ['manual', 'google_sheet', 'seller'],
+      default: 'manual',
+      index: true,
+    },
+
     brand: {
       type: String,
       required: [
