@@ -437,8 +437,8 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
         (signatureName ? '<strong style="display:block">' + escapeHtml(signatureName) + '</strong>' : '') +
         (signatureTitle ? '<span style="display:block;color:#475569;font-size:13px">' + escapeHtml(signatureTitle) + '</span>' : '') +
         '<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:12px"><tr>' +
-        '<td style="vertical-align:middle;padding-right:12px"><img src="https://www.sylvatechnologies.co.ke/sylva-logo.svg" alt="Sylva Technologies" width="54" height="54" style="display:block;object-fit:contain"></td>' +
-        '<td style="vertical-align:middle"><strong style="display:block;color:#166534;font-size:17px">Sylva Technologies</strong><span style="color:#475569;font-size:12px">Empowering Your Digital Life</span></td>' +
+        '<td style="vertical-align:middle;padding:10px 16px 10px 10px"><img src="https://www.sylvatechnologies.co.ke/logo-emblem.svg" alt="Sylva Technologies ST logo" width="82" height="82" style="display:block;width:82px;height:82px;object-fit:contain"></td>' +
+        '<td style="vertical-align:middle;padding:10px 12px 10px 0"><strong style="display:block;color:#166534;font-size:22px;line-height:1.15;font-weight:800">Sylva Technologies</strong><span style="display:block;margin-top:5px;color:#475569;font-size:13px;line-height:1.4">Empowering Your Digital Life</span></td>' +
         '</tr></table></div></div>',
       replyTo: fromAddress, ...(providerAttachments.length ? { attachments: providerAttachments } : {}),
     });
