@@ -923,7 +923,7 @@ async function syncGoogleSheetProducts() {
     if (staleIds.length > 0) {
       const deactivation = await Product.updateMany(
         mongoose.trusted({
-          _id: { $in: staleIds },
+          _id: mongoose.trusted({ $in: staleIds }),
         }),
         {
           $set: {
