@@ -11,6 +11,15 @@ const rateLimit = require('express-rate-limit');
  * request-header rules; never put it in source control or the frontend.
  */
 const cloudflareOriginGuard = (req, res, next) => {
+  // Safaricom Daraja cannot attach our private Cloudflare origin header to
+  // callbacks. Allow only this exact provider callback through the origin
+  // guard; the callback handler still requires a matching pending CheckoutRequestID
+  // and verifies the transaction directly with Safaricom before crediting a wallet.
+  const requestPath = String(req.originalUrl || req.url || '').split('?')[0];
+  if (req.method === 'POST' && requestPath === '/api/wallet/topup/stk/callback') {
+    return next();
+  }
+
   const expected = String(process.env.CLOUDFLARE_ORIGIN_SECRET || '');
 
   // Backward-compatible rollout: enforce only after the secret is configured.
