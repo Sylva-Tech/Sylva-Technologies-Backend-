@@ -873,16 +873,18 @@ async function syncGoogleSheetProducts() {
    * Products are deactivated, not hard-deleted, so they can be restored.
    */
   if (result.success && rows.length > 0) {
-    const managedCandidates = await Product.find({
-      $or: [
-        { source: 'google_sheet' },
-        {
-          source: { $exists: false },
-          seller: null,
-          code: /^SYLT-\d+$/i,
-        },
-      ],
-    })
+    const managedCandidates = await Product.find(
+      mongoose.trusted({
+        $or: [
+          { source: 'google_sheet' },
+          {
+            source: { $exists: false },
+            seller: null,
+            code: /^SYLT-\d+$/i,
+          },
+        ],
+      })
+    )
       .select('_id code sku source seller isActive name')
       .lean();
 
@@ -918,7 +920,9 @@ async function syncGoogleSheetProducts() {
 
     if (staleIds.length > 0) {
       const deactivation = await Product.updateMany(
-        { _id: { $in: staleIds } },
+        mongoose.trusted({
+          _id: { $in: staleIds },
+        }),
         {
           $set: {
             isActive: false,
