@@ -3,6 +3,17 @@ const Advertisement = require('../models/Advertisement');
 
 const router = express.Router();
 
+// HTML form fields and some clients send booleans as strings.
+// Avoid Boolean('false') becoming true.
+function parseBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
 /*
 |--------------------------------------------------------------------------
 | GET ACTIVE ADVERTISEMENTS
@@ -84,7 +95,7 @@ router.post('/', async (req, res) => {
       link: link || '/shop',
       buttonText: buttonText || 'Shop Now',
       buttonLink: buttonLink || link || '/shop',
-      active: active !== undefined ? Boolean(active) : true,
+      active: parseBoolean(active, true),
       startsAt: startsAt || null,
       endsAt: endsAt || null,
       priority:
@@ -173,7 +184,7 @@ router.put('/:id', async (req, res) => {
     }
 
     if (active !== undefined) {
-      advertisement.active = Boolean(active);
+      advertisement.active = parseBoolean(active, advertisement.active);
     }
 
     if (startsAt !== undefined) {
