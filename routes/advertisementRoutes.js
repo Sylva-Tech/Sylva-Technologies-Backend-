@@ -55,6 +55,28 @@ const sendActiveAdvertisements = async (req, res) => {
   }
 };
 
+// Admin management list: include inactive and scheduled banners as well.
+// Keep this route before the public '/' route so '/all' is not treated as an ID.
+router.get('/all', async (req, res) => {
+  try {
+    const advertisements = await Advertisement.find({})
+      .sort({ priority: -1, createdAt: -1 })
+      .lean();
+
+    return res.json({
+      success: true,
+      count: advertisements.length,
+      data: advertisements,
+    });
+  } catch (error) {
+    console.error('Unable to load all advertisements:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to load advertisements.',
+    });
+  }
+});
+
 router.get('/', sendActiveAdvertisements);
 
 /*
