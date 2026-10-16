@@ -879,7 +879,7 @@ async function syncGoogleSheetProducts() {
         {
           source: { $exists: false },
           seller: null,
-          code: /^SYLT-\\d+$/i,
+          code: /^SYLT-\d+$/i,
         },
       ],
     })
