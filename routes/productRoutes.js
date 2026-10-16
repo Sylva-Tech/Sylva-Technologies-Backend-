@@ -432,6 +432,8 @@ router.get(
       const product =
         await Product.findOne({
           slug: req.params.slug,
+          isActive: true,
+          approvalStatus: 'approved',
         })
           .populate('category')
           .populate(
