@@ -164,50 +164,88 @@ const applySellerSettlement = async (order) => {
       continue;
     }
 
-    const wallet = seller.wallet || {
-      currency: 'KES',
-      availableBalance: 0,
-      pendingBalance: 0,
-      transactions: [],
-    };
-
-    wallet.currency = wallet.currency || 'KES';
-
-    // A repeated Paystack webhook must never credit the same order twice.
     const settlementReference = `order:${order.orderNumber}`;
-    wallet.transactions = Array.isArray(wallet.transactions)
-      ? wallet.transactions
-      : [];
-    if (wallet.transactions.some((tx) => tx.reference === settlementReference)) {
-      continue;
+    const sellerCountry = String(seller.sellerProfile?.country || 'KE').toUpperCase();
+    if ((seller.wallet?.transactions || []).some((tx) => tx.reference === settlementReference)) continue;
+    const orderCurrency = String(order.currency || 'KES').toUpperCase();
+    const now = new Date();
+
+    if (sellerCountry !== 'KE') {
+      // Current checkout accepts KES payments. Never silently mix KES into a USD wallet:
+      // an explicit finance-configured KES-per-USD rate is required for international sellers.
+      const kesPerUsd = Number(process.env.WALLET_KES_PER_USD);
+      if (orderCurrency === 'KES' && (!Number.isFinite(kesPerUsd) || kesPerUsd <= 0)) {
+        console.error(`International seller settlement deferred for order ${order.orderNumber}: set WALLET_KES_PER_USD before settling KES proceeds to USD.`);
+        continue;
+      }
+      const settlementCurrency = orderCurrency === 'USD' ? 'USD' : 'USD';
+      const settlementAmount = orderCurrency === 'USD'
+        ? roundMoney(settlement.netAmount)
+        : roundMoney(settlement.netAmount / kesPerUsd);
+      const usdWallet = seller.usdWallet || {
+        currency: 'USD', availableBalance: 0, pendingBalance: 0, transactions: [],
+      };
+      usdWallet.currency = 'USD';
+      usdWallet.transactions = Array.isArray(usdWallet.transactions) ? usdWallet.transactions : [];
+      if (usdWallet.transactions.some((tx) => tx.reference === settlementReference)) continue;
+      usdWallet.availableBalance = roundMoney(Number(usdWallet.availableBalance || 0) + settlementAmount);
+      usdWallet.lastUpdatedAt = now;
+      usdWallet.transactions.unshift({
+        _id: new mongoose.Types.ObjectId(),
+        type: 'credit',
+        amount: settlementAmount,
+        currency: settlementCurrency,
+        category: 'order_settlement',
+        status: 'completed',
+        description: `USD seller settlement for order ${order.orderNumber}.`,
+        reference: settlementReference,
+        createdAt: now,
+        updatedAt: now,
+        processedAt: now,
+        metadata: {
+          sourceCurrency: orderCurrency,
+          grossAmount: roundMoney(settlement.grossAmount),
+          grossCurrency: orderCurrency,
+          commission: roundMoney(settlement.commission),
+          commissionCurrency: orderCurrency,
+          netAmountBeforeConversion: roundMoney(settlement.netAmount),
+          exchangeRateKesPerUsd: orderCurrency === 'KES' ? kesPerUsd : null,
+          settlementCurrency: 'USD',
+          products: settlement.products,
+        },
+      });
+      seller.usdWallet = usdWallet;
+    } else {
+      const wallet = seller.wallet || {
+        currency: 'KES', availableBalance: 0, pendingBalance: 0, transactions: [],
+      };
+      wallet.currency = wallet.currency || 'KES';
+      wallet.transactions = Array.isArray(wallet.transactions) ? wallet.transactions : [];
+      if (wallet.transactions.some((tx) => tx.reference === settlementReference)) continue;
+      wallet.availableBalance = roundMoney(Number(wallet.availableBalance || 0) + Number(settlement.netAmount || 0));
+      wallet.lastUpdatedAt = now;
+      wallet.transactions.unshift({
+        _id: new mongoose.Types.ObjectId(),
+        type: 'credit',
+        amount: roundMoney(settlement.netAmount),
+        category: 'order_settlement',
+        status: 'completed',
+        description: `Order settlement for ${order.orderNumber}.`,
+        reference: settlementReference,
+        relatedOrder: order._id,
+        metadata: {
+          commission: roundMoney(settlement.commission),
+          commissionCurrency: orderCurrency,
+          grossAmount: roundMoney(settlement.grossAmount),
+          grossCurrency: orderCurrency,
+          settlementCurrency: 'KES',
+          products: settlement.products,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+      seller.wallet = wallet;
     }
-
-    wallet.availableBalance = roundMoney(
-      Number(wallet.availableBalance || 0) +
-        Number(settlement.netAmount || 0)
-    );
-
-    wallet.lastUpdatedAt = new Date();
-
-    wallet.transactions.unshift({
-      _id: new mongoose.Types.ObjectId(),
-      type: 'credit',
-      amount: roundMoney(settlement.netAmount),
-      category: 'order_settlement',
-      status: 'completed',
-      description: `Order settlement for ${order.orderNumber}.`,
-      reference: `order:${order.orderNumber}`,
-      relatedOrder: order._id,
-      metadata: {
-        commission: roundMoney(settlement.commission),
-        grossAmount: roundMoney(settlement.grossAmount),
-        products: settlement.products,
-      },
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    seller.wallet = wallet;
 
     await seller.save();
 
