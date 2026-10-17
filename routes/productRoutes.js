@@ -209,7 +209,11 @@ router.get('/', async (req, res) => {
     // Expire paid seller promotions on demand so stale Featured flags are cleared
     // even when a free hosting instance has been asleep.
     await Product.updateMany(
-      { seller: { $ne: null }, featured: true, featuredExpiresAt: { $lte: new Date() } },
+      {
+        seller: mongoose.trusted({ $ne: null }),
+        featured: true,
+        featuredExpiresAt: mongoose.trusted({ $lte: new Date() }),
+      },
       { $set: { featured: false, sponsorshipStatus: 'expired' } },
     );
 
@@ -262,7 +266,7 @@ router.get('/', async (req, res) => {
         { $or: [
           { seller: null },
           { seller: { $exists: false } },
-          { featuredExpiresAt: { $gt: new Date() } },
+          { featuredExpiresAt: mongoose.trusted({ $gt: new Date() }) },
         ] },
       ];
     }
