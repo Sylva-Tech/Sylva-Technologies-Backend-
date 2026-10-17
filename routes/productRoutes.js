@@ -513,6 +513,48 @@ router.get(
    ========================================================= */
 
 /*
+ * GET /api/products/store/:sellerId
+ * Public storefront: only active, approved listings from an approved seller.
+ */
+router.get('/store/:sellerId/products', async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.sellerId)) {
+      return res.status(400).json({ success: false, message: 'Invalid store ID.' });
+    }
+    const seller = await User.findOne({
+      _id: req.params.sellerId,
+      sellerStatus: 'approved',
+      accountStatus: mongoose.trusted({ $nin: ['suspended', 'banned'] }),
+    }).select('name email createdAt sellerProfile.storeName sellerProfile.storeProfile sellerProfile.storeLocation sellerProfile.storeLogo');
+    if (!seller) {
+      return res.status(404).json({ success: false, message: 'Store not found or unavailable.' });
+    }
+    const products = await Product.find({
+      seller: seller._id,
+      isActive: mongoose.trusted({ $ne: false }),
+      approvalStatus: 'approved',
+    }).populate('category', 'name slug').sort({ featured: -1, createdAt: -1 });
+    return res.json({
+      success: true,
+      seller: {
+        _id: seller._id,
+        name: seller.name,
+        email: seller.email,
+        createdAt: seller.createdAt,
+        storeName: seller.sellerProfile?.storeName || 'Seller Store',
+        storeProfile: seller.sellerProfile?.storeProfile || '',
+        storeLocation: seller.sellerProfile?.storeLocation || '',
+        storeLogo: seller.sellerProfile?.storeLogo || '',
+      },
+      data: products,
+    });
+  } catch (error) {
+    console.error('Public seller store catalogue error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load this store.' });
+  }
+});
+
+/*
  * SELLER STORE PROFILE
  * Store details are always scoped to the authenticated seller.
  */
@@ -765,6 +807,7 @@ router.post(
         whatsIncluded,
         keyFeatures,
         sellerNotes,
+        sourceSpreadsheetUrl,
         specifications,
         isNew,
       } = req.body;
@@ -887,6 +930,11 @@ router.post(
         });
       }
 
+      const spreadsheetUrl = String(sourceSpreadsheetUrl || '').trim();
+      if (spreadsheetUrl && (!/^https?:\\/\\//i.test(spreadsheetUrl) || spreadsheetUrl.length > 1000)) {
+        return res.status(400).json({ success: false, message: 'Spreadsheet link must be a valid HTTP or HTTPS URL no longer than 1000 characters.' });
+      }
+
       const imageUrls =
         await uploadProductImages(
           req.files || []
@@ -978,6 +1026,8 @@ router.post(
 
           sellerNotes:
             sellerNotes || '',
+
+          sourceSpreadsheetUrl: spreadsheetUrl,
 
           specifications:
             parseSpecifications(
@@ -1388,6 +1438,14 @@ router.put(
       ) {
         product.sellerNotes =
           req.body.sellerNotes;
+      }
+
+      if (req.body.sourceSpreadsheetUrl !== undefined) {
+        const spreadsheetUrl = String(req.body.sourceSpreadsheetUrl || '').trim();
+        if (spreadsheetUrl && (!/^https?:\\/\\//i.test(spreadsheetUrl) || spreadsheetUrl.length > 1000)) {
+          return res.status(400).json({ success: false, message: 'Spreadsheet link must be a valid HTTP or HTTPS URL no longer than 1000 characters.' });
+        }
+        product.sourceSpreadsheetUrl = spreadsheetUrl;
       }
 
       if (
