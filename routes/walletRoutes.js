@@ -2509,7 +2509,7 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
     const pendingUsdPayouts = await User.countDocuments({
       role: 'seller',
       'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }),
-    }));
+    });
     const requiredMpesaSettings = [
       'MPESA_CONSUMER_KEY',
       'MPESA_CONSUMER_SECRET',
