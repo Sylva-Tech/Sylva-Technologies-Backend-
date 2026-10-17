@@ -931,7 +931,7 @@ router.post(
       }
 
       const spreadsheetUrl = String(sourceSpreadsheetUrl || '').trim();
-      if (spreadsheetUrl && (!/^https?:\\/\\//i.test(spreadsheetUrl) || spreadsheetUrl.length > 1000)) {
+      if (spreadsheetUrl && (!(spreadsheetUrl.toLowerCase().startsWith('https://') || spreadsheetUrl.toLowerCase().startsWith('http://')) || spreadsheetUrl.length > 1000)) {
         return res.status(400).json({ success: false, message: 'Spreadsheet link must be a valid HTTP or HTTPS URL no longer than 1000 characters.' });
       }
 
@@ -1442,7 +1442,7 @@ router.put(
 
       if (req.body.sourceSpreadsheetUrl !== undefined) {
         const spreadsheetUrl = String(req.body.sourceSpreadsheetUrl || '').trim();
-        if (spreadsheetUrl && (!/^https?:\\/\\//i.test(spreadsheetUrl) || spreadsheetUrl.length > 1000)) {
+      if (spreadsheetUrl && (!(spreadsheetUrl.toLowerCase().startsWith('https://') || spreadsheetUrl.toLowerCase().startsWith('http://')) || spreadsheetUrl.length > 1000)) {
           return res.status(400).json({ success: false, message: 'Spreadsheet link must be a valid HTTP or HTTPS URL no longer than 1000 characters.' });
         }
         product.sourceSpreadsheetUrl = spreadsheetUrl;
