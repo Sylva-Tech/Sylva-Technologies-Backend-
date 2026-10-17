@@ -248,6 +248,14 @@ const productSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // Optional seller-provided spreadsheet reference, shown only in the seller workspace.
+    sourceSpreadsheetUrl: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 1000,
+    },
+
     /*
      * Technical specifications.
      */
