@@ -283,11 +283,15 @@ const sendPaidOrderEmails = async (order) => {
       });
     }
 
+    const operationsRecipients = [
+      process.env.ORDERS_EMAIL || 'order@sylvatechnologies.co.ke',
+      process.env.PAYMENT_EMAIL || 'payment@sylvatechnologies.co.ke',
+      process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke',
+      process.env.ADMIN_EMAIL || 'admin@sylvatechnologies.co.ke',
+    ];
+    const uniqueRecipients = [...new Set(operationsRecipients.map((address) => String(address || '').trim().toLowerCase()).filter(Boolean))];
     await sendAdminOrderNotificationEmail({
-      to:
-        process.env.ORDERS_EMAIL ||
-        process.env.SALES_EMAIL ||
-        'sales@sylvatechnologies.co.ke',
+      to: uniqueRecipients,
       order: populatedOrder.toObject(),
       customer: {
         name: populatedOrder.customerName || populatedOrder.customerDetails?.fullName || 'Customer',
@@ -915,6 +919,9 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
       customerPhone:
         customerDetails.phone,
 
+      // Save the number used for STK separately from the delivery contact number.
+      mpesaPhone: String(mpesaPhone || customerDetails.mpesaPhone || customerDetails.phone || '').trim(),
+
       items: preparedItems,
 
       /*
@@ -1408,7 +1415,7 @@ router.post('/mpesa/callback', async (req, res) => {
     const receipt = String(field('MpesaReceiptNumber') || '');
     const phone = String(field('PhoneNumber') || '');
     const expectedAmount = Math.round(Number(order.total || 0));
-        const storedPhone = String(order.customerDetails?.phone || order.customerPhone || '').replace(/[\s()+-]/g, '');
+        const storedPhone = String(order.mpesaPhone || order.customerDetails?.mpesaPhone || order.customerDetails?.phone || order.customerPhone || '').replace(/[\s()+-]/g, '');
     const expectedPhone = storedPhone.startsWith('0') ? '254' + storedPhone.slice(1)
       : storedPhone.startsWith('7') || storedPhone.startsWith('1') ? '254' + storedPhone
       : storedPhone;
@@ -1451,7 +1458,7 @@ router.get('/mpesa/status/:orderNumber', protect, async (req, res) => {
       orderNumber: req.params.orderNumber,
       customer: req.user._id,
       paymentMethod: 'M-Pesa',
-    }).select('orderNumber paymentStatus status total paymentMethod');
+    }).select('orderNumber trackingCode paymentStatus status total paymentMethod paymentReference paidAt createdAt items subtotal deliveryFee customerName customerEmail customerPhone customerDetails mpesaPhone');
     if (!order) return res.status(404).json({ success: false, message: 'M-Pesa order not found.' });
     return res.json({ success: true, data: order });
   } catch (error) {
