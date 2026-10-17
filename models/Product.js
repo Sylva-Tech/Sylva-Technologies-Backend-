@@ -264,6 +264,21 @@ const productSchema = new mongoose.Schema(
       default: false,
     },
 
+    // Seller-sponsored homepage placement is time-limited and only activated
+    // after a verified wallet debit or successful Safaricom STK confirmation.
+    featuredExpiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    sponsorshipStatus: {
+      type: String,
+      enum: ['none', 'pending', 'active', 'expired', 'failed'],
+      default: 'none',
+      index: true,
+    },
+
     isNew: {
       type: Boolean,
       default: false,
