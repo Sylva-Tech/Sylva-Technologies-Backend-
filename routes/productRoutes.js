@@ -206,6 +206,13 @@ router.get('/', async (req, res) => {
       Math.max(1, Number(limit) || 12)
     );
 
+    // Expire paid seller promotions on demand so stale Featured flags are cleared
+    // even when a free hosting instance has been asleep.
+    await Product.updateMany(
+      { seller: { $ne: null }, featured: true, featuredExpiresAt: { $ne: null, $lte: new Date() } },
+      { $set: { featured: false, sponsorshipStatus: 'expired' } },
+    );
+
     /*
      * Public catalogue only shows:
      * - active products
@@ -248,6 +255,16 @@ router.get('/', async (req, res) => {
      */
     if (featured === 'true') {
       filter.featured = true;
+      // Platform-managed featured items may have no expiry. Seller-sponsored
+      // items must have a future paid-through date.
+      filter.$and = [
+        ...(filter.$and || []),
+        { $or: [
+          { seller: null },
+          { seller: { $exists: false } },
+          { featuredExpiresAt: { $gt: new Date() } },
+        ] },
+      ];
     }
 
     /*
