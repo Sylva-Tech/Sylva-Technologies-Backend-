@@ -134,3 +134,15 @@ Run `npm test` for the message/attachment encryption round-trip and tamper-detec
 - The app intentionally keeps API responses in a consistent `{ success, message, data }` envelope.
 - SMS support is abstracted and will work when `SMS_PROVIDER` and related env vars are configured.
 
+
+## International seller USD wallet (PayPal)
+
+- International sellers have a separate USD wallet ledger; it is not combined with the KES wallet.
+- Set `PAYPAL_MODE=sandbox` for initial testing. The default API host is PayPal sandbox unless `PAYPAL_MODE=live` is explicitly configured.
+- Set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, and `FRONTEND_URL` in the Render environment. Never commit real credentials.
+- PayPal deposit flow: the backend creates the order and a pending ledger entry; after the seller returns from PayPal, the backend captures the order, verifies the owner, completed capture, USD currency and exact amount, then credits the USD balance idempotently.
+- USD withdrawal requests are reserved from available USD and added to the admin payout queue. They are **not automatic PayPal payouts**; an administrator must send the external payout and only then mark it paid.
+- Current checkout/payment confirmation is KES-only. For international sellers, net seller earnings are settled into USD after the platform commission is calculated in the order currency. Set `WALLET_KES_PER_USD` to a finance-approved KES-per-USD rate before accepting/settling international seller orders. If the rate is absent or invalid, the backend intentionally does not guess or credit a converted amount.
+- Seller identity status is marked verified only when an administrator approves the seller after reviewing the required ID-front, ID-back and tax-document uploads. This is manual review, not an automatic third-party identity-provider integration.
+- Do not switch PayPal to live mode until sandbox deposits, duplicate-capture attempts, payout reservation/rejection, and transaction history have been tested.
+
