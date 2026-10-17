@@ -224,6 +224,8 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
       phoneNumber: phone,
       status: 'pending',
     });
+    product.sponsorshipStatus = 'pending';
+    await product.save();
 
     const callbackUrl = callbackOrigin + '/api/sponsorship/mpesa/callback?sponsorshipId=' + encodeURIComponent(String(sponsorship._id));
     const credentials = await getMpesaCredentials();
@@ -251,6 +253,7 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
       sponsorship.status = 'failed';
       sponsorship.failureReason = String(response.data?.ResponseDescription || 'Safaricom did not accept the STK request.').slice(0, 500);
       await sponsorship.save();
+      await Product.updateOne({ _id: product._id, seller: req.user._id }, { $set: { sponsorshipStatus: 'failed' } });
       return res.status(502).json({ success: false, message: sponsorship.failureReason });
     }
     sponsorship.checkoutRequestId = String(response.data.CheckoutRequestID);
@@ -267,6 +270,7 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
       sponsorship.status = 'failed';
       sponsorship.failureReason = String(error.message || 'Unable to start sponsorship payment.').slice(0, 500);
       try { await sponsorship.save(); } catch (_) {}
+      try { await Product.updateOne({ _id: sponsorship.product, seller: sponsorship.seller }, { $set: { sponsorshipStatus: 'failed' } }); } catch (_) {}
     } else if (sponsorship && sponsorship.status === 'pending' && stkRequestStarted && !sponsorship.checkoutRequestId) {
       // A timeout after submission is ambiguous. Keep it pending so the callback
       // can correlate via the sponsorshipId in its callback URL; never claim failure.
@@ -327,6 +331,7 @@ router.post('/mpesa/callback', async (req, res) => {
       sponsorship.providerResultCode = String(callback.ResultCode);
       sponsorship.failureReason = String(callback.ResultDesc || 'M-Pesa payment was cancelled or failed.').slice(0, 500);
       await sponsorship.save();
+      await Product.updateOne({ _id: sponsorship.product, seller: sponsorship.seller }, { $set: { sponsorshipStatus: 'failed' } });
       return res.json({ ResultCode: 0, ResultDesc: 'Payment failure recorded.' });
     }
 
