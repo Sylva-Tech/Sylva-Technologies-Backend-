@@ -223,7 +223,9 @@ router.get('/', async (req, res) => {
      * - approved products
      */
     const filter = {
-      isActive: true,
+      // Treat legacy approved records with no isActive field as active.
+      // Explicitly inactive, pending, and rejected products remain hidden.
+      isActive: mongoose.trusted({ $ne: false }),
       approvalStatus: 'approved',
     };
 
@@ -477,7 +479,8 @@ router.get(
       const product =
         await Product.findOne({
           slug: req.params.slug,
-          isActive: true,
+          // Keep legacy approved products (missing isActive) consistent with the catalogue.
+          isActive: mongoose.trusted({ $ne: false }),
           approvalStatus: 'approved',
         })
           .populate('category')
