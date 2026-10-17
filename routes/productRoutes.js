@@ -770,6 +770,49 @@ router.get(
 );
 
 /*
+ * GET /api/products/seller/sheet-csv
+ * Safely proxy a public Google Sheets CSV export to avoid browser CORS issues.
+ * Only Google Sheets spreadsheet URLs are accepted; arbitrary URLs are rejected.
+ */
+router.get('/seller/sheet-csv', protect, approvedSellerOnly, async (req, res) => {
+  try {
+    const input = String(req.query.url || '').trim();
+    if (!input || input.length > 1500) {
+      return res.status(400).json({ success: false, message: 'Provide a valid Google Sheets URL.' });
+    }
+    const sheetUrl = new URL(input);
+    if (sheetUrl.hostname !== 'docs.google.com' || !sheetUrl.pathname.includes('/spreadsheets/d/')) {
+      return res.status(400).json({ success: false, message: 'Only Google Sheets spreadsheet links are supported.' });
+    }
+    const match = sheetUrl.pathname.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+    if (!match) {
+      return res.status(400).json({ success: false, message: 'That Google Sheets link is not valid.' });
+    }
+    const gid = sheetUrl.searchParams.get('gid') || '0';
+    if (!/^\d+$/.test(gid)) {
+      return res.status(400).json({ success: false, message: 'The Google Sheets tab ID is invalid.' });
+    }
+    const exportUrl = 'https://docs.google.com/spreadsheets/d/' + match[1] + '/export?format=csv&gid=' + gid;
+    const response = await fetch(exportUrl, { headers: { Accept: 'text/csv,text/plain;q=0.9,*/*;q=0.1' } });
+    if (!response.ok) {
+      return res.status(400).json({ success: false, message: 'Could not download the sheet. Share it as “Anyone with the link can view” or publish it to the web.' });
+    }
+    const csv = await response.text();
+    if (/<html[\s>]/i.test(csv.slice(0, 500))) {
+      return res.status(400).json({ success: false, message: 'Google returned a web page instead of CSV. Make the sheet viewable by anyone with the link.' });
+    }
+    res.set('Cache-Control', 'no-store');
+    return res.type('text/csv; charset=utf-8').send(csv);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return res.status(400).json({ success: false, message: 'Enter a valid Google Sheets URL.' });
+    }
+    console.error('Seller Google Sheets CSV load error:', error);
+    return res.status(502).json({ success: false, message: 'Unable to load this Google Sheet. Download it as CSV and upload it instead.' });
+  }
+});
+
+/*
  * POST /api/products/seller/import
  * Bulk seller catalogue import from CSV / Google Sheets.
  * Listings are always pending admin approval and scoped to the authenticated seller.
