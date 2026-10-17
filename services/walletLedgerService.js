@@ -30,7 +30,20 @@ function fromMinorUnits(amountMinor) {
  * Calculate commission on the product subtotal only. Delivery fees must never
  * be passed into this function. Basis points: 400 = 4.00%.
  */
-function calculateCommissionMinor(productSubtotalMinor, commissionRateBps = 400) {
+function getCommissionRateBps(value = process.env.PLATFORM_COMMISSION_RATE_BPS) {
+  if (value === undefined || value === null || String(value).trim() === '') return 400;
+  const rate = Number(value);
+  if (!Number.isInteger(rate) || rate < 0 || rate > 10000) {
+    throw new TypeError('PLATFORM_COMMISSION_RATE_BPS must be an integer from 0 to 10000.');
+  }
+  return rate;
+}
+
+/**
+ * Calculate commission on the product subtotal minor units only.
+ * Delivery fees are intentionally excluded from the input.
+ */
+function calculateCommissionMinor(productSubtotalMinor, commissionRateBps = getCommissionRateBps()) {
   if (!Number.isSafeInteger(productSubtotalMinor) || productSubtotalMinor < 0) {
     throw new TypeError('Product subtotal must be a non-negative integer in minor units.');
   }
@@ -198,6 +211,7 @@ module.exports = {
   toMinorUnits,
   fromMinorUnits,
   calculateCommissionMinor,
+  getCommissionRateBps,
   normalizePostings,
   postBalancedTransaction,
 };
