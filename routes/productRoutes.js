@@ -770,6 +770,129 @@ router.get(
 );
 
 /*
+ * POST /api/products/seller/import
+ * Bulk seller catalogue import from CSV / Google Sheets.
+ * Listings are always pending admin approval and scoped to the authenticated seller.
+ */
+router.post('/seller/import', protect, approvedSellerOnly, async (req, res) => {
+  try {
+    const rows = req.body?.products;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'Provide at least one product to import.' });
+    }
+    if (rows.length > 100) {
+      return res.status(400).json({ success: false, message: 'Import a maximum of 100 products per batch.' });
+    }
+
+    const importedProducts = [];
+    const errors = [];
+    const sellerId = String(req.user._id);
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index] || {};
+      const rowNumber = Number(row.rowNumber) || index + 2;
+      try {
+        const name = String(row.name || '').trim();
+        const brand = String(row.brand || '').trim();
+        const category = String(row.category || '').trim();
+        const price = Number(row.price);
+        const oldPrice = row.oldPrice === '' || row.oldPrice == null ? 0 : Number(row.oldPrice);
+        const stock = row.stock === '' || row.stock == null ? 0 : Number(row.stock);
+        const deliveryFee = row.deliveryFee === '' || row.deliveryFee == null ? 0 : Number(row.deliveryFee);
+
+        if (!name || !brand || !category || !String(row.description || row.shortDescription || '').trim()) {
+          throw new Error('Name, brand, category and description are required.');
+        }
+        if (!Number.isFinite(price) || price < 0 || !Number.isFinite(oldPrice) || oldPrice < 0 ||
+            !Number.isFinite(stock) || stock < 0 || !Number.isFinite(deliveryFee) || deliveryFee < 0) {
+          throw new Error('Price, old price, stock and delivery fee must be valid non-negative numbers.');
+        }
+
+        const slug = buildSlug(name);
+        if (!slug) throw new Error('Product name must contain valid characters.');
+        const normalizedSku = String(row.sku || row.code || ('SL-' + sellerId.slice(-6) + '-' + Date.now().toString(36) + '-' + rowNumber))
+          .trim().toUpperCase();
+        if (!normalizedSku) throw new Error('SKU / code is required.');
+
+        const duplicate = await Product.findOne({
+          $or: [{ slug }, { sku: normalizedSku }, { code: normalizedSku }],
+        }).select('_id name sku');
+        if (duplicate) throw new Error('A product with this name/slug or SKU already exists. Change the product name or SKU.');
+
+        const categoryRecord = await findCategory(category);
+        if (!categoryRecord) throw new Error('Category "' + category + '" was not found. Use an existing Sylva category.');
+
+        const images = Array.isArray(row.images)
+          ? row.images.map((image) => String(image || '').trim()).filter((image) => /^https?:\/\/\S+$/i.test(image)).slice(0, MAX_PRODUCT_IMAGES)
+          : [];
+        const sourceSpreadsheetUrl = String(row.sourceSpreadsheetUrl || '').trim();
+        if (sourceSpreadsheetUrl && (!(sourceSpreadsheetUrl.startsWith('https://') || sourceSpreadsheetUrl.startsWith('http://')) || sourceSpreadsheetUrl.length > 1000)) {
+          throw new Error('Spreadsheet link must be a valid HTTP or HTTPS URL no longer than 1000 characters.');
+        }
+
+        const product = await Product.create({
+          name,
+          slug,
+          code: normalizedSku,
+          sku: normalizedSku,
+          brand,
+          category: categoryRecord._id,
+          subcategory: String(row.subcategory || '').trim(),
+          description: String(row.description || row.shortDescription || '').trim(),
+          shortDescription: String(row.shortDescription || '').trim(),
+          seller: req.user._id,
+          price,
+          oldPrice,
+          discount: calculateDiscount(oldPrice, price),
+          images,
+          stock,
+          condition: String(row.condition || 'New').trim(),
+          warranty: String(row.warranty || '').trim(),
+          warrantyDuration: String(row.warrantyDuration || '').trim(),
+          warrantyTerms: String(row.warrantyTerms || '').trim(),
+          deliveryDuration: String(row.deliveryDuration || '').trim(),
+          deliveryFee,
+          deliveryTerms: String(row.deliveryTerms || '').trim(),
+          deliveryLocations: String(row.deliveryLocations || '').trim(),
+          returnPeriod: String(row.returnPeriod || '').trim(),
+          returnPolicy: String(row.returnPolicy || '').trim(),
+          returnConditions: String(row.returnConditions || '').trim(),
+          whatsIncluded: String(row.whatsIncluded || '').trim(),
+          keyFeatures: Array.isArray(row.keyFeatures) ? row.keyFeatures.map((item) => String(item).trim()).filter(Boolean) : parseList(row.keyFeatures),
+          sellerNotes: '',
+          sourceSpreadsheetUrl,
+          specifications: parseSpecifications(row.specifications),
+          isNew: parseBoolean(row.isNew, false),
+          isActive: false,
+          approvalStatus: 'pending',
+          rejectionReason: '',
+          approvedAt: null,
+          approvedBy: null,
+          featured: false,
+          flashSale: false,
+          offer: false,
+          offerMessage: '',
+          offerStartDate: null,
+          offerEndDate: null,
+        });
+        importedProducts.push({ rowNumber, id: product._id, name: product.name, sku: product.sku });
+      } catch (error) {
+        errors.push({ rowNumber, message: error.message || 'Could not import this product.' });
+      }
+    }
+
+    return res.status(200).json({
+      success: errors.length === 0,
+      message: importedProducts.length + ' product(s) submitted for admin approval.',
+      data: { imported: importedProducts.length, products: importedProducts, errors },
+    });
+  } catch (error) {
+    console.error('Seller bulk product import error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to import seller products right now.' });
+  }
+});
+
+/*
  * POST /api/products/seller
  */
 router.post(
