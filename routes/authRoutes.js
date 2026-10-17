@@ -10,6 +10,7 @@ const sellerUpload = require('../middleware/sellerUpload');
 const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
 const cloudinary = require('../config/cloudinary');
 const { checkPinById } = require('../services/kraPinCheckerService');
+const { protect } = require('../middleware/authMiddleware');
 
 const {
   sendVerificationCodeAndLinkEmail,
@@ -187,6 +188,131 @@ router.post('/kra/pin-checker-by-id', async (req, res) => {
  * SELLER REGISTRATION
  * Requires typed ID/KRA PIN details and matching private document uploads.
  */
+
+/*
+ * EXISTING CUSTOMER — APPLY TO BECOME A SELLER
+ * Keeps the existing account and wallet; no second account/password is created.
+ */
+router.post(
+  '/seller/apply',
+  protect,
+  sellerUpload.fields([
+    { name: 'idFront', maxCount: 1 },
+    { name: 'idBack', maxCount: 1 },
+    { name: 'taxDocument', maxCount: 1 },
+    { name: 'kraPin', maxCount: 1 },
+  ]),
+  async (req, res) => {
+    const uploadedDocuments = [];
+    try {
+      const currentUser = await User.findById(req.user._id);
+      if (!currentUser) return res.status(404).json({ success: false, message: 'Your account could not be found. Please sign in again.' });
+      if (currentUser.role === 'admin') return res.status(403).json({ success: false, message: 'Administrator accounts cannot apply for seller access.' });
+      if (currentUser.sellerStatus === 'pending') return res.status(409).json({ success: false, message: 'Your seller application is already awaiting review.' });
+      if (currentUser.sellerStatus === 'approved' && currentUser.role === 'seller') return res.status(409).json({ success: false, message: 'Your seller account is already approved.' });
+
+      const name = String(req.body?.officialName || currentUser.name || '').trim();
+      const country = String(req.body?.country || '').trim().toUpperCase();
+      const phone = String(req.body?.mpesaPhone || currentUser.phone || '').trim().replace(/\s+/g, '');
+      const storeName = String(req.body?.storeName || '').trim();
+      const storeProfile = String(req.body?.storeProfile || '').trim();
+      const idType = String(req.body?.idType || '').trim();
+      const idNumber = String(req.body?.idNumber || '').trim();
+      const taxIdentifier = String(req.body?.taxIdentifier || req.body?.kraPinNumber || '').trim().toUpperCase();
+      const privacyAccepted = String(req.body?.privacyPolicyAccepted) === 'true';
+      const termsAccepted = String(req.body?.termsAndConditionsAccepted) === 'true';
+      const files = req.files || {};
+      const idFront = files.idFront?.[0];
+      const idBack = files.idBack?.[0];
+      const taxDocumentFile = files.taxDocument?.[0] || files.kraPin?.[0];
+
+      if (!name || !country || !phone || !storeName || !storeProfile || !idType || !idNumber || !taxIdentifier) {
+        return res.status(400).json({ success: false, message: 'Complete all required country, store, ID and tax identification fields.' });
+      }
+      if (!AFRICAN_COUNTRY_CODES.has(country)) return res.status(400).json({ success: false, message: 'Select a supported African country.' });
+      if (!/^\+[1-9]\d{7,14}$/.test(phone)) return res.status(400).json({ success: false, message: 'Enter a valid international mobile number including the + country calling code.' });
+      if (!['national_id', 'passport', 'military_id', 'other'].includes(idType)) return res.status(400).json({ success: false, message: 'Select a valid identification document type.' });
+      if (idNumber.replace(/\s+/g, '').length < 5 || idNumber.length > 50) return res.status(400).json({ success: false, message: 'Enter a valid ID or passport number.' });
+      if (country === 'KE' && !/^[A-Z]\d{9}[A-Z]$/.test(taxIdentifier)) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan KRA PIN number, for example A123456789B.' });
+      if (country !== 'KE' && (taxIdentifier.length < 3 || taxIdentifier.length > 50)) return res.status(400).json({ success: false, message: 'Enter the tax identifier issued by your country.' });
+      if (storeName.length < 2 || storeName.length > 100 || storeProfile.length < 20 || storeProfile.length > 1000) return res.status(400).json({ success: false, message: 'Enter a store name and description between 20 and 1000 characters.' });
+      if (!privacyAccepted || !termsAccepted) return res.status(400).json({ success: false, message: 'Accept the Seller Privacy Notice and Seller Terms & Conditions to continue.' });
+      if (!idFront || !idBack || !taxDocumentFile) return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your country-issued tax document.' });
+
+      const normalizedIdNumber = idNumber.replace(/\s+/g, '').toUpperCase();
+      const normalizedTaxIdentifier = taxIdentifier.replace(/\s+/g, '').toUpperCase();
+      const duplicateIdentity = await User.findOne({
+        _id: { $ne: currentUser._id },
+        $or: [
+          { 'sellerProfile.idNumber': normalizedIdNumber },
+          { 'sellerProfile.taxIdentifier': normalizedTaxIdentifier },
+          ...(country === 'KE' ? [{ 'sellerProfile.kraPin': normalizedTaxIdentifier }] : []),
+        ],
+      }).select('_id');
+      if (duplicateIdentity) return res.status(409).json({ success: false, message: 'These ID or tax identification details are already associated with another seller application/store.' });
+
+      const [frontUpload, backUpload, taxUpload] = await Promise.all([
+        uploadBufferToCloudinary(idFront.buffer),
+        uploadBufferToCloudinary(idBack.buffer),
+        uploadBufferToCloudinary(taxDocumentFile.buffer),
+      ]);
+      uploadedDocuments.push(frontUpload, backUpload, taxUpload);
+
+      const now = new Date();
+      currentUser.name = name;
+      currentUser.phone = phone;
+      currentUser.role = 'seller';
+      currentUser.sellerStatus = 'pending';
+      currentUser.accountStatus = currentUser.accountStatus || 'active';
+      currentUser.storeStatus = 'inactive';
+      currentUser.consent = {
+        ...(currentUser.consent?.toObject ? currentUser.consent.toObject() : currentUser.consent || {}),
+        privacyPolicy: true,
+        termsAndConditions: true,
+        informationAccuracy: true,
+        acceptedAt: now,
+      };
+      currentUser.sellerProfile = {
+        ...(currentUser.sellerProfile?.toObject ? currentUser.sellerProfile.toObject() : currentUser.sellerProfile || {}),
+        officialName: name,
+        country,
+        identityVerificationStatus: 'pending',
+        identityVerificationProvider: 'manual_review',
+        idType,
+        idNumber: normalizedIdNumber,
+        idFrontDocument: frontUpload.public_id,
+        idBackDocument: backUpload.public_id,
+        storeName,
+        storeProfile,
+        storeEmail: currentUser.email,
+        storePhone: phone,
+        mpesaPhone: phone,
+        kraPin: country === 'KE' ? normalizedTaxIdentifier : '',
+        taxIdentifier: normalizedTaxIdentifier,
+        taxDocument: taxUpload.public_id,
+        kraPinDocument: taxUpload.public_id,
+        applicationDate: now,
+      };
+      await currentUser.save();
+
+      return res.status(201).json({
+        success: true,
+        message: 'Your seller application has been submitted using your existing Sylva account. Your customer account and wallet are retained. Seller features will unlock after administrator approval.',
+        user: safeUser(currentUser),
+      });
+    } catch (error) {
+      await Promise.allSettled(uploadedDocuments.map((document) =>
+        cloudinary.uploader.destroy(document.public_id, {
+          resource_type: document.resource_type || 'image',
+          type: 'authenticated',
+        })
+      ));
+      console.error('Existing customer seller application error:', error.message);
+      return res.status(500).json({ success: false, message: 'Unable to submit your seller application. Please try again.' });
+    }
+  }
+);
+
 router.post(
   '/seller/register',
   sellerUpload.fields([
