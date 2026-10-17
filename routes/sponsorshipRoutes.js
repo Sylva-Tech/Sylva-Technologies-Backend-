@@ -96,6 +96,7 @@ const activate = async (sponsorship, receipt = '') => {
  */
 router.post('/products/:productId', protect, approvedSellerOnly, async (req, res) => {
   let sponsorship;
+  let stkRequestStarted = false;
   try {
     const product = await Product.findOne({
       _id: req.params.productId,
@@ -204,7 +205,7 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
     if (missing.length) return res.status(503).json({ success: false, message: 'M-Pesa is not fully configured.', data: { missingConfiguration: missing } });
 
     const callbackBase = new URL(process.env.MPESA_CALLBACK_URL);
-    const callbackUrl = callbackBase.origin + '/api/sponsorship/mpesa/callback';
+    const callbackOrigin = callbackBase.origin;
     const shortcode = String(process.env.MPESA_SHORTCODE).trim();
     const passkey = process.env.MPESA_PASSKEY;
     const till = String(process.env.MPESA_TILL_NUMBER || '').trim();
@@ -224,10 +225,12 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
       status: 'pending',
     });
 
+    const callbackUrl = callbackOrigin + '/api/sponsorship/mpesa/callback?sponsorshipId=' + encodeURIComponent(String(sponsorship._id));
     const credentials = await getMpesaCredentials();
     const timestamp = mpesaTimestamp();
     const password = Buffer.from(shortcode + passkey + timestamp).toString('base64');
     const partyB = transactionType === 'CustomerBuyGoodsOnline' ? till : shortcode;
+    stkRequestStarted = true;
     const response = await axios.post(credentials.host + '/mpesa/stkpush/v1/processrequest', {
       BusinessShortCode: shortcode,
       Password: password,
@@ -260,9 +263,14 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
       data: { sponsorshipId: String(sponsorship._id), status: 'pending', checkoutRequestId: sponsorship.checkoutRequestId, amount: FEE_KES, durationDays: DURATION_DAYS },
     });
   } catch (error) {
-    if (sponsorship && sponsorship.status === 'pending' && !sponsorship.checkoutRequestId) {
+    if (sponsorship && sponsorship.status === 'pending' && !sponsorship.checkoutRequestId && !stkRequestStarted) {
       sponsorship.status = 'failed';
       sponsorship.failureReason = String(error.message || 'Unable to start sponsorship payment.').slice(0, 500);
+      try { await sponsorship.save(); } catch (_) {}
+    } else if (sponsorship && sponsorship.status === 'pending' && stkRequestStarted && !sponsorship.checkoutRequestId) {
+      // A timeout after submission is ambiguous. Keep it pending so the callback
+      // can correlate via the sponsorshipId in its callback URL; never claim failure.
+      sponsorship.failureReason = 'M-Pesa request outcome is being reconciled. Do not initiate another payment for this request.';
       try { await sponsorship.save(); } catch (_) {}
     }
     console.error('Seller product sponsorship error:', error.message);
@@ -298,8 +306,19 @@ router.post('/mpesa/callback', async (req, res) => {
     const checkoutRequestId = String(callback?.CheckoutRequestID || '');
     if (!checkoutRequestId) return res.status(400).json({ ResultCode: 1, ResultDesc: 'Invalid callback.' });
 
-    const sponsorship = await SellerProductSponsorship.findOne({ checkoutRequestId });
+    let sponsorship = await SellerProductSponsorship.findOne({ checkoutRequestId });
+    if (!sponsorship && req.query?.sponsorshipId && mongoose.isValidObjectId(req.query.sponsorshipId)) {
+      sponsorship = await SellerProductSponsorship.findById(req.query.sponsorshipId);
+    }
     if (!sponsorship) return res.status(503).json({ ResultCode: 1, ResultDesc: 'Sponsorship request not correlated yet.' });
+    if (sponsorship.checkoutRequestId && sponsorship.checkoutRequestId !== checkoutRequestId) {
+      return res.status(503).json({ ResultCode: 1, ResultDesc: 'M-Pesa checkout request does not match this sponsorship.' });
+    }
+    if (!sponsorship.checkoutRequestId) {
+      sponsorship.checkoutRequestId = checkoutRequestId;
+      sponsorship.merchantRequestId = String(callback.MerchantRequestID || '');
+      await sponsorship.save();
+    }
     if (sponsorship.status === 'active') return res.json({ ResultCode: 0, ResultDesc: 'Sponsorship already activated.' });
     if (sponsorship.status !== 'pending') return res.json({ ResultCode: 0, ResultDesc: 'Sponsorship request already closed.' });
 
