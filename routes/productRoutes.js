@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 
 const Product = require('../models/Product');
 const Category = require('../models/Category');
+const User = require('../models/User');
 
 const {
   protect,
@@ -486,6 +487,102 @@ router.get(
 /* =========================================================
    SELLER PRODUCT ROUTES
    ========================================================= */
+
+/*
+ * SELLER STORE PROFILE
+ * Store details are always scoped to the authenticated seller.
+ */
+router.get('/seller/store', protect, approvedSellerOnly, async (req, res) => {
+  try {
+    const seller = await User.findById(req.user._id).select('sellerProfile');
+    if (!seller || !seller.sellerProfile) {
+      return res.status(404).json({ success: false, message: 'Seller profile not found.' });
+    }
+    const profile = seller.sellerProfile;
+    return res.json({
+      success: true,
+      data: {
+        storeName: profile.storeName || '',
+        storeProfile: profile.storeProfile || '',
+        storeLocation: profile.storeLocation || '',
+        storeLogo: profile.storeLogo || '',
+      },
+    });
+  } catch (error) {
+    console.error('Load seller store profile error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load store information.' });
+  }
+});
+
+router.put('/seller/store', protect, approvedSellerOnly, async (req, res) => {
+  try {
+    const storeName = String(req.body?.storeName || '').trim();
+    const storeProfile = String(req.body?.storeProfile || '').trim();
+    const storeLocation = String(req.body?.storeLocation || '').trim();
+    const storeLogo = String(req.body?.storeLogo || '').trim();
+
+    if (storeName.length < 2 || storeName.length > 150) {
+      return res.status(400).json({ success: false, message: 'Store name must be between 2 and 150 characters.' });
+    }
+    if (storeProfile.length > 1000) {
+      return res.status(400).json({ success: false, message: 'Store description cannot exceed 1000 characters.' });
+    }
+    if (storeLocation.length > 250) {
+      return res.status(400).json({ success: false, message: 'Store location cannot exceed 250 characters.' });
+    }
+    if (storeLogo && (!/^https?:\/\//i.test(storeLogo) || storeLogo.length > 500)) {
+      return res.status(400).json({ success: false, message: 'Store logo must be a valid HTTPS or HTTP image URL.' });
+    }
+
+    const seller = await User.findById(req.user._id);
+    if (!seller || !seller.sellerProfile) {
+      return res.status(404).json({ success: false, message: 'Seller profile not found.' });
+    }
+
+    seller.sellerProfile.storeName = storeName;
+    seller.sellerProfile.storeProfile = storeProfile;
+    seller.sellerProfile.storeLocation = storeLocation;
+    seller.sellerProfile.storeLogo = storeLogo;
+    await seller.save();
+
+    return res.json({
+      success: true,
+      message: 'Store information saved successfully.',
+      data: {
+        storeName,
+        storeProfile,
+        storeLocation,
+        storeLogo,
+      },
+    });
+  } catch (error) {
+    console.error('Update seller store profile error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Unable to save store information.' });
+  }
+});
+
+/*
+ * GET /api/products/seller/:id
+ * Read one product belonging to the authenticated seller, including products
+ * that are pending or rejected and therefore are not publicly visible.
+ */
+router.get('/seller/:id', protect, approvedSellerOnly, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+    }
+    const product = await Product.findOne({ _id: req.params.id, seller: req.user._id })
+      .populate('category')
+      .populate('seller', 'name email sellerProfile.storeName');
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found in your store.' });
+    }
+    return res.json({ success: true, product });
+  } catch (error) {
+    console.error('Load seller product error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load this product.' });
+  }
+});
 
 /*
  * GET /api/products/seller/me
@@ -1576,11 +1673,15 @@ router.put(
 
       product.isActive = false;
 
-      product.rejectionReason =
-        String(
-          req.body?.rejectionReason ||
-            'Product did not meet the approval requirements.'
-        ).trim();
+      const rejectionReason = String(req.body?.rejectionReason || '').trim();
+      if (!rejectionReason) {
+        return res.status(400).json({
+          success: false,
+          message: 'A clear rejection reason is required so the seller knows what to fix.',
+        });
+      }
+
+      product.rejectionReason = rejectionReason;
 
       product.approvedAt = null;
       product.approvedBy = null;
