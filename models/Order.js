@@ -226,6 +226,12 @@ const orderSchema = new mongoose.Schema(
   default: 'Cash on Delivery',
 },
 
+    mpesaPhone: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
     paymentReference: {
       type: String,
       trim: true,
