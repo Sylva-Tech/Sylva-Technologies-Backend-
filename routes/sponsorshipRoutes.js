@@ -243,7 +243,7 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
       PartyB,
       PhoneNumber: phone,
       CallBackURL: callbackUrl,
-      AccountReference: 'SYLVA-FEATURE',
+      AccountReference: 'SYLVA-FEAT',
       TransactionDesc: 'Product sponsorship',
     }, {
       headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' },
