@@ -562,11 +562,11 @@ router.put('/seller/store', protect, approvedSellerOnly, async (req, res) => {
 });
 
 /*
- * GET /api/products/seller/:id
+ * GET /api/products/seller/product/:id
  * Read one product belonging to the authenticated seller, including products
  * that are pending or rejected and therefore are not publicly visible.
  */
-router.get('/seller/:id', protect, approvedSellerOnly, async (req, res) => {
+router.get('/seller/product/:id', protect, approvedSellerOnly, async (req, res) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(400).json({ success: false, message: 'Invalid product ID.' });
