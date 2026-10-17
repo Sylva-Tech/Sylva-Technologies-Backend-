@@ -904,7 +904,7 @@ const sendAdminOrderNotificationEmail =
         process.env.SALES_EMAIL ||
         'sales@sylvatechnologies.co.ke',
       subject:
-        `New order received - ${order.orderNumber}`,
+        `${order.paymentStatus === 'Paid' ? 'Payment received - order' : 'New order received'} ${order.orderNumber}`,
       html,
       text:
         `A new order ${order.orderNumber} has been placed by ${customer.name}. Tracking code: ${order.trackingCode || order.orderNumber}. Payment: ${order.paymentMethod}. Delivery: ${order.customerDetails?.deliveryLocation || order.customerDetails?.address || 'N/A'}.`,

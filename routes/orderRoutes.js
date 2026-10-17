@@ -283,11 +283,14 @@ const sendPaidOrderEmails = async (order) => {
       });
     }
 
+    const operationsRecipients = [
+      process.env.ORDERS_EMAIL || 'order@sylvatechnologies.co.ke',
+      process.env.PAYMENT_EMAIL || 'payment@sylvatechnologies.co.ke',
+      process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke',
+    ];
+    const uniqueRecipients = [...new Set(operationsRecipients.map((address) => String(address || '').trim().toLowerCase()).filter(Boolean))];
     await sendAdminOrderNotificationEmail({
-      to:
-        process.env.ORDERS_EMAIL ||
-        process.env.SALES_EMAIL ||
-        'sales@sylvatechnologies.co.ke',
+      to: uniqueRecipients,
       order: populatedOrder.toObject(),
       customer: {
         name: populatedOrder.customerName || populatedOrder.customerDetails?.fullName || 'Customer',
@@ -915,6 +918,9 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
       customerPhone:
         customerDetails.phone,
 
+      // Save the number used for STK separately from the delivery contact number.
+      mpesaPhone: String(mpesaPhone || customerDetails.mpesaPhone || customerDetails.phone || '').trim(),
+
       items: preparedItems,
 
       /*
@@ -1124,6 +1130,7 @@ if (paymentMethod === 'M-Pesa') {
       throw new Error(stkResponse.data?.ResponseDescription || 'Safaricom did not accept the M-Pesa request.');
     }
     order.paymentReference = 'MPESA_STK:' + stkResponse.data.CheckoutRequestID;
+    order.mpesaCheckoutRequestId = stkResponse.data.CheckoutRequestID;
     await order.save();
     mpesaPayment = {
       checkoutRequestId: stkResponse.data.CheckoutRequestID,
@@ -1350,11 +1357,19 @@ router.post('/mpesa/callback', async (req, res) => {
 
     const order = await Order.findOne({
       paymentMethod: 'M-Pesa',
-      paymentReference: 'MPESA_STK:' + checkoutRequestId,
+      $or: [
+        { mpesaCheckoutRequestId: checkoutRequestId },
+        { paymentReference: 'MPESA_STK:' + checkoutRequestId },
+      ],
     });
     if (!order) return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
-    if (order.paymentStatus === 'Paid' || order.paymentStatus === 'Failed') {
+    if (order.paymentStatus === 'Failed') {
       return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
+    }
+    // A status check may have already confirmed payment. Still accept a later
+    // successful callback so the official Safaricom receipt can be recorded.
+    if (order.paymentStatus === 'Paid' && Number(callback.ResultCode) !== 0) {
+      return res.json({ ResultCode: 0, ResultDesc: 'Payment already confirmed.' });
     }
     if (Number(callback.ResultCode) !== 0) {
       const updated = await Order.findOneAndUpdate(
@@ -1408,7 +1423,7 @@ router.post('/mpesa/callback', async (req, res) => {
     const receipt = String(field('MpesaReceiptNumber') || '');
     const phone = String(field('PhoneNumber') || '');
     const expectedAmount = Math.round(Number(order.total || 0));
-        const storedPhone = String(order.customerDetails?.phone || order.customerPhone || '').replace(/[\s()+-]/g, '');
+        const storedPhone = String(order.mpesaPhone || order.customerDetails?.mpesaPhone || order.customerDetails?.phone || order.customerPhone || '').replace(/[\s()+-]/g, '');
     const expectedPhone = storedPhone.startsWith('0') ? '254' + storedPhone.slice(1)
       : storedPhone.startsWith('7') || storedPhone.startsWith('1') ? '254' + storedPhone
       : storedPhone;
@@ -1424,6 +1439,13 @@ router.post('/mpesa/callback', async (req, res) => {
     });
     if (duplicate) return res.json({ ResultCode: 0, ResultDesc: 'Receipt already used.' });
 
+    if (order.paymentStatus === 'Paid') {
+      await Order.updateOne(
+        { _id: order._id, paymentStatus: 'Paid' },
+        { $set: { mpesaReceiptNumber: receipt, paymentReference: receipt } }
+      );
+      return res.json({ ResultCode: 0, ResultDesc: 'Payment receipt recorded.' });
+    }
     const paidOrder = await Order.findOneAndUpdate(
       { _id: order._id, paymentStatus: 'Pending', status: { $ne: 'Cancelled' } },
       {
@@ -1433,6 +1455,7 @@ router.post('/mpesa/callback', async (req, res) => {
           cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000),
           status: order.status === 'Pending' ? 'Confirmed' : order.status,
           paymentReference: receipt,
+          mpesaReceiptNumber: receipt,
         },
       },
       { new: true }
@@ -1447,15 +1470,77 @@ router.post('/mpesa/callback', async (req, res) => {
 
 router.get('/mpesa/status/:orderNumber', protect, async (req, res) => {
   try {
-    const order = await Order.findOne({
+    let order = await Order.findOne({
       orderNumber: req.params.orderNumber,
       customer: req.user._id,
       paymentMethod: 'M-Pesa',
-    }).select('orderNumber paymentStatus status total paymentMethod');
+    }).select('orderNumber trackingCode paymentStatus status total paymentMethod paymentReference mpesaCheckoutRequestId mpesaReceiptNumber paidAt createdAt items subtotal deliveryFee customerName customerEmail customerPhone customerDetails mpesaPhone');
+
     if (!order) return res.status(404).json({ success: false, message: 'M-Pesa order not found.' });
+
+    // Safaricom callbacks can be delayed or missed. Reconcile pending orders
+    // directly against Safaricom's STK query API before returning Pending.
+    if (order.paymentStatus === 'Pending' && order.status !== 'Cancelled') {
+      const checkoutRequestId = String(
+        order.mpesaCheckoutRequestId ||
+        String(order.paymentReference || '').replace(/^MPESA_STK:/, '')
+      );
+      const key = process.env.MPESA_CONSUMER_KEY;
+      const secret = process.env.MPESA_CONSUMER_SECRET;
+      const shortcode = String(process.env.MPESA_SHORTCODE || '').trim();
+      const passkey = process.env.MPESA_PASSKEY;
+
+      if (checkoutRequestId && checkoutRequestId !== order.paymentReference && key && secret && shortcode && passkey) {
+        const host = getMpesaHost();
+        const auth = Buffer.from(key + ':' + secret).toString('base64');
+        const tokenResponse = await axios.get(
+          host + '/oauth/v1/generate?grant_type=client_credentials',
+          { headers: { Authorization: 'Basic ' + auth }, timeout: 12000 }
+        );
+        const token = tokenResponse.data?.access_token;
+        if (token) {
+          const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+          }).formatToParts(new Date());
+          const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+          const timestamp = values.year + values.month + values.day + values.hour + values.minute + values.second;
+          const password = Buffer.from(String(shortcode) + String(passkey) + timestamp).toString('base64');
+          const verification = await axios.post(host + '/mpesa/stkpushquery/v1/query', {
+            BusinessShortCode: shortcode,
+            Password: password,
+            Timestamp: timestamp,
+            CheckoutRequestID: checkoutRequestId,
+          }, {
+            headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+            timeout: 12000,
+          });
+
+          if (String(verification.data?.ResultCode) === '0') {
+            const confirmed = await Order.findOneAndUpdate(
+              { _id: order._id, paymentStatus: 'Pending', status: { $ne: 'Cancelled' } },
+              { $set: {
+                paymentStatus: 'Paid',
+                paidAt: new Date(),
+                cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000),
+                status: order.status === 'Pending' ? 'Confirmed' : order.status,
+              } },
+              { new: true }
+            );
+            if (confirmed) {
+              order = confirmed;
+              await sendPaidOrderEmails(confirmed);
+            } else {
+              order = await Order.findById(order._id).select('orderNumber trackingCode paymentStatus status total paymentMethod paymentReference mpesaCheckoutRequestId mpesaReceiptNumber paidAt createdAt items subtotal deliveryFee customerName customerEmail customerPhone customerDetails mpesaPhone');
+            }
+          }
+        }
+      }
+    }
     return res.json({ success: true, data: order });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Unable to check M-Pesa payment status.' });
+    console.error('M-Pesa order status reconciliation failed:', error.response?.data || error.message);
+    return res.status(500).json({ success: false, message: 'Unable to check M-Pesa payment status. Please retry shortly.' });
   }
 });
 
