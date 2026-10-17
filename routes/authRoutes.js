@@ -213,7 +213,7 @@ router.post(
 
       const name = String(req.body?.officialName || currentUser.name || '').trim();
       const country = String(req.body?.country || '').trim().toUpperCase();
-      const phone = String(req.body?.mpesaPhone || currentUser.phone || '').trim().replace(/\\s+/g, '');
+      const phone = String(req.body?.mpesaPhone || currentUser.phone || '').trim().replace(/\s+/g, '');
       const storeName = String(req.body?.storeName || '').trim();
       const storeProfile = String(req.body?.storeProfile || '').trim();
       const idType = String(req.body?.idType || '').trim();
@@ -230,17 +230,17 @@ router.post(
         return res.status(400).json({ success: false, message: 'Complete all required country, store, ID and tax identification fields.' });
       }
       if (!AFRICAN_COUNTRY_CODES.has(country)) return res.status(400).json({ success: false, message: 'Select a supported African country.' });
-      if (!/^\\+[1-9]\\d{7,14}$/.test(phone)) return res.status(400).json({ success: false, message: 'Enter a valid international mobile number including the + country calling code.' });
+      if (!/^\+[1-9]\d{7,14}$/.test(phone)) return res.status(400).json({ success: false, message: 'Enter a valid international mobile number including the + country calling code.' });
       if (!['national_id', 'passport', 'military_id', 'other'].includes(idType)) return res.status(400).json({ success: false, message: 'Select a valid identification document type.' });
-      if (idNumber.replace(/\\s+/g, '').length < 5 || idNumber.length > 50) return res.status(400).json({ success: false, message: 'Enter a valid ID or passport number.' });
-      if (country === 'KE' && !/^[A-Z]\\d{9}[A-Z]$/.test(taxIdentifier)) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan KRA PIN number, for example A123456789B.' });
+      if (idNumber.replace(/\s+/g, '').length < 5 || idNumber.length > 50) return res.status(400).json({ success: false, message: 'Enter a valid ID or passport number.' });
+      if (country === 'KE' && !/^[A-Z]\d{9}[A-Z]$/.test(taxIdentifier)) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan KRA PIN number, for example A123456789B.' });
       if (country !== 'KE' && (taxIdentifier.length < 3 || taxIdentifier.length > 50)) return res.status(400).json({ success: false, message: 'Enter the tax identifier issued by your country.' });
       if (storeName.length < 2 || storeName.length > 100 || storeProfile.length < 20 || storeProfile.length > 1000) return res.status(400).json({ success: false, message: 'Enter a store name and description between 20 and 1000 characters.' });
       if (!privacyAccepted || !termsAccepted) return res.status(400).json({ success: false, message: 'Accept the Seller Privacy Notice and Seller Terms & Conditions to continue.' });
       if (!idFront || !idBack || !taxDocumentFile) return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your country-issued tax document.' });
 
-      const normalizedIdNumber = idNumber.replace(/\\s+/g, '').toUpperCase();
-      const normalizedTaxIdentifier = taxIdentifier.replace(/\\s+/g, '').toUpperCase();
+      const normalizedIdNumber = idNumber.replace(/\s+/g, '').toUpperCase();
+      const normalizedTaxIdentifier = taxIdentifier.replace(/\s+/g, '').toUpperCase();
       const duplicateIdentity = await User.findOne({
         _id: { $ne: currentUser._id },
         $or: [
