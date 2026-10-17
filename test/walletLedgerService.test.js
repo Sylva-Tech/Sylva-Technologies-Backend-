@@ -6,6 +6,7 @@ const {
   toMinorUnits,
   fromMinorUnits,
   calculateCommissionMinor,
+  getCommissionRateBps,
   normalizePostings,
 } = require('../services/walletLedgerService');
 
@@ -34,6 +35,14 @@ test('calculates 4% commission on product subtotal minor units', () => {
   // Delivery is deliberately not an input to the commission function.
   assert.equal(fromMinorUnits(commissionMinor), 40);
   assert.equal(deliveryFeeMinor, 15000);
+});
+
+test('defaults to a configurable 4% commission rate in basis points', () => {
+  assert.equal(getCommissionRateBps(undefined), 400);
+  assert.equal(getCommissionRateBps('250'), 250);
+  assert.equal(getCommissionRateBps('0'), 0);
+  assert.throws(() => getCommissionRateBps('4%'), /PLATFORM_COMMISSION_RATE_BPS/);
+  assert.throws(() => getCommissionRateBps('10001'), /PLATFORM_COMMISSION_RATE_BPS/);
 });
 
 test('supports configurable commission rates and safe validation', () => {
