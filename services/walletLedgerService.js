@@ -107,6 +107,20 @@ async function postBalancedTransaction({
     if (existing.length !== items.length) {
       throw new Error('Ledger idempotency conflict: an incomplete transaction group already exists.');
     }
+
+    const byKey = new Map(existing.map((entry) => [entry.idempotencyKey, entry]));
+    for (const posting of items) {
+      const prior = byKey.get(`${transactionKey}:${posting.index}`);
+      if (!prior ||
+          String(prior.walletAccount) !== String(posting.walletAccount) ||
+          prior.direction !== posting.direction ||
+          prior.amountMinor !== posting.amountMinor ||
+          prior.bucket !== posting.bucket ||
+          prior.currency !== posting.currency ||
+          prior.type !== posting.type) {
+        throw new Error('Ledger idempotency conflict: the transaction key was reused with different posting details.');
+      }
+    }
     return { transactionGroupId, entries: existing, alreadyApplied: true };
   }
 
