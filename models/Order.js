@@ -232,6 +232,20 @@ const orderSchema = new mongoose.Schema(
       default: '',
     },
 
+    mpesaCheckoutRequestId: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true,
+    },
+
+    mpesaReceiptNumber: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true,
+    },
+
     paymentReference: {
       type: String,
       trim: true,
