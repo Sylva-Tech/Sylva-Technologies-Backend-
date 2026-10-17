@@ -287,7 +287,6 @@ const sendPaidOrderEmails = async (order) => {
       process.env.ORDERS_EMAIL || 'order@sylvatechnologies.co.ke',
       process.env.PAYMENT_EMAIL || 'payment@sylvatechnologies.co.ke',
       process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke',
-      process.env.ADMIN_EMAIL || 'admin@sylvatechnologies.co.ke',
     ];
     const uniqueRecipients = [...new Set(operationsRecipients.map((address) => String(address || '').trim().toLowerCase()).filter(Boolean))];
     await sendAdminOrderNotificationEmail({
