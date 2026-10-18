@@ -913,6 +913,116 @@ const sendAdminOrderNotificationEmail =
   };
 
 // ============================================================
+// SELLER PAYMENT RECEIVED NOTIFICATION
+// ============================================================
+
+const escapeEmailHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+}[character]));
+
+const sendSellerPaymentNotificationEmail = async ({
+  to,
+  sellerName,
+  storeName = '',
+  orderNumber,
+  orderDate,
+  items = [],
+  grossAmount,
+  commissionAmount,
+  sellerNetAmount,
+  currency = 'KES',
+  paymentMethod,
+  settlementStatus = 'Pending delivery confirmation',
+}) => {
+  const safeName = escapeEmailHtml(sellerName || 'Seller');
+  const safeStore = escapeEmailHtml(storeName);
+  const safeOrder = escapeEmailHtml(orderNumber);
+  const safeDate = escapeEmailHtml(orderDate || '');
+  const safePaymentMethod = escapeEmailHtml(paymentMethod || 'Payment provider');
+  const safeStatus = escapeEmailHtml(settlementStatus);
+  const money = (amount) => `${currency === 'USD' ? 'US
+
+/**
+ * Customer order status update.
+ */
+const sendOrderStatusUpdateEmail = async ({
+  to,
+  customerName,
+  orderNumber,
+  status,
+}) => {
+  const html =
+    orderStatusUpdateTemplate({
+      customerName,
+      orderNumber,
+      status,
+    });
+
+  return sendMail({
+    to,
+    subject:
+      `Order status update - ${orderNumber}`,
+    html,
+    text:
+      `Hello ${customerName}, your Sylva Technologies order ${orderNumber} status is now ${status}.`,
+    sender: 'orders',
+  });
+};
+
+// ============================================================
+// EXPORTS
+// ============================================================
+
+module.exports = {
+  sendMail,
+
+  // Account verification
+  sendVerificationEmail,
+  sendVerificationLinkEmail,
+  sendVerificationCodeAndLinkEmail,
+
+  // Password reset
+  sendPasswordResetEmail,
+  sendPasswordResetLinkEmail,
+  sendPasswordResetCodeAndLinkEmail,
+
+  // Orders
+  sendOrderConfirmationEmail,
+  sendAdminOrderNotificationEmail,
+  sendSellerPaymentNotificationEmail,
+  sendOrderStatusUpdateEmail,
+};
+ : 'KSh '}${Number(amount || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const itemRows = items.map((item) => `<tr><td style="padding:10px;border-bottom:1px solid #e5e7eb;">${escapeEmailHtml(item.name)}</td><td style="padding:10px;text-align:center;border-bottom:1px solid #e5e7eb;">${Math.max(1, Number(item.quantity || 1))}</td><td style="padding:10px;text-align:right;border-bottom:1px solid #e5e7eb;">${money(item.subtotal)}</td></tr>`).join('');
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f7f6;font-family:Arial,Helvetica,sans-serif;color:#1f2937;"><div style="max-width:640px;margin:24px auto;padding:24px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;"><h2 style="margin-top:0;color:#166534;">Sylva Technologies</h2><p>Hello <strong>${safeName}</strong>,</p><h3>Payment received for your order</h3><p>We have confirmed the customer's payment for order <strong>${safeOrder}</strong>${safeStore ? ` for ${safeStore}` : ''}. Your seller earnings are held until delivery is confirmed and the settlement rules are satisfied.</p><p><strong>Order date:</strong> ${safeDate}<br><strong>Payment method:</strong> ${safePaymentMethod}<br><strong>Settlement:</strong> ${safeStatus}</p><table style="width:100%;border-collapse:collapse;margin:20px 0;"><thead><tr><th style="text-align:left;padding:10px;background:#f0fdf4;">Product</th><th style="padding:10px;background:#f0fdf4;">Qty</th><th style="text-align:right;padding:10px;background:#f0fdf4;">Subtotal</th></tr></thead><tbody>${itemRows}</tbody></table><table style="width:100%;border-collapse:collapse;"><tr><td style="padding:8px 0;">Product subtotal</td><td style="padding:8px 0;text-align:right;">${money(grossAmount)}</td></tr><tr><td style="padding:8px 0;">Platform commission</td><td style="padding:8px 0;text-align:right;">${money(commissionAmount)}</td></tr><tr><td style="padding:8px 0;font-weight:bold;border-top:1px solid #d1d5db;">Expected seller earnings</td><td style="padding:8px 0;text-align:right;font-weight:bold;border-top:1px solid #d1d5db;">${money(sellerNetAmount)}</td></tr></table><p style="font-size:13px;color:#6b7280;">This email confirms payment receipt; it does not mean funds have been released or withdrawn. Check your Sylva seller wallet for the latest settlement status.</p><hr style="border:0;border-top:1px solid #e5e7eb;margin:24px 0;"><p style="font-size:12px;color:#6b7280;">Sylva Technologies · Empowering Your Digital Life<br>Support: support@sylvatechnologies.co.ke</p></div></body></html>`;
+  const text = [
+    'Sylva Technologies - Seller Payment Notification',
+    `Hello ${sellerName || 'Seller'},`,
+    `Payment confirmed for order ${orderNumber}.`,
+    `Order date: ${orderDate || 'N/A'}`,
+    `Payment method: ${paymentMethod || 'Payment provider'}`,
+    ...items.map((item) => `- ${item.name} x${item.quantity}: ${money(item.subtotal)}`),
+    `Product subtotal: ${money(grossAmount)}`,
+    `Platform commission: ${money(commissionAmount)}`,
+    `Expected seller earnings: ${money(sellerNetAmount)}`,
+    `Settlement status: ${settlementStatus}`,
+    'Funds remain held until delivery confirmation and settlement eligibility.',
+    'Sylva Technologies - support@sylvatechnologies.co.ke',
+  ].join('\n');
+  return sendMail({
+    to,
+    subject: `Payment received for order ${orderNumber} - seller settlement pending`,
+    html,
+    text,
+    sender: 'payment',
+  });
+};
+
+// ============================================================
 // CUSTOMER ORDER STATUS UPDATE
 // ============================================================
 
