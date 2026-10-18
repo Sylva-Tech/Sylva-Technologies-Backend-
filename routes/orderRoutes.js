@@ -90,12 +90,7 @@ const applySellerSettlement = async (order) => {
 
   // The configured marketplace commission is 4% by default.
   // Prefer integer basis points to avoid ambiguous decimal-rate settings.
-  const commissionRateBps = Number(
-    process.env.PLATFORM_COMMISSION_RATE_BPS ??
-    (process.env.PLATFORM_COMMISSION_RATE !== undefined
-      ? Number(process.env.PLATFORM_COMMISSION_RATE) * 10000
-      : 400)
-  );
+  const commissionRateBps = Number(process.env.PLATFORM_COMMISSION_RATE_BPS ?? 400);
   if (!Number.isInteger(commissionRateBps) || commissionRateBps < 0 || commissionRateBps > 10000) {
     throw new Error('PLATFORM_COMMISSION_RATE_BPS must be an integer from 0 to 10000.');
   }
@@ -339,12 +334,11 @@ const sendPaidOrderEmails = async (order) => {
       });
     }
 
-    const commissionRate = Number(
-      process.env.PLATFORM_COMMISSION_RATE_BPS ??
-      (process.env.PLATFORM_COMMISSION_RATE !== undefined
-        ? Number(process.env.PLATFORM_COMMISSION_RATE) * 10000
-        : 400)
-    ) / 10000;
+    const commissionRateBps = Number(process.env.PLATFORM_COMMISSION_RATE_BPS ?? 400);
+    if (!Number.isInteger(commissionRateBps) || commissionRateBps < 0 || commissionRateBps > 10000) {
+      throw new Error('PLATFORM_COMMISSION_RATE_BPS must be an integer from 0 to 10000.');
+    }
+    const commissionRate = commissionRateBps / 10000;
 
     for (const sellerOrder of sellerOrders.values()) {
       const gross = sellerOrder.productSubtotal;
