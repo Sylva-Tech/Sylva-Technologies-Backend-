@@ -1101,10 +1101,29 @@ router.post(
         return res.status(400).json({ success: false, message: 'Spreadsheet link must be a valid HTTP or HTTPS URL no longer than 1000 characters.' });
       }
 
-      const imageUrls =
-        await uploadProductImages(
-          req.files || []
-        );
+      let suppliedImageUrls = [];
+      if (req.body.imageUrls !== undefined && req.body.imageUrls !== '') {
+        try {
+          suppliedImageUrls = Array.isArray(req.body.imageUrls)
+            ? req.body.imageUrls
+            : JSON.parse(req.body.imageUrls);
+        } catch (error) {
+          return res.status(400).json({ success: false, message: 'Image links must be submitted as a valid list.' });
+        }
+      }
+      if (!Array.isArray(suppliedImageUrls)) {
+        return res.status(400).json({ success: false, message: 'Image links must be a list of URLs.' });
+      }
+      suppliedImageUrls = suppliedImageUrls.map((value) => String(value || '').trim()).filter(Boolean);
+      if (suppliedImageUrls.some((url) => !/^https?:\/\//i.test(url) || url.length > 2000)) {
+        return res.status(400).json({ success: false, message: 'Each image link must be a valid HTTP or HTTPS URL no longer than 2000 characters.' });
+      }
+      if ((req.files || []).length + suppliedImageUrls.length > MAX_PRODUCT_IMAGES) {
+        return res.status(400).json({ success: false, message: `A maximum of ${MAX_PRODUCT_IMAGES} product images is allowed across uploads and image links.` });
+      }
+
+      const uploadedImageUrls = await uploadProductImages(req.files || []);
+      const imageUrls = [...uploadedImageUrls, ...suppliedImageUrls];
 
       const product =
         await Product.create({
