@@ -24,6 +24,7 @@ const {
 const {
   sendOrderConfirmationEmail,
   sendAdminOrderNotificationEmail,
+  sendSellerPaymentNotificationEmail,
 } = require('../services/emailService');
 
 const router = express.Router();
@@ -87,9 +88,18 @@ const applySellerSettlement = async (order) => {
     };
   }
 
-  const commissionRate = Number(
-    process.env.PLATFORM_COMMISSION_RATE || 0.1
+  // The configured marketplace commission is 4% by default.
+  // Prefer integer basis points to avoid ambiguous decimal-rate settings.
+  const commissionRateBps = Number(
+    process.env.PLATFORM_COMMISSION_RATE_BPS ??
+    (process.env.PLATFORM_COMMISSION_RATE !== undefined
+      ? Number(process.env.PLATFORM_COMMISSION_RATE) * 10000
+      : 400)
   );
+  if (!Number.isInteger(commissionRateBps) || commissionRateBps < 0 || commissionRateBps > 10000) {
+    throw new Error('PLATFORM_COMMISSION_RATE_BPS must be an integer from 0 to 10000.');
+  }
+  const commissionRate = commissionRateBps / 10000;
 
   const groupedSettlements = new Map();
 
@@ -269,7 +279,11 @@ const sendPaidOrderEmails = async (order) => {
   try {
     const populatedOrder = await Order.findById(order._id)
       .populate('customer', 'name email phone')
-      .populate('items.product', 'name slug price images stock');
+      .populate({
+        path: 'items.product',
+        select: 'name slug price images stock seller',
+        populate: { path: 'seller', select: 'name email sellerProfile.storeName' },
+      });
 
     if (!populatedOrder) return;
 
@@ -298,6 +312,58 @@ const sendPaidOrderEmails = async (order) => {
         phone: populatedOrder.customerPhone || populatedOrder.customerDetails?.phone || '',
       },
     });
+
+    // Notify each seller only about their own lines. This runs after the
+    // provider-confirmed payment transition and never exposes another seller's items.
+    const sellerOrders = new Map();
+    for (const item of populatedOrder.items || []) {
+      const product = item?.product;
+      const seller = product?.seller;
+      const sellerId = seller?._id ? String(seller._id) : '';
+      const sellerEmail = String(seller?.email || '').trim().toLowerCase();
+      if (!sellerId || !sellerEmail) continue;
+      if (!sellerOrders.has(sellerId)) {
+        sellerOrders.set(sellerId, {
+          seller,
+          items: [],
+          productSubtotal: 0,
+        });
+      }
+      const sellerOrder = sellerOrders.get(sellerId);
+      const amount = roundMoney(Number(item.subtotal || 0));
+      sellerOrder.productSubtotal = roundMoney(sellerOrder.productSubtotal + amount);
+      sellerOrder.items.push({
+        name: String(product.name || item.name || 'Product'),
+        quantity: Number(item.quantity || 1),
+        subtotal: amount,
+      });
+    }
+
+    const commissionRate = Number(
+      process.env.PLATFORM_COMMISSION_RATE_BPS ??
+      (process.env.PLATFORM_COMMISSION_RATE !== undefined
+        ? Number(process.env.PLATFORM_COMMISSION_RATE) * 10000
+        : 400)
+    ) / 10000;
+
+    for (const sellerOrder of sellerOrders.values()) {
+      const gross = sellerOrder.productSubtotal;
+      const commission = roundMoney(gross * commissionRate);
+      await sendSellerPaymentNotificationEmail({
+        to: sellerOrder.seller.email,
+        sellerName: sellerOrder.seller.name || sellerOrder.seller.sellerProfile?.storeName || 'Seller',
+        storeName: sellerOrder.seller.sellerProfile?.storeName || '',
+        orderNumber: populatedOrder.orderNumber,
+        orderDate: new Date(populatedOrder.createdAt).toLocaleString('en-KE'),
+        items: sellerOrder.items,
+        grossAmount: gross,
+        commissionAmount: commission,
+        sellerNetAmount: roundMoney(gross - commission),
+        currency: String(populatedOrder.currency || 'KES').toUpperCase(),
+        paymentMethod: populatedOrder.paymentMethod || 'Payment provider',
+        settlementStatus: 'Pending delivery confirmation',
+      });
+    }
   } catch (error) {
     console.error('Paid order email notification failed:', error.message);
   }
@@ -1045,8 +1111,12 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
         )
         .populate(
           'items.product',
-          'name slug price images stock'
+          'name slug price images stock seller'
         );
+
+    if (paymentMethod === 'Wallet' && populatedOrder.paymentStatus === 'Paid') {
+      await sendPaidOrderEmails(populatedOrder);
+    }
 
         /*
 |--------------------------------------------------------------------------
@@ -1987,27 +2057,15 @@ router.patch(
             ? 'Confirmed'
             : order.status;
 
-        if (
-          isFirstPaymentConfirmation
-        ) {
-          const settlementResult =
-            await applySellerSettlement(
-              order
-            );
-
-          if (
-            settlementResult.settled
-          ) {
-            console.info(
-              'Seller settlements applied for order:',
-              order.orderNumber,
-              settlementResult.count
-            );
-          }
-        }
+        // Seller settlement is deliberately deferred until delivery is confirmed.
+        // Payment confirmation must never make seller funds withdrawable early.
       }
 
       await order.save();
+
+      if (isFirstPaymentConfirmation && paymentStatus === 'Paid') {
+        await sendPaidOrderEmails(order);
+      }
 
       const updated =
         await Order.findById(
