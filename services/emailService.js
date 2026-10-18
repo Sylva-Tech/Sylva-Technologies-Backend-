@@ -1012,7 +1012,7 @@ module.exports = {
     `Settlement status: ${settlementStatus}`,
     'Funds remain held until delivery confirmation and settlement eligibility.',
     'Sylva Technologies - support@sylvatechnologies.co.ke',
-  ].join('\\n');
+  ].join('\n');
   return sendMail({
     to,
     subject: `Payment received for order ${orderNumber} - seller settlement pending`,
