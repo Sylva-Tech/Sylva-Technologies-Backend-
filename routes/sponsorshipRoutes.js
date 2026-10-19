@@ -54,14 +54,14 @@ const mpesaTimestamp = () => {
 
 const expirePromotions = async (sellerId = null) => {
   const filter = {
-    seller: { $ne: null },
+    seller: mongoose.trusted({ $ne: null }),
     featured: true,
-    featuredExpiresAt: { $ne: null, $lte: new Date() },
+    featuredExpiresAt: mongoose.trusted({ $ne: null, $lte: new Date() }),
   };
   if (sellerId) filter.seller = sellerId;
   await Product.updateMany(filter, { $set: { featured: false, sponsorshipStatus: 'expired' } });
   await SellerProductSponsorship.updateMany(
-    { status: 'active', expiresAt: { $ne: null, $lte: new Date() }, ...(sellerId ? { seller: sellerId } : {}) },
+    { status: 'active', expiresAt: mongoose.trusted({ $ne: null, $lte: new Date() }), ...(sellerId ? { seller: sellerId } : {}) },
     { $set: { status: 'expired' } },
   );
 };
