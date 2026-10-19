@@ -13,7 +13,7 @@ const sellerProductSponsorshipSchema = new mongoose.Schema({
   status: { type: String, enum: ['pending', 'active', 'failed', 'expired'], default: 'pending', index: true },
   phoneNumber: { type: String, default: '', trim: true },
   merchantRequestId: { type: String, default: '', index: true },
-  checkoutRequestId: { type: String, default: '', index: true },
+  checkoutRequestId: { type: String, default: '' },
   mpesaReceiptNumber: { type: String, default: '', trim: true },
   providerResultCode: { type: String, default: '' },
   failureReason: { type: String, default: '', maxlength: 500 },
