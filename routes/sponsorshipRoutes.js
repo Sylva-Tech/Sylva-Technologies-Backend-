@@ -251,7 +251,7 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
       TransactionType: transactionType,
       Amount: feeKes,
       PartyA: phone,
-      PartyB,
+      PartyB: partyB,
       PhoneNumber: phone,
       CallBackURL: callbackUrl,
       AccountReference: 'SYLVA-FEAT',
