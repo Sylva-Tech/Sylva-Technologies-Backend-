@@ -271,10 +271,26 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
     sponsorship.merchantRequestId = String(response.data.MerchantRequestID || '');
     await sponsorship.save();
 
+    const mpesaEnvironment = String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase();
+    const providerMessage = String(response.data?.CustomerMessage || response.data?.ResponseDescription || '').trim();
+    const destinationHint = 'ending ' + phone.slice(-4);
+    console.info('[Seller sponsorship STK]', JSON.stringify({
+      environment: mpesaEnvironment,
+      responseCode: String(response.data?.ResponseCode ?? ''),
+      responseDescription: String(response.data?.ResponseDescription || ''),
+      customerMessage: providerMessage,
+      checkoutRequestId: sponsorship.checkoutRequestId,
+      phoneLast4: phone.slice(-4),
+      amount: feeKes,
+      transactionType,
+    }));
+    const message = mpesaEnvironment === 'sandbox'
+      ? 'Safaricom sandbox accepted the test request, but sandbox does not send a real M-Pesa prompt to a live phone. Set MPESA_ENV=production in Render and verify your live Daraja credentials before retrying.'
+      : `Safaricom accepted the STK request for the number ${destinationHint}. ${providerMessage || 'If no prompt arrives, confirm the number is M-Pesa registered and check Render logs for the Safaricom response.'} Payment is not complete until verified.`;
     return res.status(202).json({
       success: true,
-      message: `M-Pesa prompt sent. Approve KSh ${feeKes} on your phone. Featured status begins only after verified payment.`,
-      data: { sponsorshipId: String(sponsorship._id), status: 'pending', checkoutRequestId: sponsorship.checkoutRequestId, amount: feeKes, durationDays: durationDays },
+      message,
+      data: { sponsorshipId: String(sponsorship._id), status: 'pending', checkoutRequestId: sponsorship.checkoutRequestId, amount: feeKes, durationDays: durationDays, environment: mpesaEnvironment, providerMessage, phoneLast4: phone.slice(-4) },
     });
   } catch (error) {
     if (sponsorship && sponsorship.status === 'pending' && !sponsorship.checkoutRequestId && !stkRequestStarted) {
