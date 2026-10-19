@@ -9,8 +9,14 @@ const SellerProductSponsorship = require('../models/SellerProductSponsorship');
 const { protect, approvedSellerOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
-const FEE_KES = 200;
-const DURATION_DAYS = 7;
+const SPONSORSHIP_PLANS = Object.freeze({
+  '1-day': { amount: 100, durationDays: 1, label: '1 day' },
+  '7-days': { amount: 400, durationDays: 7, label: '7 days' },
+  '30-days': { amount: 900, durationDays: 30, label: '1 month' },
+  '90-days': { amount: 2400, durationDays: 90, label: '3 months' },
+  '180-days': { amount: 4200, durationDays: 180, label: '6 months' },
+  '365-days': { amount: 7500, durationDays: 365, label: '12 months' },
+});
 
 const normalizePhone = (value) => {
   let phone = String(value || '').replace(/[\\s()+-]/g, '');
@@ -62,7 +68,7 @@ const expirePromotions = async (sellerId = null) => {
 
 const activate = async (sponsorship, receipt = '') => {
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + DURATION_DAYS * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(now.getTime() + Number(sponsorship.durationDays) * 24 * 60 * 60 * 1000);
   const product = await Product.findOne({
     _id: sponsorship.product,
     seller: sponsorship.seller,
@@ -111,6 +117,11 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
       return res.status(409).json({ success: false, message: 'This product already has an active Featured promotion.', data: { expiresAt: product.featuredExpiresAt } });
     }
 
+    const planId = String(req.body?.planId || '7-days');
+    const plan = SPONSORSHIP_PLANS[planId];
+    if (!plan) return res.status(400).json({ success: false, message: 'Choose a valid sponsorship package.' });
+    const { amount: feeKes, durationDays } = plan;
+
     const paymentMethod = String(req.body?.paymentMethod || '').toLowerCase();
     if (!['wallet', 'mpesa'].includes(paymentMethod)) {
       return res.status(400).json({ success: false, message: 'Choose wallet or M-Pesa as the payment method.' });
@@ -137,26 +148,26 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
         idempotencyKey: idempotencyKey || 'sponsor-wallet-' + sponsorId.toString(),
         product: product._id,
         seller: req.user._id,
-        amount: FEE_KES,
+        amount: feeKes,
         currency: 'KES',
-        durationDays: DURATION_DAYS,
+        durationDays: durationDays,
         paymentMethod: 'wallet',
         status: 'pending',
       });
 
       const now = new Date();
       const user = await User.findOneAndUpdate(
-        { _id: req.user._id, sellerStatus: 'approved', 'wallet.availableBalance': { $gte: FEE_KES } },
+        { _id: req.user._id, sellerStatus: 'approved', 'wallet.availableBalance': { $gte: feeKes } },
         {
-          $inc: { 'wallet.availableBalance': -FEE_KES },
+          $inc: { 'wallet.availableBalance': -feeKes },
           $set: { 'wallet.lastUpdatedAt': now },
           $push: {
             'wallet.transactions': {
               type: 'debit',
-              amount: FEE_KES,
+              amount: feeKes,
               category: 'product_sponsorship',
               status: 'completed',
-              description: '7-day Featured promotion: ' + product.name,
+              description: `${durationDays}-day Featured promotion: ${product.name}`,
               reference: 'SPON-' + String(sponsorship._id).slice(-8).toUpperCase(),
               createdAt: now,
               updatedAt: now,
@@ -172,17 +183,17 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
         sponsorship.status = 'failed';
         sponsorship.failureReason = 'Insufficient available wallet balance.';
         await sponsorship.save();
-        return res.status(400).json({ success: false, message: 'Your available wallet balance is below KSh 200. Deposit funds or choose M-Pesa.' });
+        return res.status(400).json({ success: false, message: 'Your available wallet balance is below KSh ${feeKes}. Deposit funds or choose M-Pesa.' });
       }
 
       const activated = await activate(sponsorship);
       if (!activated) {
         const refundAt = new Date();
         await User.updateOne({ _id: req.user._id }, {
-          $inc: { 'wallet.availableBalance': FEE_KES },
+          $inc: { 'wallet.availableBalance': feeKes },
           $set: { 'wallet.lastUpdatedAt': refundAt },
           $push: { 'wallet.transactions': {
-            type: 'credit', amount: FEE_KES, category: 'product_sponsorship_refund',
+            type: 'credit', amount: feeKes, category: 'product_sponsorship_refund',
             status: 'completed', description: 'Refund for sponsorship that could not be activated.',
             reference: 'SPON-REFUND-' + String(sponsorship._id).slice(-8).toUpperCase(),
             createdAt: refundAt, updatedAt: refundAt, processedAt: refundAt,
@@ -193,7 +204,7 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
       }
       return res.status(201).json({
         success: true,
-        message: 'Payment confirmed. Your product is Featured for 7 days.',
+        message: `Payment confirmed. Your product is Featured for ${durationDays} day(s).`,
         data: { sponsorshipId: String(activated.sponsorship._id), status: 'active', expiresAt: activated.sponsorship.expiresAt },
       });
     }
@@ -217,9 +228,9 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
       idempotencyKey: idempotencyKey || 'sponsor-mpesa-' + new mongoose.Types.ObjectId().toString(),
       product: product._id,
       seller: req.user._id,
-      amount: FEE_KES,
+      amount: feeKes,
       currency: 'KES',
-      durationDays: DURATION_DAYS,
+      durationDays: durationDays,
       paymentMethod: 'mpesa',
       phoneNumber: phone,
       status: 'pending',
@@ -238,7 +249,7 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
       Password: password,
       Timestamp: timestamp,
       TransactionType: transactionType,
-      Amount: FEE_KES,
+      Amount: feeKes,
       PartyA: phone,
       PartyB,
       PhoneNumber: phone,
@@ -262,8 +273,8 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
 
     return res.status(202).json({
       success: true,
-      message: 'M-Pesa prompt sent. Approve KSh 200 on your phone. Featured status begins only after verified payment.',
-      data: { sponsorshipId: String(sponsorship._id), status: 'pending', checkoutRequestId: sponsorship.checkoutRequestId, amount: FEE_KES, durationDays: DURATION_DAYS },
+      message: `M-Pesa prompt sent. Approve KSh ${feeKes} on your phone. Featured status begins only after verified payment.`,
+      data: { sponsorshipId: String(sponsorship._id), status: 'pending', checkoutRequestId: sponsorship.checkoutRequestId, amount: feeKes, durationDays: durationDays },
     });
   } catch (error) {
     if (sponsorship && sponsorship.status === 'pending' && !sponsorship.checkoutRequestId && !stkRequestStarted) {
@@ -340,7 +351,7 @@ router.post('/mpesa/callback', async (req, res) => {
     const paidAmount = Number(field('Amount'));
     const receipt = String(field('MpesaReceiptNumber') || '');
     const paidPhone = String(field('PhoneNumber') || '');
-    if (!receipt || paidAmount !== FEE_KES || !paidPhone ||
+    if (!receipt || paidAmount !== Number(sponsorship.amount) || !paidPhone ||
         normalizePhone(paidPhone) !== normalizePhone(sponsorship.phoneNumber)) {
       sponsorship.providerResultCode = 'CALLBACK_VALIDATION_FAILED';
       sponsorship.failureReason = 'Payment amount, receipt or phone did not match; administrator review is required.';
@@ -366,7 +377,7 @@ router.post('/mpesa/callback', async (req, res) => {
     sponsorship.mpesaReceiptNumber = receipt;
     const activated = await activate(sponsorship, receipt);
     if (!activated) return res.json({ ResultCode: 0, ResultDesc: 'Payment recorded for review; product was not activated.' });
-    return res.json({ ResultCode: 0, ResultDesc: 'Sponsorship activated for 7 days.' });
+    return res.json({ ResultCode: 0, ResultDesc: `Sponsorship activated for ${sponsorship.durationDays} days.` });
   } catch (error) {
     console.error('Sponsorship M-Pesa callback error:', error.message);
     return res.status(503).json({ ResultCode: 1, ResultDesc: 'Unable to verify sponsorship payment; retry callback.' });
