@@ -183,7 +183,7 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
         sponsorship.status = 'failed';
         sponsorship.failureReason = 'Insufficient available wallet balance.';
         await sponsorship.save();
-        return res.status(400).json({ success: false, message: 'Your available wallet balance is below KSh ${feeKes}. Deposit funds or choose M-Pesa.' });
+        return res.status(400).json({ success: false, message: `Your available wallet balance is below KSh ${feeKes}. Deposit funds or choose M-Pesa.` });
       }
 
       const activated = await activate(sponsorship);
