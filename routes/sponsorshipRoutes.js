@@ -19,10 +19,10 @@ const SPONSORSHIP_PLANS = Object.freeze({
 });
 
 const normalizePhone = (value) => {
-  let phone = String(value || '').replace(/[\\s()+-]/g, '');
+  let phone = String(value || '').replace(/[\s()+-]/g, '');
   if (phone.startsWith('0')) phone = '254' + phone.slice(1);
   if (phone.startsWith('7') || phone.startsWith('1')) phone = '254' + phone;
-  return /^254(?:7|1)\\d{8}$/.test(phone) ? phone : '';
+  return /^254(?:7|1)\d{8}$/.test(phone) ? phone : '';
 };
 
 const mpesaHost = () => {
@@ -222,7 +222,7 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
     const till = String(process.env.MPESA_TILL_NUMBER || '').trim();
     const transactionType = String(process.env.MPESA_TRANSACTION_TYPE || (till ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline')).trim();
     if (!['CustomerPayBillOnline', 'CustomerBuyGoodsOnline'].includes(transactionType)) return res.status(503).json({ success: false, message: 'M-Pesa transaction type is not configured correctly.' });
-    if (transactionType === 'CustomerBuyGoodsOnline' && !/^\\d{5,10}$/.test(till)) return res.status(503).json({ success: false, message: 'M-Pesa Till configuration is incomplete.' });
+    if (transactionType === 'CustomerBuyGoodsOnline' && !/^\d{5,10}$/.test(till)) return res.status(503).json({ success: false, message: 'M-Pesa Till configuration is incomplete.' });
 
     sponsorship = await SellerProductSponsorship.create({
       idempotencyKey: idempotencyKey || 'sponsor-mpesa-' + new mongoose.Types.ObjectId().toString(),
