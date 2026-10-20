@@ -4,6 +4,7 @@ const axios = require('axios');
 
 const User = require('../models/User');
 const AdminWallet = require('../models/AdminWallet');
+const { sendMail } = require('../services/emailService');
 
 const {
   protect,
@@ -2471,6 +2472,36 @@ router.post('/topup/stk/callback', async (req, res) => {
         };
     const update = await (isPlatformDeposit ? AdminWallet : User).updateOne(ownerFilter, successUpdate);
     if (!update.modifiedCount) return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
+
+    // Send a receipt only after the verified callback has actually credited the wallet.
+    // Email failure must not cause Safaricom to retry and risk duplicate processing.
+    try {
+      const recipientUserId = isPlatformDeposit
+        ? tx.metadata?.initiatedBy
+        : account._id;
+      const recipient = recipientUserId ? await User.findById(recipientUserId).select('name email role') : null;
+      if (recipient?.email) {
+        const accountName = isPlatformDeposit ? 'Admin platform wallet' : `${recipient.role || 'user'} wallet`;
+        const result = await sendMail({
+          to: recipient.email,
+          subject: `Sylva wallet deposit confirmed - KSh ${paidAmount}`,
+          sender: 'payment',
+          text: `Hello ${recipient.name || 'there'}, your KSh ${paidAmount} wallet deposit has been verified by Safaricom and credited to your ${accountName}. M-Pesa receipt: ${receipt}. Reference: ${tx.reference || tx.metadata?.internalReference || 'N/A'}. Your updated wallet balance is available in your Sylva account.`,
+          html: `<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:24px;color:#172033"><h2 style="color:#16803c">Wallet deposit confirmed</h2><p>Hello ${String(recipient.name || 'there').replace(/[&<>"]/g, '')},</p><p>Your M-Pesa payment has been verified and credited to your Sylva Technologies wallet.</p><p><strong>Amount:</strong> KSh ${paidAmount.toLocaleString('en-KE')}<br/><strong>M-Pesa receipt:</strong> ${receipt}<br/><strong>Reference:</strong> ${String(tx.reference || tx.metadata?.internalReference || 'N/A').replace(/[&<>"]/g, '')}</p><p>Sign in to Sylva Technologies to view your updated wallet balance and transaction history.</p><p>Sylva Technologies<br/>Empowering Your Digital Life</p></div>`,
+        });
+        if (!result?.success) console.error('Wallet deposit confirmation email was not sent:', result?.message || 'Unknown email error');
+      } else {
+        console.warn('Wallet deposit confirmed, but no recipient email was found.', { checkoutRequestID });
+      }
+    } catch (emailError) {
+      console.error('Wallet deposit confirmation email failed:', emailError.message);
+    }
+    console.info('M-Pesa wallet deposit credited after verification.', {
+      checkoutRequestID,
+      walletType: isPlatformDeposit ? 'platform' : 'user',
+      amount: paidAmount,
+      receipt,
+    });
     return res.json({ ResultCode: 0, ResultDesc: 'Deposit confirmed.' });
   } catch (error) {
     console.error('M-Pesa wallet callback error:', error.message);
