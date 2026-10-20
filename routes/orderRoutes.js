@@ -273,14 +273,17 @@ const sendPaidOrderEmails = async (order) => {
 
     if (!populatedOrder) return;
 
-    const email = populatedOrder.customerEmail || populatedOrder.customerDetails?.email;
+    const email = populatedOrder.customerEmail || populatedOrder.customerDetails?.email || populatedOrder.customer?.email;
     if (email) {
-      await sendOrderConfirmationEmail({
+      const emailResult = await sendOrderConfirmationEmail({
         to: email,
-        customerName: populatedOrder.customerName || populatedOrder.customerDetails?.fullName || 'Customer',
+        customerName: populatedOrder.customerName || populatedOrder.customerDetails?.fullName || populatedOrder.customer?.name || 'Customer',
         order: populatedOrder.toObject(),
         orderDate: new Date(populatedOrder.createdAt).toLocaleString('en-KE'),
       });
+      if (!emailResult?.success) console.error('Customer payment confirmation email was not sent:', emailResult?.message || 'Unknown email error', { orderNumber: populatedOrder.orderNumber });
+    } else {
+      console.warn('Paid order has no customer email address; customer receipt was skipped.', { orderNumber: populatedOrder.orderNumber });
     }
 
     const operationsRecipients = [
@@ -289,15 +292,16 @@ const sendPaidOrderEmails = async (order) => {
       process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke',
     ];
     const uniqueRecipients = [...new Set(operationsRecipients.map((address) => String(address || '').trim().toLowerCase()).filter(Boolean))];
-    await sendAdminOrderNotificationEmail({
+    const adminEmailResult = await sendAdminOrderNotificationEmail({
       to: uniqueRecipients,
       order: populatedOrder.toObject(),
       customer: {
         name: populatedOrder.customerName || populatedOrder.customerDetails?.fullName || 'Customer',
         email: populatedOrder.customerEmail || populatedOrder.customerDetails?.email || '',
-        phone: populatedOrder.customerPhone || populatedOrder.customerDetails?.phone || '',
+        phone: populatedOrder.customerPhone || populatedOrder.customerDetails?.phone || populatedOrder.customer?.phone || '',
       },
     });
+    if (!adminEmailResult?.success) console.error('Admin order/payment notification email was not sent:', adminEmailResult?.message || 'Unknown email error', { orderNumber: populatedOrder.orderNumber });
   } catch (error) {
     console.error('Paid order email notification failed:', error.message);
   }
