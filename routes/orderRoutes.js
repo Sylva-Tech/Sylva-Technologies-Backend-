@@ -346,7 +346,7 @@ const sendSellerOrderEmails = async (order) => {
       const addressLines = [
         details.fullName, details.phone, details.email,
         details.country, details.county, details.subCounty, details.ward,
-        details.deliveryLocation, details.address, details.notes,
+        details.deliveryLocation, details.address, details.notes || populated.notes,
       ].filter(Boolean);
       const safeOrderNumber = escapeEmailHtml(populated.orderNumber);
       const safePaymentStatus = escapeEmailHtml(populated.paymentStatus || 'Pending');
@@ -603,8 +603,10 @@ router.get('/seller/my-orders', protect, async (req, res) => {
       if (!sellerItems.length) continue;
       const sellerGross = roundMoney(sellerItems.reduce((sum, item) => sum + Number(item.subtotal || 0), 0));
       const sellerCommission = roundMoney(sellerGross * commissionRate);
+      const { idNumber: _privateIdNumber, customerReference: _privateCustomerReference, ...safeDeliveryDetails } = order.customerDetails || {};
       sellerOrders.push({
         ...order,
+        customerDetails: safeDeliveryDetails,
         items: sellerItems,
         sellerGross,
         sellerCommission,
