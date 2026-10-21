@@ -4,6 +4,7 @@ const axios = require('axios');
 
 const User = require('../models/User');
 const Order = require('../models/Order');
+const Product = require('../models/Product');
 const AdminWallet = require('../models/AdminWallet');
 const { sendMail } = require('../services/emailService');
 
@@ -2522,8 +2523,23 @@ router.get('/admin/order-payments', protect, adminOnly, requireVerified, async (
       country: seller.sellerProfile?.country || 'KE', sellerStatus: seller.sellerStatus || 'pending', paidOrders: 0, deliveredOrders: 0,
       paidItemValueKES: 0, estimatedNetAwaitingSettlementKES: 0, deliveredNetKES: 0, creditedNetKES: 0, creditedNetUSD: 0,
     }]));
-    const orders = await Order.find({ paymentStatus: 'Paid', status: { $ne: 'Cancelled' } }).select('orderNumber status paymentStatus items createdAt')
-      .populate({ path: 'items.product', select: 'seller', populate: { path: 'seller', select: '_id' } }).sort({ createdAt: -1 }).lean();
+    const orders = await Order.find(mongoose.trusted({ paymentStatus: 'Paid', status: mongoose.trusted({ $ne: 'Cancelled' }) }))
+      .select('orderNumber status paymentStatus items createdAt')
+      .sort({ createdAt: -1 }).lean();
+
+    // Resolve product ownership in a separate query rather than nested population.
+    // This is resilient to deleted products and avoids nested-populate edge cases.
+    const productIds = [...new Set(orders.flatMap((order) => (order.items || [])
+      .map((item) => item.product ? String(item.product) : '')
+      .filter(Boolean)))];
+    const products = productIds.length
+      ? await Product.find(mongoose.trusted({ _id: mongoose.trusted({ $in: productIds }) }))
+          .select('_id seller').lean()
+      : [];
+    const sellerByProductId = new Map(products.map((product) => [
+      String(product._id),
+      product.seller ? String(product.seller) : '',
+    ]));
     const transactionsBySeller = new Map(sellers.map((seller) => [String(seller._id), {
       kes: Array.isArray(seller.wallet?.transactions) ? seller.wallet.transactions : [],
       usd: Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [],
@@ -2536,9 +2552,8 @@ router.get('/admin/order-payments', protect, adminOnly, requireVerified, async (
       const delivered = String(order.status || '').toLowerCase() === 'delivered';
       const sellerItemsById = new Map();
       for (const item of order.items || []) {
-        const sellerId = item.product?.seller?._id || item.product?.seller;
-        if (!sellerId) continue;
-        const key = String(sellerId);
+        const key = item.product ? sellerByProductId.get(String(item.product)) : '';
+        if (!key) continue;
         if (!sellerById.has(key)) continue;
         const list = sellerItemsById.get(key) || []; list.push(item); sellerItemsById.set(key, list);
       }
@@ -2563,7 +2578,7 @@ router.get('/admin/order-payments', protect, adminOnly, requireVerified, async (
     }, { paidItemValueKES: 0, estimatedNetAwaitingSettlementKES: 0, deliveredNetKES: 0, creditedNetKES: 0, creditedNetUSD: 0 });
     return res.json({ success: true, count: data.length, totals, data });
   } catch (error) {
-    console.error('Admin order payments error:', error.message);
+    console.error('Admin order payments error:', error.stack || error.message);
     return res.status(500).json({ success: false, message: 'Unable to load seller order-payment figures.' });
   }
 });
