@@ -26,6 +26,7 @@ const {
   sendAdminOrderNotificationEmail,
   sendOrderStatusUpdateEmail,
   sendSalesNotificationEmail,
+  sendMail,
 } = require('../services/emailService');
 
 const router = express.Router();
@@ -309,6 +310,74 @@ const sendPaidOrderEmails = async (order) => {
   }
 };
 
+const escapeEmailHtml = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+const sendSellerOrderEmails = async (order) => {
+  try {
+    const populated = await Order.findById(order._id).populate({
+      path: 'items.product',
+      select: 'name seller',
+      populate: { path: 'seller', select: 'name email sellerProfile.storeEmail sellerProfile.storeName' },
+    });
+    if (!populated) return;
+
+    const groups = new Map();
+    for (const item of populated.items || []) {
+      const product = item.product;
+      const seller = product?.seller;
+      if (!seller?._id) continue;
+      const sellerId = String(seller._id);
+      if (!groups.has(sellerId)) groups.set(sellerId, { seller, items: [] });
+      groups.get(sellerId).items.push(item);
+    }
+
+    for (const { seller, items } of groups.values()) {
+      const recipient = String(seller.sellerProfile?.storeEmail || seller.email || '').trim();
+      if (!recipient) {
+        console.warn('[Seller order email] Seller has no email address:', { orderNumber: populated.orderNumber, sellerId: String(seller._id) });
+        continue;
+      }
+
+      const itemRows = items.map((item) => '<tr><td style="padding:9px;border-bottom:1px solid #e5e7eb">' +
+        escapeEmailHtml(item.name || item.product?.name || 'Product') + '</td><td style="padding:9px;border-bottom:1px solid #e5e7eb;text-align:center">' +
+        Number(item.quantity || 0) + '</td><td style="padding:9px;border-bottom:1px solid #e5e7eb;text-align:right">KSh ' +
+        Number(item.subtotal || 0).toLocaleString('en-KE') + '</td></tr>').join('');
+      const details = populated.customerDetails || {};
+      const addressLines = [
+        details.fullName, details.phone, details.email,
+        details.country, details.county, details.subCounty, details.ward,
+        details.deliveryLocation, details.address, details.notes,
+      ].filter(Boolean);
+      const safeOrderNumber = escapeEmailHtml(populated.orderNumber);
+      const safePaymentStatus = escapeEmailHtml(populated.paymentStatus || 'Pending');
+      const safePaymentMethod = escapeEmailHtml(populated.paymentMethod || 'Not specified');
+      const deliveryHtml = addressLines.map((line) => '<div style="padding:3px 0">' + escapeEmailHtml(line) + '</div>').join('');
+      const sellerGross = items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+      const emailResult = await sendMail({
+        to: recipient,
+        sender: 'sellers',
+        subject: 'New customer order ' + populated.orderNumber + ' — Sylva Technologies',
+        html: '<div style="font-family:Arial,sans-serif;color:#17211b;max-width:720px;margin:auto;padding:24px">' +
+          '<h2 style="color:#166534">You have received a new order</h2><p>Hello ' + escapeEmailHtml(seller.sellerProfile?.storeName || seller.name || 'Seller') +
+          ', a customer order includes products from your store.</p><p><b>Order:</b> ' + safeOrderNumber + '<br><b>Order status:</b> ' +
+          escapeEmailHtml(populated.status || 'Pending') + '<br><b>Payment status:</b> ' + safePaymentStatus + '<br><b>Payment method:</b> ' + safePaymentMethod + '</p>' +
+          '<h3>Items in your store</h3><table style="border-collapse:collapse;width:100%"><thead><tr><th align="left" style="padding:9px;border-bottom:2px solid #ddd">Product</th><th style="padding:9px;border-bottom:2px solid #ddd">Qty</th><th align="right" style="padding:9px;border-bottom:2px solid #ddd">Item total</th></tr></thead><tbody>' +
+          itemRows + '</tbody></table><p><b>Gross value of your items:</b> KSh ' + sellerGross.toLocaleString('en-KE') +
+          '</p><h3>Customer delivery note</h3><div style="background:#f8faf8;border:1px solid #dce5dd;border-radius:8px;padding:14px">' +
+          (deliveryHtml || 'No delivery information provided.') + '</div><p>Review this order in your Sylva Seller Centre. Funds are credited to your wallet according to the marketplace settlement and delivery rules.</p>' +
+          '<p><a href="https://www.sylvatechnologies.co.ke/seller/dashboard" style="display:inline-block;background:#166534;color:#fff;padding:12px 18px;text-decoration:none;border-radius:6px">Open Seller Dashboard</a></p></div>',
+        text: 'New order ' + populated.orderNumber + '. Order status: ' + (populated.status || 'Pending') +
+          '. Payment status: ' + (populated.paymentStatus || 'Pending') + '. Payment method: ' + (populated.paymentMethod || '') +
+          '. Your item gross: KSh ' + sellerGross + '. Customer delivery details: ' + addressLines.join(', ') +
+          '. Review it at https://www.sylvatechnologies.co.ke/seller/dashboard',
+      });
+      if (!emailResult?.success) console.error('[Seller order email] Failed:', emailResult?.message || 'Unknown email error', { orderNumber: populated.orderNumber, sellerId: String(seller._id) });
+    }
+  } catch (error) {
+    console.error('[Seller order email] Notification failed:', error.message, { orderNumber: order?.orderNumber });
+  }
+};
+
 const validateSuccessfulTransaction = (transaction, order) => {
   if (!transaction || transaction.status !== 'success') {
     throw new Error('Paystack has not confirmed a successful payment.');
@@ -496,6 +565,57 @@ router.get('/my-orders', protect, async (req, res) => {
       success: false,
       message: 'Unable to retrieve your orders.',
     });
+  }
+});
+
+/*
+|--------------------------------------------------------------------------
+| GET SELLER ORDERS
+|--------------------------------------------------------------------------
+| Return only line items owned by the authenticated seller. Delivery details
+| are provided so the seller can fulfil their own orders.
+|--------------------------------------------------------------------------
+*/
+router.get('/seller/my-orders', protect, async (req, res) => {
+  try {
+    if (req.user?.role !== 'seller') {
+      return res.status(403).json({ success: false, message: 'Seller access is required.' });
+    }
+    const orders = await Order.find({ 'items.0': { $exists: true } })
+      .populate({
+        path: 'items.product',
+        select: 'name seller images',
+        populate: { path: 'seller', select: '_id' },
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const sellerId = String(req.user._id);
+    const commissionRate = Math.min(1, Math.max(0, Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.04)));
+    const sellerOrders = [];
+    for (const order of orders) {
+      const sellerItems = (order.items || []).filter((item) =>
+        item.product && item.product.seller && String(item.product.seller._id || item.product.seller) === sellerId
+      ).map((item) => ({
+        ...item,
+        product: item.product ? { _id: item.product._id, name: item.product.name, images: item.product.images || [] } : null,
+      }));
+      if (!sellerItems.length) continue;
+      const sellerGross = roundMoney(sellerItems.reduce((sum, item) => sum + Number(item.subtotal || 0), 0));
+      const sellerCommission = roundMoney(sellerGross * commissionRate);
+      sellerOrders.push({
+        ...order,
+        items: sellerItems,
+        sellerGross,
+        sellerCommission,
+        sellerNet: roundMoney(sellerGross - sellerCommission),
+        sellerCurrency: String(order.currency || 'KES').toUpperCase(),
+      });
+    }
+    return res.json({ success: true, data: sellerOrders });
+  } catch (error) {
+    console.error('Get seller orders error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to retrieve seller orders.' });
   }
 });
 
@@ -1324,6 +1444,9 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
     } catch (notificationError) {
       console.error('[Sales email] new order notification threw an error:', notificationError.message, { orderNumber: order.orderNumber });
     }
+
+    // Notify every seller whose product is included in this order, independently of payment method.
+    await sendSellerOrderEmails(populatedOrder);
 
     // Wallet orders are already paid inside the order transaction. Send the paid
     // receipt and payment alert here; Paystack and M-Pesa notify from verification callbacks.
