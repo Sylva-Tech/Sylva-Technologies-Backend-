@@ -2511,6 +2511,51 @@ router.post('/topup/stk/callback', async (req, res) => {
   }
 });
 
+/* Admin-only per-seller balances so finance can see amounts currently payable. */
+router.get('/admin/seller-balances', protect, adminOnly, requireVerified, async (req, res) => {
+  try {
+    const sellers = await User.find({ role: 'seller' })
+      .select('name email phone sellerStatus storeStatus sellerProfile.storeName sellerProfile.country wallet.availableBalance wallet.pendingBalance wallet.transactions usdWallet.availableBalance usdWallet.pendingBalance usdWallet.transactions')
+      .lean();
+
+    const data = sellers.map((seller) => {
+      const kesTransactions = Array.isArray(seller.wallet?.transactions) ? seller.wallet.transactions : [];
+      const usdTransactions = Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [];
+      const pendingKesPayout = kesTransactions.find((tx) => tx.category === 'payout_request' && tx.status === 'pending');
+      const pendingUsdPayout = usdTransactions.find((tx) => tx.category === 'payout_request' && tx.status === 'pending');
+      return {
+        _id: String(seller._id),
+        name: seller.name || '',
+        email: seller.email || '',
+        phone: seller.phone || '',
+        storeName: seller.sellerProfile?.storeName || '',
+        country: seller.sellerProfile?.country || 'KE',
+        sellerStatus: seller.sellerStatus || 'pending',
+        storeStatus: seller.storeStatus || 'inactive',
+        kesAvailable: roundMoney(seller.wallet?.availableBalance || 0),
+        kesPending: roundMoney(seller.wallet?.pendingBalance || 0),
+        usdAvailable: roundMoney(seller.usdWallet?.availableBalance || 0),
+        usdPending: roundMoney(seller.usdWallet?.pendingBalance || 0),
+        pendingKesPayout: pendingKesPayout ? {
+          amount: roundMoney(pendingKesPayout.amount || 0),
+          reference: pendingKesPayout.reference || '',
+          createdAt: pendingKesPayout.createdAt || null,
+        } : null,
+        pendingUsdPayout: pendingUsdPayout ? {
+          amount: roundMoney(pendingUsdPayout.amount || 0),
+          reference: pendingUsdPayout.reference || '',
+          createdAt: pendingUsdPayout.createdAt || null,
+        } : null,
+      };
+    });
+
+    return res.json({ success: true, count: data.length, data });
+  } catch (error) {
+    console.error('Admin seller balance list error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to load seller payable balances.' });
+  }
+});
+
 /* Admin-only overview. Seller wallet balances are liabilities, not company profit. */
 router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, res) => {
   try {
