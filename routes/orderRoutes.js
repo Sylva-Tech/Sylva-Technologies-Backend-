@@ -90,9 +90,10 @@ const applySellerSettlement = async (order) => {
     };
   }
 
-  const commissionRate = Number(
-    process.env.PLATFORM_COMMISSION_RATE ?? 0.04
-  );
+  const configuredCommission = Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.04);
+  const commissionRate = Number.isFinite(configuredCommission)
+    ? Math.min(1, Math.max(0, configuredCommission > 1 ? configuredCommission / 100 : configuredCommission))
+    : 0.04;
 
   const groupedSettlements = new Map();
 
@@ -599,7 +600,7 @@ router.get('/seller/my-orders', protect, async (req, res) => {
     
     const configuredCommission = Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.04);
     const commissionRate = Number.isFinite(configuredCommission)
-      ? Math.min(1, Math.max(0, configuredCommission))
+      ? Math.min(1, Math.max(0, configuredCommission > 1 ? configuredCommission / 100 : configuredCommission))
       : 0.04;
     const sellerAccount = await User.findById(sellerId)
       .select('sellerProfile.country wallet.transactions usdWallet.transactions')
