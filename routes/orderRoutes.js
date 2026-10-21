@@ -1970,7 +1970,7 @@ router.patch(
           '<h2 style="color:#166534">Order status updated</h2><p>Order <b>' + safeStatusOrderNumber + '</b> changed from <b>' +
           safePreviousStatus + '</b> to <b>' + safeCurrentStatus + '</b>.</p><p>Customer: ' +
           String(updated.customerName || updated.customerDetails?.fullName || updated.customer?.name || 'Customer').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') +
-          '</p><p>Payment status: ' + String(updated.paymentStatus || 'Pending').replace(/&/g, '&amp;').replace(/</g, '&amp;').replace(/>/g, '&gt;') +
+          '</p><p>Payment status: ' + String(updated.paymentStatus || 'Pending').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') +
           '</p></div>',
         text: 'Order ' + updated.orderNumber + ' status changed from ' + previousStatus + ' to ' + status +
           '. Customer: ' + (updated.customerName || updated.customerDetails?.fullName || updated.customer?.name || 'Customer') +
