@@ -596,12 +596,20 @@ router.get('/seller/my-orders', protect, async (req, res) => {
       ? Math.min(1, Math.max(0, configuredCommission))
       : 0.04;
     const sellerAccount = await User.findById(sellerId)
-      .select('sellerProfile.country wallet.transactions.reference usdWallet.transactions.reference')
+      .select('sellerProfile.country wallet.transactions usdWallet.transactions')
       .lean();
-    const settlementReferences = new Set([
-      ...(sellerAccount?.wallet?.transactions || []),
-      ...(sellerAccount?.usdWallet?.transactions || []),
-    ].map((transaction) => String(transaction?.reference || '')).filter(Boolean));
+    const sellerWalletTransactions = sellerAccount?.wallet?.transactions || [];
+    const sellerUsdTransactions = sellerAccount?.usdWallet?.transactions || [];
+    const settlementTransactions = new Map(
+      [...sellerWalletTransactions, ...sellerUsdTransactions]
+        .filter((transaction) => transaction?.reference)
+        .map((transaction) => [String(transaction.reference), transaction])
+    );
+    const usdSettlementReferences = new Set(
+      sellerUsdTransactions
+        .filter((transaction) => transaction?.reference && transaction?.category === 'order_settlement')
+        .map((transaction) => String(transaction.reference))
+    );
     const sellerCountry = String(sellerAccount?.sellerProfile?.country || 'KE').toUpperCase();
     const internationalSeller = !['KE', 'KENYA'].includes(sellerCountry);
     const kesPerUsd = Number(process.env.WALLET_KES_PER_USD);
@@ -623,7 +631,11 @@ router.get('/seller/my-orders', protect, async (req, res) => {
         ? (canConvertToUsd ? roundMoney(sellerNetBeforeConversion / kesPerUsd) : null)
         : sellerNetBeforeConversion;
       const settlementReference = 'order:' + String(order.orderNumber || '');
-      const settlementCredited = settlementReferences.has(settlementReference);
+      const settlementTransaction = settlementTransactions.get(settlementReference);
+      const settlementCredited = Boolean(
+        settlementTransaction && settlementTransaction.category === 'order_settlement'
+      );
+      const sellerCreditedCurrency = usdSettlementReferences.has(settlementReference) ? 'USD' : 'KES';
       const safeDeliveryDetails = { ...(order.customerDetails || {}) };
       delete safeDeliveryDetails.idNumber;
       delete safeDeliveryDetails.customerReference;
@@ -646,6 +658,8 @@ router.get('/seller/my-orders', protect, async (req, res) => {
         sellerNetBeforeConversion,
         sellerCurrency,
         sellerSettlementStatus: settlementStatus,
+        sellerCreditedAmount: settlementCredited ? roundMoney(settlementTransaction.amount || 0) : null,
+        sellerCreditedCurrency: settlementCredited ? sellerCreditedCurrency : null,
       });
     }
     return res.json({ success: true, data: sellerOrders });
