@@ -307,6 +307,16 @@ const orderSchema = new mongoose.Schema(
       default: 'Pending',
     },
 
+    // Customer receipt confirmation and settlement audit.
+    deliveryConfirmationTokenHash: { type: String, default: '', select: false },
+    deliveryConfirmationExpiresAt: { type: Date, default: null, index: true },
+    deliveryConfirmedAt: { type: Date, default: null, index: true },
+    deliveryConfirmationSignature: { type: String, default: '', trim: true, maxlength: 120 },
+    deliveryConfirmationIp: { type: String, default: '', maxlength: 100 },
+    deliveryConfirmationUserAgent: { type: String, default: '', maxlength: 500 },
+    sellerSettledAt: { type: Date, default: null },
+    platformCommissionRecordedAt: { type: Date, default: null },
+
     /*
     |--------------------------------------------------------------------------
     | NOTES
