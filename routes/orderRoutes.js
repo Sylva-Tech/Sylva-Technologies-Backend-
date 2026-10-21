@@ -267,8 +267,9 @@ const applySellerSettlement = async (order) => {
   }
 
   return {
-    settled: settledCount > 0,
+    settled: groupedSettlements.size > 0 && settledCount === groupedSettlements.size,
     count: settledCount,
+    expected: groupedSettlements.size,
   };
 };
 
