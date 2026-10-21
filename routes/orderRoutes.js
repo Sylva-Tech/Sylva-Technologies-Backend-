@@ -581,7 +581,13 @@ router.get('/seller/my-orders', protect, async (req, res) => {
     if (req.user?.role !== 'seller') {
       return res.status(403).json({ success: false, message: 'Seller access is required.' });
     }
-    const orders = await Order.find({})
+    const sellerId = String(req.user._id);
+    const sellerProducts = await Product.find({ seller: sellerId }).select('_id').lean();
+    const sellerProductIds = sellerProducts.map((product) => product._id);
+    if (!sellerProductIds.length) {
+      return res.json({ success: true, data: [] });
+    }
+    const orders = await Order.find({ 'items.product': { $in: sellerProductIds } })
       .populate({
         path: 'items.product',
         select: 'name seller images',
@@ -590,7 +596,7 @@ router.get('/seller/my-orders', protect, async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    const sellerId = String(req.user._id);
+    
     const configuredCommission = Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.04);
     const commissionRate = Number.isFinite(configuredCommission)
       ? Math.min(1, Math.max(0, configuredCommission))
