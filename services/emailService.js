@@ -924,21 +924,22 @@ const sendOrderStatusUpdateEmail = async ({
   customerName,
   orderNumber,
   status,
+  deliveryConfirmationLink = '',
 }) => {
-  const html =
-    orderStatusUpdateTemplate({
-      customerName,
-      orderNumber,
-      status,
-    });
-
+  const safeName = String(customerName || 'Customer').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeOrder = String(orderNumber || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const baseHtml = orderStatusUpdateTemplate({ customerName, orderNumber, status });
+  const confirmationHtml = deliveryConfirmationLink
+    ? '<div style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:0 auto;padding:8px 24px 24px"><div style="border:1px solid #d7e7dc;border-radius:12px;padding:20px;background:#f7fbf8"><h2 style="color:#166534;margin-top:0">Received your delivery?</h2><p>Hello ' + safeName + ', when the product is physically with you, please review the delivery note and confirm receipt. Your confirmation records your typed signature and time.</p><p style="text-align:center;margin:24px 0"><a href="' + deliveryConfirmationLink + '" style="display:inline-block;background:#166534;color:#fff;text-decoration:none;padding:13px 20px;border-radius:7px;font-weight:bold">Review &amp; Confirm Delivery</a></p><p style="font-size:12px;color:#5b6b60">Only use this link after receiving the order. If you have not received it or there is a problem, contact support@sylvatechnologies.co.ke.</p></div></div>'
+    : '';
+  const html = baseHtml + confirmationHtml;
+  const text = 'Hello ' + customerName + ', your Sylva Technologies order ' + orderNumber + ' status is now ' + status + '.' +
+    (deliveryConfirmationLink ? '\\n\\nAfter you physically receive the product, review the delivery note and confirm receipt here: ' + deliveryConfirmationLink + '\\nDo not confirm before receiving the product.' : '');
   return sendMail({
     to,
-    subject:
-      `Order status update - ${orderNumber}`,
+    subject: 'Order status update - ' + orderNumber,
     html,
-    text:
-      `Hello ${customerName}, your Sylva Technologies order ${orderNumber} status is now ${status}.`,
+    text,
     sender: 'orders',
   });
 };
