@@ -275,7 +275,7 @@ router.get('/', async (req, res) => {
         ...(filter.$and || []),
         { $or: [
           { seller: null },
-          { seller: { $exists: false } },
+          { seller: mongoose.trusted({ $exists: false }) },
           { featuredExpiresAt: mongoose.trusted({ $gt: new Date() }) },
         ] },
       ];
