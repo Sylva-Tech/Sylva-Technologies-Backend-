@@ -24,6 +24,7 @@ const {
 const {
   sendOrderConfirmationEmail,
   sendAdminOrderNotificationEmail,
+  sendOrderStatusUpdateEmail,
   sendSalesNotificationEmail,
 } = require('../services/emailService');
 
@@ -1946,6 +1947,39 @@ router.patch(
             'name slug price images stock'
           );
 
+      // Keep the customer informed whenever an admin changes fulfillment status.
+      const statusCustomerEmail = updated.customerEmail || updated.customerDetails?.email || updated.customer?.email;
+      if (statusCustomerEmail && previousStatus !== status) {
+        const customerStatusEmail = await sendOrderStatusUpdateEmail({
+          to: statusCustomerEmail,
+          customerName: updated.customerName || updated.customerDetails?.fullName || updated.customer?.name || 'Customer',
+          orderNumber: updated.orderNumber,
+          status: updated.status,
+        });
+        if (!customerStatusEmail?.success) {
+          console.error('[Order email] customer status update email failed:', customerStatusEmail?.message || 'Unknown email error', { orderNumber: updated.orderNumber, status });
+        }
+      }
+
+      const safeStatusOrderNumber = String(updated.orderNumber || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const safePreviousStatus = String(previousStatus || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const safeCurrentStatus = String(status || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const statusAdminEmail = await sendSalesNotificationEmail({
+        subject: 'Order status updated: ' + updated.orderNumber + ' — ' + status,
+        html: '<div style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:auto;padding:24px">' +
+          '<h2 style="color:#166534">Order status updated</h2><p>Order <b>' + safeStatusOrderNumber + '</b> changed from <b>' +
+          safePreviousStatus + '</b> to <b>' + safeCurrentStatus + '</b>.</p><p>Customer: ' +
+          String(updated.customerName || updated.customerDetails?.fullName || updated.customer?.name || 'Customer').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') +
+          '</p><p>Payment status: ' + String(updated.paymentStatus || 'Pending').replace(/&/g, '&amp;').replace(/</g, '&amp;').replace(/>/g, '&gt;') +
+          '</p></div>',
+        text: 'Order ' + updated.orderNumber + ' status changed from ' + previousStatus + ' to ' + status +
+          '. Customer: ' + (updated.customerName || updated.customerDetails?.fullName || updated.customer?.name || 'Customer') +
+          '. Payment status: ' + updated.paymentStatus + '.',
+      });
+      if (!statusAdminEmail?.success) {
+        console.error('[Sales email] order status notification failed:', statusAdminEmail?.message || 'Unknown email error', { orderNumber: updated.orderNumber, status });
+      }
+
       return res.json({
         success: true,
         message:
@@ -2075,6 +2109,10 @@ router.patch(
             'items.product',
             'name slug price images stock'
           );
+
+      if (isFirstPaymentConfirmation && updated?.paymentStatus === 'Paid') {
+        await sendPaidOrderEmails(updated);
+      }
 
       return res.json({
         success: true,
