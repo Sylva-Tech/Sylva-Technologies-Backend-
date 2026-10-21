@@ -13,6 +13,7 @@ const {
 
 const sellerUpload = require('../middleware/sellerUpload');
 const uploadProductImage = require('../utils/uploadProductImage');
+const { sendSalesNotificationEmail } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -24,6 +25,13 @@ const MAX_PRODUCT_IMAGES = 4;
 /*
  * Build a clean URL-friendly slug.
  */
+const escapeEmailHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
 const buildSlug = (value) =>
   String(value || '')
     .toLowerCase()
@@ -924,6 +932,25 @@ router.post('/seller/import', protect, approvedSellerOnly, async (req, res) => {
       }
     }
 
+    if (importedProducts.length > 0) {
+      const safeSellerName = escapeEmailHtml(req.user.name || 'Sylva seller');
+      const safeSellerEmail = escapeEmailHtml(req.user.email || 'Not provided');
+      const productRows = importedProducts.map((item) =>
+        '<li>' + escapeEmailHtml(item.name) + ' — SKU: ' + escapeEmailHtml(item.sku) + '</li>'
+      ).join('');
+      const notification = await sendSalesNotificationEmail({
+        subject: importedProducts.length + ' seller product(s) submitted for approval',
+        html: '<div style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:auto;padding:24px">' +
+          '<h2 style="color:#166534">Seller product import submitted</h2><p>' + safeSellerName + ' (' + safeSellerEmail + ') submitted ' +
+          importedProducts.length + ' product(s) for admin review.</p><ul>' + productRows + '</ul>' +
+          '<p>Review pending products in the Sylva Technologies admin dashboard.</p></div>',
+        text: 'Seller product import submitted by ' + (req.user.name || 'Sylva seller') + ' (' + (req.user.email || 'Not provided') + '). Products: ' +
+          importedProducts.map((item) => item.name + ' [SKU: ' + item.sku + ']').join('; ') +
+          '. These products are pending admin approval.',
+      });
+      if (!notification?.success) console.error('[Sales email] seller product import notification failed:', notification?.message || 'Unknown email error');
+    }
+
     return res.status(200).json({
       success: errors.length === 0,
       message: importedProducts.length + ' product(s) submitted for admin approval.',
@@ -1277,15 +1304,44 @@ router.post(
           offerEndDate: null,
         });
 
-      const populatedProduct =
-        await Product.findById(
-          product._id
-        )
-          .populate('category')
-          .populate(
-            'seller',
-            'name email sellerProfile.storeName'
-          );
+      const sellerName = populatedProduct.seller?.name || req.user.name || 'Sylva seller';
+      const sellerEmail = populatedProduct.seller?.email || req.user.email || 'Not provided';
+      const categoryName = populatedProduct.category?.name || categoryRecord.name || 'Uncategorised';
+      const productAdminUrl = 'https://www.sylvatechnologies.co.ke/admin';
+      const safeProductName = escapeEmailHtml(populatedProduct.name);
+      const safeSellerName = escapeEmailHtml(sellerName);
+      const safeSellerEmail = escapeEmailHtml(sellerEmail);
+      const safeSku = escapeEmailHtml(populatedProduct.sku || normalizedSku);
+      const safeCategory = escapeEmailHtml(categoryName);
+      const safePrice = escapeEmailHtml(Number(populatedProduct.price || 0).toLocaleString('en-KE', { style: 'currency', currency: 'KES' }));
+      const imageList = (populatedProduct.images || []).map((url, index) =>
+        '<li><a href="' + escapeEmailHtml(url) + '">Product image ' + (index + 1) + '</a></li>'
+      ).join('');
+      const notification = await sendSalesNotificationEmail({
+        subject: 'Seller product submitted for approval: ' + populatedProduct.name,
+        html: '<div style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:auto;padding:24px">' +
+          '<h2 style="color:#166534">New seller product submitted</h2>' +
+          '<p>A seller has submitted a product that is waiting for admin review on Sylva Technologies.</p>' +
+          '<table style="border-collapse:collapse;width:100%">' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Product</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeProductName + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>SKU</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeSku + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Category</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeCategory + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Price</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safePrice + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Seller</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeSellerName + ' (' + safeSellerEmail + ')</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Approval status</b></td><td style="padding:8px;border-bottom:1px solid #ddd">Pending review</td></tr>' +
+          '</table><p><b>Submitted images:</b></p><ul>' + (imageList || '<li>No image links available</li>') + '</ul>' +
+          '<p><a href="' + productAdminUrl + '" style="display:inline-block;background:#166534;color:#fff;padding:12px 18px;text-decoration:none;border-radius:6px">Open admin dashboard</a></p>' +
+          '<p style="color:#647067;font-size:12px">Automated Sylva Technologies sales notification.</p></div>',
+        text: 'New seller product submitted for admin approval. Product: ' + populatedProduct.name +
+          '; SKU: ' + (populatedProduct.sku || normalizedSku) + '; category: ' + categoryName +
+          '; price: KSh ' + populatedProduct.price + '; seller: ' + sellerName + ' (' + sellerEmail +
+          '); status: pending review. Admin dashboard: ' + productAdminUrl,
+      });
+      if (!notification?.success) {
+        console.error('[Sales email] seller product submission notification failed:', notification?.message || 'Unknown email error', { productId: String(populatedProduct._id) });
+      } else {
+        console.info('[Sales email] seller product submission notification sent', { productId: String(populatedProduct._id), messageId: notification.messageId });
+      }
 
       res.status(201).json({
         success: true,
