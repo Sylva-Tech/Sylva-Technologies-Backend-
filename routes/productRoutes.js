@@ -948,6 +948,17 @@ router.post(
   ),
   async (req, res) => {
     try {
+      console.info('[Seller product upload] request received', {
+        contentType: req.headers['content-type'] || '',
+        filesReceived: Array.isArray(req.files) ? req.files.length : 0,
+        files: (req.files || []).map((file) => ({
+          fieldname: file.fieldname,
+          mimetype: file.mimetype,
+          size: file.size,
+        })),
+        bodyFields: Object.keys(req.body || {}),
+      });
+
       const {
         name,
         brand,
@@ -1122,8 +1133,25 @@ router.post(
         return res.status(400).json({ success: false, message: `A maximum of ${MAX_PRODUCT_IMAGES} product images is allowed across uploads and image links.` });
       }
 
+      if (!(req.files || []).length && !suppliedImageUrls.length) {
+        console.warn('[Seller product upload] rejected: no image files or image URLs received');
+        return res.status(400).json({
+          success: false,
+          message: 'No product images reached the server. Please choose at least one JPG, PNG or WEBP image and try again.',
+        });
+      }
+
       const uploadedImageUrls = await uploadProductImages(req.files || []);
       const imageUrls = [...uploadedImageUrls, ...suppliedImageUrls];
+
+      if (!imageUrls.length || imageUrls.some((url) => typeof url !== 'string' || !/^https:\/\//i.test(url))) {
+        throw new Error('Product image upload did not return a valid hosted image URL. Please retry or contact support.');
+      }
+
+      console.info('[Seller product upload] images uploaded successfully', {
+        uploadedFiles: (req.files || []).length,
+        hostedImageCount: imageUrls.length,
+      });
 
       const product =
         await Product.create({
@@ -1265,7 +1293,8 @@ router.post(
     } catch (error) {
       console.error(
         'Seller product creation error:',
-        error
+        error?.message || error,
+        error?.stack || ''
       );
 
       res.status(500).json({
