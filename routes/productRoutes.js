@@ -214,7 +214,7 @@ router.get('/', async (req, res) => {
         featured: true,
         featuredExpiresAt: mongoose.trusted({ $lte: new Date() }),
       },
-      { $set: { featured: false, sponsorshipStatus: 'expired' } },
+      { $set: { featured: false, isNew: false, sponsorshipStatus: 'expired' } },
     );
 
     /*
