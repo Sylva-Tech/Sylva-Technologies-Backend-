@@ -1502,7 +1502,7 @@ router.post('/mpesa/callback', async (req, res) => {
       return res.json({ ResultCode: 0, ResultDesc: 'Payment receipt recorded.' });
     }
     const paidOrder = await Order.findOneAndUpdate(
-      { _id: order._id, paymentStatus: 'Pending', status: { $ne: 'Cancelled' } },
+      { _id: order._id, paymentStatus: 'Pending', status: mongoose.trusted({ $ne: 'Cancelled' }) },
       {
         $set: {
           paymentStatus: 'Paid',
@@ -1573,7 +1573,7 @@ router.get('/mpesa/status/:orderNumber', protect, async (req, res) => {
 
           if (String(verification.data?.ResultCode) === '0') {
             const confirmed = await Order.findOneAndUpdate(
-              { _id: order._id, paymentStatus: 'Pending', status: { $ne: 'Cancelled' } },
+              { _id: order._id, paymentStatus: 'Pending', status: mongoose.trusted({ $ne: 'Cancelled' }) },
               { $set: {
                 paymentStatus: 'Paid',
                 paidAt: new Date(),
