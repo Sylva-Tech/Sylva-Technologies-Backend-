@@ -1144,8 +1144,12 @@ router.post(
       const uploadedImageUrls = await uploadProductImages(req.files || []);
       const imageUrls = [...uploadedImageUrls, ...suppliedImageUrls];
 
-      if (!imageUrls.length || imageUrls.some((url) => typeof url !== 'string' || !/^https:\/\//i.test(url))) {
-        throw new Error('Product image upload did not return a valid hosted image URL. Please retry or contact support.');
+      if (
+        !imageUrls.length ||
+        uploadedImageUrls.length !== (req.files || []).length ||
+        imageUrls.some((url) => typeof url !== 'string' || !/^https?:\/\//i.test(url))
+      ) {
+        throw new Error('One or more product images could not be uploaded. Please retry with JPG, PNG or WEBP images up to 5 MB each.');
       }
 
       console.info('[Seller product upload] images uploaded successfully', {
