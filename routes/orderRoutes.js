@@ -171,7 +171,10 @@ const applySellerSettlement = async (order) => {
 
     const settlementReference = `order:${order.orderNumber}`;
     const sellerCountry = String(seller.sellerProfile?.country || 'KE').toUpperCase();
-    if ((seller.wallet?.transactions || []).some((tx) => tx.reference === settlementReference)) continue;
+    if ((seller.wallet?.transactions || []).some((tx) => tx.reference === settlementReference)) {
+      settledCount += 1;
+      continue;
+    }
     const orderCurrency = String(order.currency || 'KES').toUpperCase();
     const now = new Date();
 
@@ -192,7 +195,10 @@ const applySellerSettlement = async (order) => {
       };
       usdWallet.currency = 'USD';
       usdWallet.transactions = Array.isArray(usdWallet.transactions) ? usdWallet.transactions : [];
-      if (usdWallet.transactions.some((tx) => tx.reference === settlementReference)) continue;
+      if (usdWallet.transactions.some((tx) => tx.reference === settlementReference)) {
+        settledCount += 1;
+        continue;
+      }
       usdWallet.availableBalance = roundMoney(Number(usdWallet.availableBalance || 0) + settlementAmount);
       usdWallet.lastUpdatedAt = now;
       usdWallet.transactions.unshift({
@@ -226,7 +232,10 @@ const applySellerSettlement = async (order) => {
       };
       wallet.currency = wallet.currency || 'KES';
       wallet.transactions = Array.isArray(wallet.transactions) ? wallet.transactions : [];
-      if (wallet.transactions.some((tx) => tx.reference === settlementReference)) continue;
+      if (wallet.transactions.some((tx) => tx.reference === settlementReference)) {
+        settledCount += 1;
+        continue;
+      }
       wallet.availableBalance = roundMoney(Number(wallet.availableBalance || 0) + Number(settlement.netAmount || 0));
       wallet.lastUpdatedAt = now;
       wallet.transactions.unshift({
