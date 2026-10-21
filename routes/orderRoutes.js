@@ -6,6 +6,7 @@ const axios = require('axios');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Product = require('../models/Product');
+const AdminWallet = require('../models/AdminWallet');
 const { getQuote: getShippingQuote } = require('./shippingRoutes');
 
 const {
@@ -262,6 +263,61 @@ const applySellerSettlement = async (order) => {
   };
 };
 
+
+const hashDeliveryToken = (token) => crypto.createHash('sha256').update(String(token || '')).digest('hex');
+
+const createDeliveryConfirmationToken = async (order) => {
+  const token = crypto.randomBytes(32).toString('hex');
+  order.deliveryConfirmationTokenHash = hashDeliveryToken(token);
+  order.deliveryConfirmationExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+  await order.save();
+  const baseUrl = String(process.env.FRONTEND_URL || process.env.SITE_URL || 'https://www.sylvatechnologies.co.ke').replace(/\\/$/, '');
+  return baseUrl + '/confirm-delivery?token=' + encodeURIComponent(token);
+};
+
+// The seller wallet settlement record is the source of truth for the
+// commission amount. Credit the platform wallet only after the seller settlement
+// exists, and use a unique reference so a repeated confirmation cannot double-credit.
+const recordPlatformCommissionForSettlements = async (order) => {
+  const productIds = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
+  if (!productIds.length) return { recorded: 0 };
+  const products = await Product.find(mongoose.trusted({ _id: mongoose.trusted({ $in: productIds }) })).select('_id seller').lean();
+  const sellerIds = [...new Set(products.map((product) => product.seller ? String(product.seller) : '').filter(Boolean))];
+  let platform = await AdminWallet.findOne({ key: 'platform' });
+  if (!platform) platform = new AdminWallet({ key: 'platform', currency: 'KES' });
+  let recorded = 0;
+  for (const sellerId of sellerIds) {
+    const seller = await User.findById(sellerId).select('wallet.transactions usdWallet.transactions').lean();
+    const settlementReference = 'order:' + String(order.orderNumber || '');
+    const settlement = [...(seller?.wallet?.transactions || []), ...(seller?.usdWallet?.transactions || [])]
+      .find((tx) => tx?.reference === settlementReference && tx?.category === 'order_settlement');
+    if (!settlement) continue;
+    const commission = roundMoney(Number(settlement.metadata?.commission || 0));
+    if (commission <= 0) continue;
+    const reference = 'commission:order:' + String(order.orderNumber || '') + ':' + sellerId;
+    if ((platform.transactions || []).some((tx) => tx.reference === reference)) continue;
+    platform.availableBalance = roundMoney(Number(platform.availableBalance || 0) + commission);
+    platform.transactions.push({
+      type: 'credit',
+      amount: commission,
+      category: 'seller_commission',
+      status: 'completed',
+      description: 'Marketplace commission from order ' + order.orderNumber,
+      reference,
+      relatedUser: sellerId,
+      metadata: { orderId: String(order._id), orderNumber: order.orderNumber, sellerId, currency: 'KES' },
+      createdAt: new Date(),
+      processedAt: new Date(),
+      updatedAt: new Date(),
+    });
+    recorded += 1;
+  }
+  if (recorded) {
+    platform.lastUpdatedAt = new Date();
+    await platform.save();
+  }
+  return { recorded };
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -673,6 +729,77 @@ router.get('/seller/my-orders', protect, async (req, res) => {
   } catch (error) {
     console.error('Get seller orders error:', error.message);
     return res.status(500).json({ success: false, message: 'Unable to retrieve seller orders.' });
+  }
+});
+
+/*
+|--------------------------------------------------------------------------
+| CUSTOMER CONFIRMS DELIVERY (EMAIL LINK)
+|--------------------------------------------------------------------------
+| The link is a high-entropy bearer token. Opening the page is read-only;
+| this POST is the explicit customer confirmation action.
+|--------------------------------------------------------------------------
+*/
+router.post('/confirm-delivery', async (req, res) => {
+  try {
+    const token = String(req.body?.token || '').trim();
+    const signature = String(req.body?.signature || '').trim();
+    const acknowledged = req.body?.acknowledged === true;
+    if (token.length < 40 || token.length > 200 || !signature || signature.length > 120 || !acknowledged) {
+      return res.status(400).json({ success: false, message: 'Enter your full name as an electronic signature and confirm that you received the product and delivery note.' });
+    }
+    const tokenHash = hashDeliveryToken(token);
+    const order = await Order.findOne({ deliveryConfirmationTokenHash: tokenHash }).select('+deliveryConfirmationTokenHash');
+    if (!order) {
+      return res.status(400).json({ success: false, message: 'This delivery confirmation link is invalid or has already been used. Contact support if you need help.' });
+    }
+    if (!order.deliveryConfirmationExpiresAt || order.deliveryConfirmationExpiresAt.getTime() < Date.now()) {
+      return res.status(410).json({ success: false, message: 'This delivery confirmation link has expired. Please contact Sylva Support.' });
+    }
+    if (!['Shipped', 'Delivered'].includes(order.status)) {
+      return res.status(409).json({ success: false, message: 'This order has not been marked as shipped yet.' });
+    }
+    if (order.paymentStatus !== 'Paid') {
+      return res.status(409).json({ success: false, message: 'Payment must be verified before seller funds can be released. Contact support if you paid on delivery.' });
+    }
+    if (!order.deliveryConfirmedAt) {
+      order.deliveryConfirmedAt = new Date();
+      order.deliveryConfirmationSignature = signature;
+      order.deliveryConfirmationIp = String(req.ip || '').slice(0, 100);
+      order.deliveryConfirmationUserAgent = String(req.get('user-agent') || '').slice(0, 500);
+      order.status = 'Delivered';
+      await order.save();
+    }
+
+    const settlementResult = await applySellerSettlement(order);
+    if (!settlementResult.settled) {
+      return res.status(409).json({ success: false, message: 'Receipt was recorded, but seller settlement is not yet complete. Please retry shortly or contact support; the link remains available for retry.' });
+    }
+    const commissionResult = await recordPlatformCommissionForSettlements(order);
+    order.sellerSettledAt = new Date();
+    if (commissionResult.recorded || commissionResult.recorded === 0) order.platformCommissionRecordedAt = new Date();
+    order.deliveryConfirmationTokenHash = '';
+    order.deliveryConfirmationExpiresAt = null;
+    await order.save();
+
+    const customerEmail = order.customerEmail || order.customerDetails?.email;
+    if (customerEmail) {
+      const statusEmail = await sendOrderStatusUpdateEmail({
+        to: customerEmail,
+        customerName: order.customerName || order.customerDetails?.fullName || 'Customer',
+        orderNumber: order.orderNumber,
+        status: 'Delivered',
+      });
+      if (!statusEmail?.success) console.error('[Delivery confirmation] receipt email failed:', statusEmail?.message || 'Unknown email error', { orderNumber: order.orderNumber });
+    }
+    return res.json({
+      success: true,
+      message: 'Delivery confirmed. Seller earnings have been credited to the seller wallet and Sylva commission has been recorded.',
+      data: { orderNumber: order.orderNumber, status: order.status, deliveryConfirmedAt: order.deliveryConfirmedAt, settlementComplete: true },
+    });
+  } catch (error) {
+    console.error('[Delivery confirmation] failed:', error.stack || error.message);
+    return res.status(500).json({ success: false, message: 'Unable to complete delivery confirmation right now. Please retry using the email link.' });
   }
 });
 
@@ -2043,12 +2170,6 @@ router.patch(
       if (
         previousStatus === status
       ) {
-        // Allow an admin retry to finish seller settlement if a previous delivery update
-        // saved the order status but settlement failed part-way through.
-        if (status === 'Delivered' && order.paymentStatus === 'Paid') {
-          await applySellerSettlement(order);
-        }
-
         const unchangedOrder =
           await Order.findById(
             order._id
@@ -2092,27 +2213,16 @@ router.patch(
       |--------------------------------------------------------------------------
       */
 
-      await Order.updateOne(
-        {
-          _id: order._id,
-        },
-        {
-          $set: {
-            status,
-          },
-        }
-      );
-
-      if (
-        status === 'Delivered' &&
-        previousStatus !== 'Delivered' &&
-        order.paymentStatus === 'Paid'
-      ) {
-        const settlementResult = await applySellerSettlement(order);
-        if (settlementResult.settled) {
-          console.info('Seller settlement applied after delivery:', order.orderNumber);
-        }
+      let deliveryConfirmationLink = '';
+      const shouldIssueDeliveryLink = ['Shipped', 'Delivered'].includes(status) && order.paymentStatus === 'Paid' && !order.deliveryConfirmedAt;
+      if (shouldIssueDeliveryLink) {
+        deliveryConfirmationLink = await createDeliveryConfirmationToken(order);
       }
+
+      await Order.updateOne(
+        { _id: order._id },
+        { $set: { status } }
+      );
 
       const updated =
         await Order.findById(
@@ -2135,6 +2245,7 @@ router.patch(
           customerName: updated.customerName || updated.customerDetails?.fullName || updated.customer?.name || 'Customer',
           orderNumber: updated.orderNumber,
           status: updated.status,
+          deliveryConfirmationLink,
         });
         if (!customerStatusEmail?.success) {
           console.error('[Order email] customer status update email failed:', customerStatusEmail?.message || 'Unknown email error', { orderNumber: updated.orderNumber, status });
@@ -2255,24 +2366,8 @@ router.patch(
             ? 'Confirmed'
             : order.status;
 
-        if (
-          isFirstPaymentConfirmation
-        ) {
-          const settlementResult =
-            await applySellerSettlement(
-              order
-            );
-
-          if (
-            settlementResult.settled
-          ) {
-            console.info(
-              'Seller settlements applied for order:',
-              order.orderNumber,
-              settlementResult.count
-            );
-          }
-        }
+        // Seller funds are released only after the customer confirms receipt.
+        // Payment confirmation alone must not settle marketplace earnings.
       }
 
       await order.save();
