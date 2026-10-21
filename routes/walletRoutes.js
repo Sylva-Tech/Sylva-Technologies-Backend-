@@ -1192,7 +1192,7 @@ router.get(
       const payoutAccounts = await User.find(
         mongoose.trusted({
           $and: [
-            { role: { $in: ['seller', 'customer'] } },
+            { role: mongoose.trusted({ $in: ['seller', 'customer'] }) },
             {
               $or: [
                 { 'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } } },
