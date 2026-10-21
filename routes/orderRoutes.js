@@ -91,7 +91,7 @@ const applySellerSettlement = async (order) => {
   }
 
   const commissionRate = Number(
-    process.env.PLATFORM_COMMISSION_RATE || 0.1
+    process.env.PLATFORM_COMMISSION_RATE ?? 0.04
   );
 
   const groupedSettlements = new Map();
