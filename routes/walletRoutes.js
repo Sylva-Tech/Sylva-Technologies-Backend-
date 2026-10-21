@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const axios = require('axios');
 
 const User = require('../models/User');
+const Order = require('../models/Order');
 const AdminWallet = require('../models/AdminWallet');
 const { sendMail } = require('../services/emailService');
 
@@ -2510,6 +2511,63 @@ router.post('/topup/stk/callback', async (req, res) => {
     return res.status(500).json({ ResultCode: 1, ResultDesc: 'Callback processing failed.' });
   }
 });
+
+
+/* Admin order-payment ledger: paid sales, estimated unsettled earnings and delivered seller net, per seller. */
+router.get('/admin/order-payments', protect, adminOnly, requireVerified, async (req, res) => {
+  try {
+    const sellers = await User.find({ role: 'seller' }).select('name email sellerStatus sellerProfile.storeName sellerProfile.country wallet.transactions usdWallet.transactions').lean();
+    const sellerById = new Map(sellers.map((seller) => [String(seller._id), {
+      _id: String(seller._id), name: seller.name || '', email: seller.email || '', storeName: seller.sellerProfile?.storeName || '',
+      country: seller.sellerProfile?.country || 'KE', sellerStatus: seller.sellerStatus || 'pending', paidOrders: 0, deliveredOrders: 0,
+      paidItemValueKES: 0, estimatedNetAwaitingSettlementKES: 0, deliveredNetKES: 0, creditedNetKES: 0, creditedNetUSD: 0,
+    }]));
+    const orders = await Order.find({ paymentStatus: 'Paid', status: { $ne: 'Cancelled' } }).select('orderNumber status paymentStatus items createdAt')
+      .populate({ path: 'items.product', select: 'seller', populate: { path: 'seller', select: '_id' } }).sort({ createdAt: -1 }).lean();
+    const transactionsBySeller = new Map(sellers.map((seller) => [String(seller._id), {
+      kes: Array.isArray(seller.wallet?.transactions) ? seller.wallet.transactions : [],
+      usd: Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [],
+    }]));
+    const configuredRate = Number(process.env.SELLER_COMMISSION_RATE ?? 0.04);
+    const commissionRate = Number.isFinite(configuredRate) && configuredRate >= 0 && configuredRate <= 1
+      ? configuredRate : configuredRate > 1 && configuredRate <= 100 ? configuredRate / 100 : 0.04;
+    for (const order of orders) {
+      const reference = 'order:' + String(order.orderNumber || '');
+      const delivered = String(order.status || '').toLowerCase() === 'delivered';
+      const sellerItemsById = new Map();
+      for (const item of order.items || []) {
+        const sellerId = item.product?.seller?._id || item.product?.seller;
+        if (!sellerId) continue;
+        const key = String(sellerId);
+        if (!sellerById.has(key)) continue;
+        const list = sellerItemsById.get(key) || []; list.push(item); sellerItemsById.set(key, list);
+      }
+      for (const [sellerId, items] of sellerItemsById) {
+        const row = sellerById.get(sellerId);
+        const gross = roundMoney(items.reduce((sum, item) => sum + Number(item.subtotal || (Number(item.unitPrice || 0) * Number(item.quantity || 1))), 0));
+        const net = roundMoney(gross * (1 - commissionRate));
+        const transactions = transactionsBySeller.get(sellerId) || { kes: [], usd: [] };
+        const creditedKES = transactions.kes.find((tx) => tx?.reference === reference && tx?.category === 'order_settlement');
+        const creditedUSD = transactions.usd.find((tx) => tx?.reference === reference && tx?.category === 'order_settlement');
+        row.paidOrders += 1; row.paidItemValueKES = roundMoney(row.paidItemValueKES + gross);
+        if (delivered) { row.deliveredOrders += 1; row.deliveredNetKES = roundMoney(row.deliveredNetKES + net); }
+        if (creditedKES) row.creditedNetKES = roundMoney(row.creditedNetKES + Number(creditedKES.amount || 0));
+        if (creditedUSD) row.creditedNetUSD = roundMoney(row.creditedNetUSD + Number(creditedUSD.amount || 0));
+        if (!creditedKES && !creditedUSD && !delivered) row.estimatedNetAwaitingSettlementKES = roundMoney(row.estimatedNetAwaitingSettlementKES + net);
+      }
+    }
+    const data = [...sellerById.values()].sort((a, b) => b.paidItemValueKES - a.paidItemValueKES);
+    const totals = data.reduce((acc, seller) => {
+      for (const key of ['paidItemValueKES', 'estimatedNetAwaitingSettlementKES', 'deliveredNetKES', 'creditedNetKES', 'creditedNetUSD']) acc[key] = roundMoney(acc[key] + seller[key]);
+      return acc;
+    }, { paidItemValueKES: 0, estimatedNetAwaitingSettlementKES: 0, deliveredNetKES: 0, creditedNetKES: 0, creditedNetUSD: 0 });
+    return res.json({ success: true, count: data.length, totals, data });
+  } catch (error) {
+    console.error('Admin order payments error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to load seller order-payment figures.' });
+  }
+});
+
 
 /* Admin-only per-seller balances so finance can see amounts currently payable. */
 router.get('/admin/seller-balances', protect, adminOnly, requireVerified, async (req, res) => {
