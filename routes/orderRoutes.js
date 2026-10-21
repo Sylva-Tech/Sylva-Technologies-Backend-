@@ -24,6 +24,7 @@ const {
 const {
   sendOrderConfirmationEmail,
   sendAdminOrderNotificationEmail,
+  sendSalesNotificationEmail,
 } = require('../services/emailService');
 
 const router = express.Router();
@@ -287,9 +288,9 @@ const sendPaidOrderEmails = async (order) => {
     }
 
     const operationsRecipients = [
+      'sales@sylvatechnologies.co.ke',
       process.env.ORDERS_EMAIL || 'order@sylvatechnologies.co.ke',
       process.env.PAYMENT_EMAIL || 'payment@sylvatechnologies.co.ke',
-      process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke',
     ];
     const uniqueRecipients = [...new Set(operationsRecipients.map((address) => String(address || '').trim().toLowerCase()).filter(Boolean))];
     const adminEmailResult = await sendAdminOrderNotificationEmail({
@@ -1278,7 +1279,56 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
   }
 }
 
-    // Order emails are sent only after Paystack verifies payment.
+    // Notify the sales inbox as soon as an order has been successfully created.
+    // This event is separate from the later payment-confirmed notification.
+    try {
+      const orderItemsText = (populatedOrder.items || []).map((item) =>
+        (item.name || item.product?.name || 'Product') + ' x ' + Number(item.quantity || 1)
+      ).join(', ');
+      const safeOrderNumber = String(order.orderNumber).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const safeCustomerName = String(customerDetails.fullName || 'Customer').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const safeCustomerEmail = String(customerEmail || 'Not provided').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const safeCustomerPhone = String(customerDetails.phone || 'Not provided').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const safeDelivery = String(customerDetails.deliveryLocation || customerDetails.address || 'Not provided').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const safeItems = String(orderItemsText).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const safePaymentMethod = String(paymentMethod).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const safePaymentStatus = String(order.paymentStatus || 'Pending').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const adminUrl = 'https://www.sylvatechnologies.co.ke/admin';
+      const notification = await sendSalesNotificationEmail({
+        subject: 'New order placed: ' + order.orderNumber,
+        html: '<div style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:auto;padding:24px">' +
+          '<h2 style="color:#166534">New order placed</h2><p>A customer has placed an order on Sylva Technologies.</p>' +
+          '<table style="border-collapse:collapse;width:100%">' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Order number</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeOrderNumber + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Customer</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeCustomerName + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Email</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeCustomerEmail + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Phone</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeCustomerPhone + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Items</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeItems + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Total</b></td><td style="padding:8px;border-bottom:1px solid #ddd">KSh ' + Number(order.total || 0).toLocaleString('en-KE') + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Payment method</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safePaymentMethod + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Payment status</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safePaymentStatus + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Delivery location</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeDelivery + '</td></tr>' +
+          '</table><p><a href="' + adminUrl + '" style="display:inline-block;background:#166534;color:#fff;padding:12px 18px;text-decoration:none;border-radius:6px">Open admin dashboard</a></p></div>',
+        text: 'New order placed: ' + order.orderNumber + '. Customer: ' + customerDetails.fullName +
+          '; email: ' + customerEmail + '; phone: ' + customerDetails.phone + '; items: ' + orderItemsText +
+          '; total: KSh ' + order.total + '; payment method: ' + paymentMethod +
+          '; payment status: ' + order.paymentStatus + '; delivery location: ' + (customerDetails.deliveryLocation || customerDetails.address || 'Not provided') +
+          '. Admin dashboard: ' + adminUrl,
+      });
+      if (!notification?.success) {
+        console.error('[Sales email] new order notification failed:', notification?.message || 'Unknown email error', { orderNumber: order.orderNumber });
+      } else {
+        console.info('[Sales email] new order notification sent', { orderNumber: order.orderNumber, messageId: notification.messageId });
+      }
+    } catch (notificationError) {
+      console.error('[Sales email] new order notification threw an error:', notificationError.message, { orderNumber: order.orderNumber });
+    }
+
+    // Wallet orders are already paid inside the order transaction. Send the paid
+    // receipt and payment alert here; Paystack and M-Pesa notify from verification callbacks.
+    if (paymentMethod === 'Wallet' && order.paymentStatus === 'Paid') {
+      await sendPaidOrderEmails(order);
+    }
 
     /*
     |--------------------------------------------------------------------------
