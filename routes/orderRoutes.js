@@ -280,7 +280,7 @@ const createDeliveryConfirmationToken = async (order) => {
   order.deliveryConfirmationTokenHash = hashDeliveryToken(token);
   order.deliveryConfirmationExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
   await order.save();
-  const baseUrl = String(process.env.FRONTEND_URL || process.env.SITE_URL || 'https://www.sylvatechnologies.co.ke').replace(/\\/$/, '');
+  const baseUrl = String(process.env.FRONTEND_URL || process.env.SITE_URL || 'https://www.sylvatechnologies.co.ke').replace(/\/$/, '');
   return baseUrl + '/confirm-delivery?token=' + encodeURIComponent(token);
 };
 
