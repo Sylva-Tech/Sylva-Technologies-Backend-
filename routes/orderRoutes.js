@@ -2215,6 +2215,13 @@ router.patch(
       const previousStatus =
         order.status;
 
+      if (status === 'Delivered' && !order.deliveryConfirmedAt) {
+        return res.status(409).json({
+          success: false,
+          message: 'The customer must confirm receipt through the secure delivery email link before the order can be marked Delivered.',
+        });
+      }
+
       if (
         ['Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered'].includes(status) &&
         order.paymentStatus !== 'Paid'
@@ -2272,7 +2279,7 @@ router.patch(
       */
 
       let deliveryConfirmationLink = '';
-      const shouldIssueDeliveryLink = ['Shipped', 'Delivered'].includes(status) && order.paymentStatus === 'Paid' && !order.deliveryConfirmedAt;
+      const shouldIssueDeliveryLink = status === 'Shipped' && order.paymentStatus === 'Paid' && !order.deliveryConfirmedAt;
       if (shouldIssueDeliveryLink) {
         deliveryConfirmationLink = await createDeliveryConfirmationToken(order);
       }
