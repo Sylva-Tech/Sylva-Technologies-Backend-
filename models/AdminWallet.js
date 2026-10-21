@@ -5,7 +5,7 @@ const adminWalletTransactionSchema = new mongoose.Schema({
   amount: { type: Number, required: true, min: 0.01 },
   category: {
     type: String,
-    enum: ['customer_transfer_in', 'seller_transfer_in', 'transfer_to_customer', 'transfer_to_seller', 'withdrawal_request', 'withdrawal_paid', 'withdrawal_rejected', 'adjustment', 'mpesa_topup'],
+    enum: ['customer_transfer_in', 'seller_transfer_in', 'transfer_to_customer', 'transfer_to_seller', 'withdrawal_request', 'withdrawal_paid', 'withdrawal_rejected', 'adjustment', 'mpesa_topup', 'seller_commission'],
     required: true,
   },
   status: { type: String, enum: ['pending', 'completed', 'paid', 'rejected', 'failed'], default: 'completed' },
