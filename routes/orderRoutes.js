@@ -435,7 +435,7 @@ const confirmPaidOrder = async (order, transaction) => {
           status: order.status === 'Pending' ? 'Confirmed' : order.status,
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (updated) {
@@ -524,7 +524,7 @@ router.patch('/:id/admin-review', protect, adminOnly, async (req, res) => {
     const order = await Order.findByIdAndUpdate(
       req.params.id,
       { $set: { adminReviewedAt: new Date(), adminReviewedBy: req.user._id } },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!order) {
@@ -1610,7 +1610,7 @@ router.post('/mpesa/callback', async (req, res) => {
       const updated = await Order.findOneAndUpdate(
         { _id: order._id, paymentStatus: 'Pending' },
         { $set: { paymentStatus: 'Failed' } },
-        { new: true }
+        { returnDocument: 'after' }
       );
       if (updated) await restoreOrderStock(updated);
       return res.json({ ResultCode: 0, ResultDesc: 'Callback received.' });
@@ -1693,7 +1693,7 @@ router.post('/mpesa/callback', async (req, res) => {
           mpesaReceiptNumber: receipt,
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (paidOrder) await sendPaidOrderEmails(paidOrder);
     return res.json({ ResultCode: 0, ResultDesc: paidOrder ? 'Payment confirmed.' : 'Callback already processed.' });
@@ -1760,7 +1760,7 @@ router.get('/mpesa/status/:orderNumber', protect, async (req, res) => {
                 cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000),
                 status: order.status === 'Pending' ? 'Confirmed' : order.status,
               } },
-              { new: true }
+              { returnDocument: 'after' }
             );
             if (confirmed) {
               order = confirmed;
