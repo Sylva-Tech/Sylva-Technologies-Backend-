@@ -15,6 +15,10 @@ const uploadProductImage = (buffer) =>
           return reject(error);
         }
 
+        if (!result?.secure_url) {
+          return reject(new Error('Cloudinary did not return a secure URL for the product image.'));
+        }
+
         resolve(result);
       }
     );
