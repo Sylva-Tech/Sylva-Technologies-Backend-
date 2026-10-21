@@ -944,11 +944,30 @@ const sendOrderStatusUpdateEmail = async ({
 };
 
 // ============================================================
+// SALES / OPERATIONS NOTIFICATION
+// ============================================================
+
+/**
+ * Send a business event notification to the Sylva sales inbox.
+ * This is separate from customer receipts and account-security email.
+ */
+const sendSalesNotificationEmail = async ({ subject, html, text }) => {
+  return sendMail({
+    to: 'sales@sylvatechnologies.co.ke',
+    subject,
+    html,
+    text,
+    sender: 'sales',
+  });
+};
+
+// ============================================================
 // EXPORTS
 // ============================================================
 
 module.exports = {
   sendMail,
+  sendSalesNotificationEmail,
 
   // Account verification
   sendVerificationEmail,
