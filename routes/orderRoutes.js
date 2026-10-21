@@ -588,7 +588,7 @@ router.get('/seller/my-orders', protect, async (req, res) => {
     if (!sellerProductIds.length) {
       return res.json({ success: true, data: [] });
     }
-    const orders = await Order.find({ 'items.product': { $in: sellerProductIds } })
+    const orders = await Order.find({ 'items.product': mongoose.trusted({ $in: sellerProductIds }) })
       .populate({
         path: 'items.product',
         select: 'name seller images',
