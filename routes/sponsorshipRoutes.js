@@ -59,7 +59,13 @@ const expirePromotions = async (sellerId = null) => {
     featuredExpiresAt: mongoose.trusted({ $ne: null, $lte: new Date() }),
   };
   if (sellerId) filter.seller = sellerId;
-  await Product.updateMany(filter, { $set: { featured: false, sponsorshipStatus: 'expired' } });
+  await Product.updateMany(filter, {
+    $set: {
+      featured: false,
+      isNew: false,
+      sponsorshipStatus: 'expired',
+    },
+  });
   await SellerProductSponsorship.updateMany(
     { status: 'active', expiresAt: mongoose.trusted({ $ne: null, $lte: new Date() }), ...(sellerId ? { seller: sellerId } : {}) },
     { $set: { status: 'expired' } },
@@ -82,7 +88,10 @@ const activate = async (sponsorship, receipt = '') => {
     await sponsorship.save();
     return null;
   }
+  // A successfully paid sponsorship places the approved product in both
+  // homepage Featured and New Arrivals until the paid promotion expires.
   product.featured = true;
+  product.isNew = true;
   product.featuredExpiresAt = expiresAt;
   product.sponsorshipStatus = 'active';
   await product.save();
