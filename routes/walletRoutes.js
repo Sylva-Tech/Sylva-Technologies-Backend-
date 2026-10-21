@@ -2318,6 +2318,7 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
               return res.json({ success: true, data: {
                 transactionId: String(refreshedTx._id), status: refreshedTx.status,
                 amount: roundMoney(refreshedTx.amount), reference: refreshedTx.reference || '',
+                receipt: refreshedTx.metadata?.mpesaReceiptNumber || '',
                 description: refreshedTx.description || '', createdAt: refreshedTx.createdAt || null,
                 updatedAt: refreshedTx.updatedAt || null, processedAt: refreshedTx.processedAt || null,
                 reconciliationRequired: refreshedTx.metadata?.reconciliationRequired === true,
@@ -2336,6 +2337,7 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
       status: tx.status,
       amount: roundMoney(tx.amount),
       reference: tx.reference || '',
+      receipt: tx.metadata?.mpesaReceiptNumber || '',
       description: tx.description || '',
       createdAt: tx.createdAt || null,
       updatedAt: tx.updatedAt || null,
