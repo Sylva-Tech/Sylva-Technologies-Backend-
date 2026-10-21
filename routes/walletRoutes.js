@@ -1899,8 +1899,8 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
 
     if (idempotencyKey) {
       const existing = isAdminDeposit
-        ? await AdminWallet.findOne({ key: 'platform', transactions: { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } })
-        : await User.findOne({ _id: user._id, 'wallet.transactions': { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } });
+        ? await AdminWallet.findOne({ key: 'platform', transactions: mongoose.trusted({ $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } }) })
+        : await User.findOne({ _id: user._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } }) });
       const existingTx = isAdminDeposit
         ? existing?.transactions.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey)
         : existing?.wallet?.transactions?.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey);
@@ -2299,8 +2299,8 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
           if (terminalFailure) {
             const now = new Date();
             const ownerFilter = isAdmin
-              ? { _id: owner._id, transactions: { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } }
-              : { _id: owner._id, 'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } };
+              ? { _id: owner._id, transactions: mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } }) }
+              : { _id: owner._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } }) };
             const failedDescription = resultCode === '1032'
               ? 'M-Pesa deposit cancelled by the customer.'
               : resultCode === '1037'
@@ -2364,8 +2364,8 @@ router.post('/topup/stk/callback', async (req, res) => {
       'metadata.checkoutRequestID': checkoutRequestID,
     };
     const [platformWallet, account] = await Promise.all([
-      AdminWallet.findOne({ key: 'platform', transactions: { $elemMatch: pendingQuery } }),
-      User.findOne({ 'wallet.transactions': { $elemMatch: pendingQuery } }),
+      AdminWallet.findOne({ key: 'platform', transactions: mongoose.trusted({ $elemMatch: pendingQuery }) }),
+      User.findOne({ 'wallet.transactions': mongoose.trusted({ $elemMatch: pendingQuery }) }),
     ]);
     const isPlatformDeposit = Boolean(platformWallet);
     const owner = isPlatformDeposit ? platformWallet : account;
@@ -2387,8 +2387,8 @@ router.post('/topup/stk/callback', async (req, res) => {
     if (!tx) return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
 
     const ownerFilter = isPlatformDeposit
-      ? { _id: platformWallet._id, 'transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } } }
-      : { _id: account._id, 'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } } };
+      ? { _id: platformWallet._id, 'transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } }) }
+      : { _id: account._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } }) };
 
     if (Number(callback.ResultCode) !== 0) {
       const failureUpdate = isPlatformDeposit
