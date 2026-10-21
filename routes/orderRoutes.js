@@ -355,7 +355,7 @@ const sendSellerOrderEmails = async (order) => {
       const sellerGross = items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
       const emailResult = await sendMail({
         to: recipient,
-        sender: 'sellers',
+        sender: 'orders',
         subject: 'New customer order ' + populated.orderNumber + ' — Sylva Technologies',
         html: '<div style="font-family:Arial,sans-serif;color:#17211b;max-width:720px;margin:auto;padding:24px">' +
           '<h2 style="color:#166534">You have received a new order</h2><p>Hello ' + escapeEmailHtml(seller.sellerProfile?.storeName || seller.name || 'Seller') +
@@ -581,7 +581,7 @@ router.get('/seller/my-orders', protect, async (req, res) => {
     if (req.user?.role !== 'seller') {
       return res.status(403).json({ success: false, message: 'Seller access is required.' });
     }
-    const orders = await Order.find({ 'items.0': { $exists: true } })
+    const orders = await Order.find({})
       .populate({
         path: 'items.product',
         select: 'name seller images',
@@ -591,7 +591,21 @@ router.get('/seller/my-orders', protect, async (req, res) => {
       .lean();
 
     const sellerId = String(req.user._id);
-    const commissionRate = Math.min(1, Math.max(0, Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.04)));
+    const configuredCommission = Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.04);
+    const commissionRate = Number.isFinite(configuredCommission)
+      ? Math.min(1, Math.max(0, configuredCommission))
+      : 0.04;
+    const sellerAccount = await User.findById(sellerId)
+      .select('sellerProfile.country wallet.transactions.reference usdWallet.transactions.reference')
+      .lean();
+    const settlementReferences = new Set([
+      ...(sellerAccount?.wallet?.transactions || []),
+      ...(sellerAccount?.usdWallet?.transactions || []),
+    ].map((transaction) => String(transaction?.reference || '')).filter(Boolean));
+    const sellerCountry = String(sellerAccount?.sellerProfile?.country || 'KE').toUpperCase();
+    const internationalSeller = !['KE', 'KENYA'].includes(sellerCountry);
+    const kesPerUsd = Number(process.env.WALLET_KES_PER_USD);
+    const canConvertToUsd = Number.isFinite(kesPerUsd) && kesPerUsd > 0;
     const sellerOrders = [];
     for (const order of orders) {
       const sellerItems = (order.items || []).filter((item) =>
@@ -603,15 +617,35 @@ router.get('/seller/my-orders', protect, async (req, res) => {
       if (!sellerItems.length) continue;
       const sellerGross = roundMoney(sellerItems.reduce((sum, item) => sum + Number(item.subtotal || 0), 0));
       const sellerCommission = roundMoney(sellerGross * commissionRate);
-      const { idNumber: _privateIdNumber, customerReference: _privateCustomerReference, ...safeDeliveryDetails } = order.customerDetails || {};
+      const sellerNetBeforeConversion = roundMoney(sellerGross - sellerCommission);
+      const sellerCurrency = internationalSeller ? 'USD' : 'KES';
+      const sellerNet = internationalSeller
+        ? (canConvertToUsd ? roundMoney(sellerNetBeforeConversion / kesPerUsd) : null)
+        : sellerNetBeforeConversion;
+      const settlementReference = 'order:' + String(order.orderNumber || '');
+      const settlementCredited = settlementReferences.has(settlementReference);
+      const safeDeliveryDetails = { ...(order.customerDetails || {}) };
+      delete safeDeliveryDetails.idNumber;
+      delete safeDeliveryDetails.customerReference;
+      const settlementStatus = settlementCredited
+        ? 'Credited to wallet'
+        : String(order.paymentStatus || '').toLowerCase() !== 'paid'
+          ? 'Awaiting payment'
+          : internationalSeller && !canConvertToUsd
+            ? 'Exchange rate configuration required'
+            : 'Pending settlement';
       sellerOrders.push({
         ...order,
         customerDetails: safeDeliveryDetails,
         items: sellerItems,
         sellerGross,
+        sellerGrossCurrency: 'KES',
         sellerCommission,
-        sellerNet: roundMoney(sellerGross - sellerCommission),
-        sellerCurrency: String(order.currency || 'KES').toUpperCase(),
+        sellerCommissionCurrency: 'KES',
+        sellerNet,
+        sellerNetBeforeConversion,
+        sellerCurrency,
+        sellerSettlementStatus: settlementStatus,
       });
     }
     return res.json({ success: true, data: sellerOrders });
