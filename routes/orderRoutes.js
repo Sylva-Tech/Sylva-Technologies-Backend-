@@ -749,6 +749,55 @@ router.get('/seller/my-orders', protect, async (req, res) => {
 | this POST is the explicit customer confirmation action.
 |--------------------------------------------------------------------------
 */
+router.get('/delivery-confirmation/:token', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (token.length < 40 || token.length > 200) {
+      return res.status(400).json({ success: false, message: 'This delivery confirmation link is invalid.' });
+    }
+    const order = await Order.findOne({ deliveryConfirmationTokenHash: hashDeliveryToken(token) })
+      .select('+deliveryConfirmationTokenHash')
+      .select('orderNumber status paymentStatus deliveryConfirmationExpiresAt deliveryConfirmedAt customerName customerDetails items');
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'This delivery confirmation link is invalid or has already been used.' });
+    }
+    if (!order.deliveryConfirmationExpiresAt || order.deliveryConfirmationExpiresAt.getTime() < Date.now()) {
+      return res.status(410).json({ success: false, message: 'This delivery confirmation link has expired.' });
+    }
+    if (!['Shipped', 'Delivered'].includes(order.status) || order.paymentStatus !== 'Paid') {
+      return res.status(409).json({ success: false, message: 'This order is not eligible for delivery confirmation yet.' });
+    }
+    const details = order.customerDetails || {};
+    return res.json({
+      success: true,
+      data: {
+        orderNumber: order.orderNumber,
+        status: order.status,
+        alreadyConfirmed: Boolean(order.deliveryConfirmedAt),
+        items: (order.items || []).map((item) => ({
+          name: item.name,
+          quantity: item.quantity,
+          subtotal: item.subtotal,
+        })),
+        deliveryNote: {
+          recipient: details.fullName || order.customerName || '',
+          phone: details.phone || '',
+          country: details.country || 'Kenya',
+          county: details.county || '',
+          subCounty: details.subCounty || '',
+          ward: details.ward || '',
+          deliveryLocation: details.deliveryLocation || '',
+          address: details.address || '',
+          notes: details.notes || '',
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[Delivery confirmation] preview failed:', error.stack || error.message);
+    return res.status(500).json({ success: false, message: 'Unable to load the delivery note right now.' });
+  }
+});
+
 router.post('/confirm-delivery', async (req, res) => {
   try {
     const token = String(req.body?.token || '').trim();
