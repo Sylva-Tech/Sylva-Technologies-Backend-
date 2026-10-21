@@ -1292,7 +1292,7 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
       const safeDelivery = String(customerDetails.deliveryLocation || customerDetails.address || 'Not provided').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const safeItems = String(orderItemsText).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const safePaymentMethod = String(paymentMethod).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      const safePaymentStatus = String(order.paymentStatus || 'Pending').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const safePaymentStatus = String(populatedOrder.paymentStatus || 'Pending').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const adminUrl = 'https://www.sylvatechnologies.co.ke/admin';
       const notification = await sendSalesNotificationEmail({
         subject: 'New order placed: ' + order.orderNumber,
@@ -1312,7 +1312,7 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
         text: 'New order placed: ' + order.orderNumber + '. Customer: ' + customerDetails.fullName +
           '; email: ' + customerEmail + '; phone: ' + customerDetails.phone + '; items: ' + orderItemsText +
           '; total: KSh ' + order.total + '; payment method: ' + paymentMethod +
-          '; payment status: ' + order.paymentStatus + '; delivery location: ' + (customerDetails.deliveryLocation || customerDetails.address || 'Not provided') +
+          '; payment status: ' + populatedOrder.paymentStatus + '; delivery location: ' + (customerDetails.deliveryLocation || customerDetails.address || 'Not provided') +
           '. Admin dashboard: ' + adminUrl,
       });
       if (!notification?.success) {
@@ -1326,8 +1326,8 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
 
     // Wallet orders are already paid inside the order transaction. Send the paid
     // receipt and payment alert here; Paystack and M-Pesa notify from verification callbacks.
-    if (paymentMethod === 'Wallet' && order.paymentStatus === 'Paid') {
-      await sendPaidOrderEmails(order);
+    if (paymentMethod === 'Wallet' && populatedOrder.paymentStatus === 'Paid') {
+      await sendPaidOrderEmails(populatedOrder);
     }
 
     /*
