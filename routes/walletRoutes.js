@@ -1197,8 +1197,8 @@ router.get(
             { role: mongoose.trusted({ $in: ['seller', 'customer'] }) },
             {
               $or: [
-                { 'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } } },
-                { 'usdWallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } } },
+                { 'wallet.transactions': { $elemMatch: { category: 'payout_request', status: mongoose.trusted({ $in: ['pending', 'paid', 'rejected'] }) } } },
+                { 'usdWallet.transactions': { $elemMatch: { category: 'payout_request', status: mongoose.trusted({ $in: ['pending', 'paid', 'rejected'] }) } } },
               ],
             },
           ],
@@ -1228,8 +1228,7 @@ router.get(
           if (
             entry.category !==
               'payout_request' ||
-            entry.status !==
-              'pending'
+            !['pending', 'paid', 'rejected'].includes(String(entry.status || '').toLowerCase())
           ) {
             continue;
           }
@@ -1299,6 +1298,7 @@ router.get(
             createdAt:
               entry.createdAt ||
               null,
+            processedAt: entry.processedAt || null,
           });
         }
       }
@@ -1306,7 +1306,7 @@ router.get(
       // Include pending USD-wallet payouts in the same admin review queue.
       for (const seller of payoutAccounts) {
         for (const entry of (Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [])) {
-          if (entry.category !== 'payout_request' || entry.status !== 'pending') continue;
+          if (entry.category !== 'payout_request' || !['pending', 'paid', 'rejected'].includes(String(entry.status || '').toLowerCase())) continue;
           pendingPayouts.push({
             _id: entry._id,
             account: { role: seller.role, _id: seller._id, name: seller.name || '', email: seller.email || '', phone: seller.phone || '', storeName: seller.sellerProfile?.storeName || '', mpesaPhone: seller.sellerProfile?.mpesaPhone || '' },
@@ -1319,6 +1319,7 @@ router.get(
             destination: entry.metadata?.destination || '',
             reference: entry.reference || '',
             createdAt: entry.createdAt || null,
+            processedAt: entry.processedAt || null,
           });
         }
       }
