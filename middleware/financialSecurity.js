@@ -16,7 +16,22 @@ const cloudflareOriginGuard = (req, res, next) => {
   // guard; the callback handler still requires a matching pending CheckoutRequestID
   // and verifies the transaction directly with Safaricom before crediting a wallet.
   const requestPath = String(req.originalUrl || req.url || '').split('?')[0];
-  if (req.method === 'POST' && requestPath === '/api/wallet/topup/stk/callback') {
+
+  // These public customer workflows are authorized by the high-entropy,
+  // expiring delivery token itself. They must work when opened from email
+  // without an account session or a private Cloudflare origin header.
+  const isSecureDeliveryPreview =
+    req.method === 'GET' &&
+    /^\/api\/orders\/delivery-confirmation\/[^/]+$/.test(requestPath);
+  const isSecureDeliverySubmission =
+    req.method === 'POST' &&
+    requestPath === '/api/orders/confirm-delivery';
+
+  if (
+    (req.method === 'POST' && requestPath === '/api/wallet/topup/stk/callback') ||
+    isSecureDeliveryPreview ||
+    isSecureDeliverySubmission
+  ) {
     return next();
   }
 
