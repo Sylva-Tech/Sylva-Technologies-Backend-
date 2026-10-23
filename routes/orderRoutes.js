@@ -2845,7 +2845,18 @@ router.patch(
 
       await Order.updateOne(
         { _id: order._id },
-        { $set: { status } }
+        {
+          $set: { status },
+          $push: {
+            statusHistory: {
+              status,
+              changedAt: new Date(),
+              changedBy: req.user._id,
+              actorRole: 'admin',
+              note: 'Admin updated overall order status from ' + previousStatus + ' to ' + status + '.',
+            },
+          },
+        }
       );
 
       const updated =
