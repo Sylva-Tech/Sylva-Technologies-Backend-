@@ -67,6 +67,17 @@ const PAYMENT_STATUSES = [
   'Refund Failed',
 ];
 
+
+const sendOperationsNotificationEmail = async ({ subject, html, text }) => {
+  const recipients = [
+    'sales@sylvatechnologies.co.ke',
+    process.env.ORDERS_EMAIL || 'order@sylvatechnologies.co.ke',
+    process.env.PAYMENT_EMAIL || 'payment@sylvatechnologies.co.ke',
+  ];
+  const to = [...new Set(recipients.map((address) => String(address || '').trim().toLowerCase()).filter(Boolean))];
+  return sendMail({ to, subject, html, text, sender: 'sales' });
+};
+
 const roundMoney = (value) => {
   const normalized = Number(value || 0);
 
@@ -1166,7 +1177,7 @@ router.post('/seller/:id/fulfillment-status', protect, async (req, res) => {
       if (!customerEmailResult?.success) console.error('[Seller fulfillment] customer status email failed:', customerEmailResult?.message || 'Unknown email error', { orderNumber: order.orderNumber, status });
     }
 
-    const adminEmailResult = await sendSalesNotificationEmail({
+    const adminEmailResult = await sendOperationsNotificationEmail({
       subject: 'Seller fulfillment update: ' + order.orderNumber + ' — ' + status,
       html: '<main style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:auto;padding:24px"><h2 style="color:#166534">Marketplace fulfillment update</h2><p>Order <strong>' + escapeHtml(order.orderNumber) + '</strong></p><p>Seller store: <strong>' + escapeHtml(storeName) + '</strong></p><p>Seller stage: ' + escapeHtml(previousSellerStatus) + ' → <strong>' + escapeHtml(status) + '</strong></p><p>Overall order status: ' + escapeHtml(previousOrderStatus) + ' → <strong>' + escapeHtml(order.status) + '</strong></p><p>Customer: ' + escapeHtml(order.customerName || order.customerDetails?.fullName || 'Customer') + '</p><p>Payment: ' + escapeHtml(order.paymentStatus || 'Pending') + '</p><p>Tracking/carrier: ' + escapeHtml([fulfillment.carrier, fulfillment.trackingNumber].filter(Boolean).join(' · ') || 'Not supplied') + '</p><p>Seller note: ' + escapeHtml(note || '—') + '</p></main>',
       text: 'Order ' + order.orderNumber + ': seller ' + storeName + ' changed fulfillment from ' + previousSellerStatus + ' to ' + status + '. Overall order status: ' + order.status + '. Tracking: ' + (fulfillment.trackingNumber || 'Not supplied') + '.',
@@ -1403,7 +1414,7 @@ router.post('/confirm-delivery', async (req, res) => {
         console.error('[Delivery confirmation] seller name lookup for admin notification failed:', sellerLookupError.message);
       }
       const deliveredAt = order.deliveryConfirmedAt ? new Date(order.deliveryConfirmedAt).toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' }) : 'Not available';
-      const adminDeliveryEmail = await sendSalesNotificationEmail({
+      const adminDeliveryEmail = await sendOperationsNotificationEmail({
         subject: 'DELIVERED — customer receipt confirmed: ' + order.orderNumber,
         html: '<main style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:auto;padding:24px"><h2 style="color:#166534">Order delivered — customer receipt confirmed</h2><p>Order: <strong>' + escapeHtml(order.orderNumber) + '</strong></p><p>Overall status: <strong>Delivered</strong></p><p>Seller store(s): ' + escapeHtml(storeNames.join(', ') || 'Sylva Technologies marketplace') + '</p><p>Recipient: <strong>' + escapeHtml(order.deliveryConfirmationRecipientName || order.deliveryConfirmationSignature || 'Not provided') + '</strong></p><p>Recipient type: ' + (authorizedRecipient ? 'Authorized person acting for the customer' : 'Customer / recipient') + '</p><p>Customer authorization confirmed: ' + (authorizedRecipient && authorizationConfirmed ? 'Yes' : 'Not applicable') + '</p><p>Receipt confirmation time (EAT): ' + escapeHtml(deliveredAt) + '</p><p>Payment status: ' + escapeHtml(order.paymentStatus || 'Pending') + '</p><p>Delivery evidence has been recorded in the order. The recipient’s ID number and ID image are intentionally excluded from this notification.</p></main>',
         text: 'Order ' + order.orderNumber + ' has been marked Delivered after recipient confirmation. Store(s): ' + (storeNames.join(', ') || 'Sylva Technologies marketplace') + '. Recipient: ' + (order.deliveryConfirmationRecipientName || order.deliveryConfirmationSignature || 'Not provided') + '. Authorized recipient: ' + (authorizedRecipient && authorizationConfirmed ? 'Yes' : 'No').toString() + '. Confirmation time EAT: ' + deliveredAt + '.',
