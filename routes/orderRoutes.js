@@ -854,6 +854,64 @@ router.patch('/:id/admin-review', protect, adminOnly, async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
+| SIGNED DELIVERY EVIDENCE — ROLE-SCOPED ACCESS
+|--------------------------------------------------------------------------
+| Admins may review the full evidence pack, including recipient ID image.
+| The relevant seller may view/download the signed delivery note, but never
+| receives the recipient's ID number or ID document image.
+|--------------------------------------------------------------------------
+*/
+router.get('/:id/delivery-evidence', protect, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid order ID.' });
+    }
+    const order = await Order.findById(req.params.id)
+      .select('+deliveryConfirmationRecipientIdImage')
+      .populate({ path: 'items.product', select: 'seller name', populate: { path: 'seller', select: '_id sellerProfile.storeName name' } });
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
+    if (!order.deliveryConfirmedAt || order.status !== 'Delivered') {
+      return res.status(409).json({ success: false, message: 'A signed delivery form is not available until receipt has been confirmed.' });
+    }
+    const isAdmin = String(req.user?.role || '').toLowerCase() === 'admin';
+    const sellerId = String(req.user?._id || '');
+    const sellerItems = (order.items || []).filter((item) => String(item.product?.seller?._id || item.product?.seller || '') === sellerId);
+    if (!isAdmin && sellerItems.length === 0) {
+      return res.status(403).json({ success: false, message: 'You are not authorized to view this delivery evidence.' });
+    }
+    const storeNames = [...new Set((order.items || []).map((item) => item.product?.seller?.sellerProfile?.storeName || item.product?.seller?.name).filter(Boolean))];
+    const evidence = {
+      orderId: String(order._id),
+      orderNumber: order.orderNumber,
+      status: order.status,
+      deliveryConfirmedAt: order.deliveryConfirmedAt,
+      deliveryConfirmationRecipientName: order.deliveryConfirmationRecipientName,
+      deliveryConfirmationSignature: order.deliveryConfirmationSignature,
+      deliveryConfirmationSignatureImage: order.deliveryConfirmationSignatureImage,
+      deliveryConfirmationIsAuthorizedRecipient: order.deliveryConfirmationIsAuthorizedRecipient,
+      deliveryConfirmationCustomerAuthorizationConfirmed: order.deliveryConfirmationCustomerAuthorizationConfirmed,
+      sellerStoreNames: storeNames,
+      items: (order.items || []).filter((item) => isAdmin || sellerItems.some((sellerItem) => String(sellerItem._id) === String(item._id))).map((item) => ({
+        name: item.name || item.product?.name || 'Product',
+        quantity: item.quantity || 1,
+        subtotal: item.subtotal || 0,
+      })),
+    };
+    if (isAdmin) {
+      evidence.deliveryConfirmationRecipientIdNumber = order.deliveryConfirmationRecipientIdNumber;
+      evidence.deliveryConfirmationRecipientIdImage = order.deliveryConfirmationRecipientIdImage;
+      evidence.deliveryConfirmationIp = order.deliveryConfirmationIp;
+      evidence.deliveryConfirmationUserAgent = order.deliveryConfirmationUserAgent;
+    }
+    return res.json({ success: true, data: evidence });
+  } catch (error) {
+    console.error('[Delivery evidence] access failed:', error.stack || error.message);
+    return res.status(500).json({ success: false, message: 'Unable to retrieve delivery evidence.' });
+  }
+});
+
+/*
+|--------------------------------------------------------------------------
 | GET MY ORDERS - CUSTOMER
 |--------------------------------------------------------------------------
 */
