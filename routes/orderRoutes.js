@@ -817,7 +817,7 @@ router.get('/delivery-confirmation/:token', async (req, res) => {
     }
     const order = await Order.findOne({ deliveryConfirmationTokenHash: hashDeliveryToken(token) })
       .select('+deliveryConfirmationTokenHash')
-      .select('orderNumber status paymentStatus deliveryConfirmationExpiresAt deliveryConfirmedAt customerName customerDetails items');
+      .select('orderNumber status paymentStatus deliveryConfirmationExpiresAt deliveryConfirmedAt customer customerName customerDetails items');
     if (!order) {
       return res.status(404).json({ success: false, message: 'This delivery confirmation link is invalid or has already been used.' });
     }
@@ -828,17 +828,39 @@ router.get('/delivery-confirmation/:token', async (req, res) => {
       return res.status(409).json({ success: false, message: 'This order is not eligible for delivery confirmation yet.' });
     }
     const details = order.customerDetails || {};
+    const productIds = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
+    const products = productIds.length
+      ? await Product.find({ _id: { $in: productIds } }).select('_id seller name').populate('seller', '_id name sellerProfile.storeName').lean()
+      : [];
+    const sellerByProduct = new Map(products.map((product) => [String(product._id), product.seller || null]));
+    const storeMap = new Map();
+    (order.items || []).forEach((item) => {
+      const productId = item?.product ? String(item.product._id || item.product) : '';
+      const seller = sellerByProduct.get(productId);
+      const storeId = seller?._id ? String(seller._id) : 'SYLVA-PLATFORM';
+      const storeName = seller ? String(seller.sellerProfile?.storeName || seller.name || 'Marketplace Seller').trim() : 'Sylva Technologies';
+      if (!storeMap.has(storeId)) storeMap.set(storeId, { storeName, storeId, items: [] });
+      storeMap.get(storeId).items.push({ name: item.name, quantity: item.quantity });
+    });
+    const stores = [...storeMap.values()];
     return res.json({
       success: true,
       data: {
         orderNumber: order.orderNumber,
         status: order.status,
         alreadyConfirmed: Boolean(order.deliveryConfirmedAt),
-        items: (order.items || []).map((item) => ({
-          name: item.name,
-          quantity: item.quantity,
-          subtotal: item.subtotal,
-        })),
+        customerId: order.customer ? String(order.customer) : (details.customerReference || 'CUSTOMER'),
+        stores,
+        items: (order.items || []).map((item) => {
+          const productId = item?.product ? String(item.product._id || item.product) : '';
+          const seller = sellerByProduct.get(productId);
+          return {
+            name: item.name,
+            quantity: item.quantity,
+            subtotal: item.subtotal,
+            storeName: seller ? String(seller.sellerProfile?.storeName || seller.name || 'Marketplace Seller').trim() : 'Sylva Technologies',
+          };
+        }),
         deliveryNote: {
           recipient: details.fullName || order.customerName || '',
           phone: details.phone || '',
@@ -862,9 +884,12 @@ router.post('/confirm-delivery', async (req, res) => {
   try {
     const token = String(req.body?.token || '').trim();
     const signature = String(req.body?.signature || '').trim();
+    const signatureImage = String(req.body?.signatureImage || '').trim();
+    const idNumber = String(req.body?.idNumber || '').trim();
     const acknowledged = req.body?.acknowledged === true;
-    if (token.length < 40 || token.length > 200 || !signature || signature.length > 120 || !acknowledged) {
-      return res.status(400).json({ success: false, message: 'Enter your full name as an electronic signature and confirm that you received the product and delivery note.' });
+    const validSignatureImage = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(signatureImage) && signatureImage.length <= 240000;
+    if (token.length < 40 || token.length > 200 || !signature || signature.length > 120 || !idNumber || idNumber.length > 50 || !validSignatureImage || !acknowledged) {
+      return res.status(400).json({ success: false, message: 'Enter your full name and ID number, sign in the signature box, and confirm receipt of the product and delivery note.' });
     }
     const tokenHash = hashDeliveryToken(token);
     const order = await Order.findOne({ deliveryConfirmationTokenHash: tokenHash }).select('+deliveryConfirmationTokenHash');
@@ -883,6 +908,8 @@ router.post('/confirm-delivery', async (req, res) => {
     if (!order.deliveryConfirmedAt) {
       order.deliveryConfirmedAt = new Date();
       order.deliveryConfirmationSignature = signature;
+      order.deliveryConfirmationSignatureImage = signatureImage;
+      order.customerDetails = { ...(order.customerDetails?.toObject?.() || order.customerDetails || {}), idNumber };
       order.deliveryConfirmationIp = String(req.ip || '').slice(0, 100);
       order.deliveryConfirmationUserAgent = String(req.get('user-agent') || '').slice(0, 500);
       order.status = 'Delivered';
