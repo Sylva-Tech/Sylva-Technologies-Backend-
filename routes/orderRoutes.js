@@ -274,6 +274,181 @@ const applySellerSettlement = async (order) => {
 };
 
 
+// Track seller-owned M-Pesa proceeds as held platform funds until the customer confirms delivery.
+// This is an internal ledger hold; the actual M-Pesa collection remains in the configured business Till.
+const getSellerOrderGrossAmounts = async (order) => {
+  const productIds = [...new Set((order?.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
+  if (!productIds.length) return [];
+  const products = await Product.find({ _id: { $in: productIds } }).select('_id seller name').populate('seller', '_id name sellerProfile.storeName').lean();
+  const productById = new Map(products.map((product) => [String(product._id), product]));
+  const sellers = new Map();
+  for (const item of order.items || []) {
+    const productId = item?.product ? String(item.product._id || item.product) : '';
+    const product = productById.get(productId);
+    const seller = product?.seller;
+    if (!seller?._id) continue; // Sylva-owned products are not seller escrow.
+    const sellerId = String(seller._id);
+    const subtotal = roundMoney(Number(item.subtotal || 0));
+    if (subtotal <= 0) continue;
+    if (!sellers.has(sellerId)) {
+      sellers.set(sellerId, {
+        sellerId,
+        storeName: String(seller.sellerProfile?.storeName || seller.name || 'Marketplace Seller').trim(),
+        grossAmount: 0,
+      });
+    }
+    const group = sellers.get(sellerId);
+    group.grossAmount = roundMoney(group.grossAmount + subtotal);
+  }
+  return [...sellers.values()].filter((seller) => seller.grossAmount > 0);
+};
+
+const sellerEscrowReference = (order, sellerId) => 'seller-escrow:order:' + String(order.orderNumber) + ':' + String(sellerId);
+const sellerEscrowReleaseReference = (order, sellerId) => 'seller-escrow-release:order:' + String(order.orderNumber) + ':' + String(sellerId);
+
+const holdSellerProceedsInPlatformWallet = async (order) => {
+  if (!order || order.paymentMethod !== 'M-Pesa' || order.paymentStatus !== 'Paid') {
+    return { held: 0, expected: 0, skipped: true };
+  }
+  const sellerAmounts = await getSellerOrderGrossAmounts(order);
+  if (!sellerAmounts.length) return { held: 0, expected: 0, skipped: false };
+  let platform = await AdminWallet.findOne({ key: 'platform' });
+  if (!platform) {
+    try {
+      platform = await AdminWallet.create({ key: 'platform', currency: 'KES' });
+    } catch (error) {
+      if (error.code !== 11000) throw error;
+      platform = await AdminWallet.findOne({ key: 'platform' });
+    }
+  }
+  let held = 0;
+  for (const seller of sellerAmounts) {
+    const reference = sellerEscrowReference(order, seller.sellerId);
+    if ((platform.transactions || []).some((tx) => tx.reference === reference)) {
+      held += 1;
+      continue;
+    }
+    const now = new Date();
+    const updated = await AdminWallet.findOneAndUpdate(
+      {
+        key: 'platform',
+        transactions: mongoose.trusted({ $not: { $elemMatch: { reference } } }),
+      },
+      {
+        $inc: { pendingBalance: seller.grossAmount },
+        $set: { lastUpdatedAt: now },
+        $push: {
+          transactions: {
+            type: 'credit',
+            amount: seller.grossAmount,
+            category: 'seller_order_escrow',
+            status: 'pending',
+            description: 'Seller order proceeds held until customer delivery confirmation for order ' + order.orderNumber + '.',
+            reference,
+            relatedUser: seller.sellerId,
+            metadata: {
+              orderId: String(order._id),
+              orderNumber: order.orderNumber,
+              sellerId: seller.sellerId,
+              storeName: seller.storeName,
+              grossAmount: seller.grossAmount,
+              commissionRate: Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.04),
+              releaseCondition: 'Customer confirms delivery',
+              paymentMethod: 'M-Pesa',
+            },
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      },
+      { new: true, runValidators: true }
+    );
+    if (updated) {
+      platform = updated;
+      held += 1;
+    } else {
+      // A concurrent callback may have inserted this seller's hold after our read.
+      platform = await AdminWallet.findOne({ key: 'platform' });
+      if ((platform?.transactions || []).some((tx) => tx.reference === reference)) {
+        held += 1;
+        continue;
+      }
+      throw new Error('Unable to reserve M-Pesa proceeds for seller ' + seller.sellerId + ' on order ' + order.orderNumber + '.');
+    }
+  }
+  return { held, expected: sellerAmounts.length, complete: held === sellerAmounts.length };
+};
+
+const releaseSellerProceedsFromPlatformWallet = async (order) => {
+  if (!order || order.paymentMethod !== 'M-Pesa') return { released: 0, expected: 0, skipped: true };
+  const sellerAmounts = await getSellerOrderGrossAmounts(order);
+  if (!sellerAmounts.length) return { released: 0, expected: 0, complete: true };
+  let platform = await AdminWallet.findOne({ key: 'platform' });
+  if (!platform) throw new Error('Platform wallet is missing while releasing seller proceeds.');
+  let released = 0;
+  for (const seller of sellerAmounts) {
+    const holdReference = sellerEscrowReference(order, seller.sellerId);
+    const releaseReference = sellerEscrowReleaseReference(order, seller.sellerId);
+    if ((platform.transactions || []).some((tx) => tx.reference === releaseReference)) {
+      released += 1;
+      continue;
+    }
+    const hold = (platform.transactions || []).find((tx) => tx.reference === holdReference);
+    if (!hold || hold.status !== 'pending') {
+      throw new Error('Pending seller proceeds hold is missing for order ' + order.orderNumber + ', seller ' + seller.sellerId + '.');
+    }
+    const now = new Date();
+    const updated = await AdminWallet.findOneAndUpdate(
+      {
+        key: 'platform',
+        pendingBalance: mongoose.trusted({ $gte: seller.grossAmount }),
+        transactions: mongoose.trusted({ $elemMatch: { reference: holdReference, status: 'pending' } }),
+        $and: [
+          { transactions: mongoose.trusted({ $not: { $elemMatch: { reference: releaseReference } } }) },
+        ],
+      },
+      {
+        $inc: { pendingBalance: -seller.grossAmount },
+        $set: {
+          lastUpdatedAt: now,
+          'transactions.$.status': 'completed',
+          'transactions.$.processedAt': now,
+          'transactions.$.updatedAt': now,
+          'transactions.$.description': 'Seller proceeds released from escrow after customer delivery confirmation for order ' + order.orderNumber + '.',
+        },
+        $push: {
+          transactions: {
+            type: 'debit',
+            amount: seller.grossAmount,
+            category: 'seller_order_escrow',
+            status: 'completed',
+            description: 'Release held seller proceeds after confirmed delivery for order ' + order.orderNumber + '.',
+            reference: releaseReference,
+            relatedUser: seller.sellerId,
+            metadata: { orderId: String(order._id), orderNumber: order.orderNumber, sellerId: seller.sellerId, storeName: seller.storeName, grossAmount: seller.grossAmount, paymentMethod: 'M-Pesa' },
+            createdAt: now,
+            updatedAt: now,
+            processedAt: now,
+          },
+        },
+      },
+      { new: true, runValidators: true }
+    );
+    if (updated) {
+      platform = updated;
+      released += 1;
+    } else {
+      platform = await AdminWallet.findOne({ key: 'platform' });
+      if ((platform?.transactions || []).some((tx) => tx.reference === releaseReference)) {
+        released += 1;
+        continue;
+      }
+      throw new Error('Unable to release held M-Pesa proceeds for order ' + order.orderNumber + ', seller ' + seller.sellerId + '.');
+    }
+  }
+  return { released, expected: sellerAmounts.length, complete: released === sellerAmounts.length };
+};
+
 const hashDeliveryToken = (token) => crypto.createHash('sha256').update(String(token || '')).digest('hex');
 
 const createDeliveryConfirmationToken = async (order) => {
