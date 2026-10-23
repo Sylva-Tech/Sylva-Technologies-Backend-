@@ -1330,6 +1330,13 @@ router.post('/confirm-delivery', async (req, res) => {
       order.deliveryConfirmationIp = String(req.ip || '').slice(0, 100);
       order.deliveryConfirmationUserAgent = String(req.get('user-agent') || '').slice(0, 500);
       order.status = 'Delivered';
+      order.statusHistory.push({
+        status: 'Delivered',
+        changedAt: new Date(),
+        changedBy: null,
+        actorRole: authorizedRecipient ? 'authorized_recipient' : 'recipient',
+        note: authorizedRecipient ? 'Delivery receipt confirmed by an authorized recipient.' : 'Delivery receipt confirmed by recipient.',
+      });
       await order.save();
     }
 
@@ -1368,6 +1375,34 @@ router.post('/confirm-delivery', async (req, res) => {
       });
       if (!statusEmail?.success) console.error('[Delivery confirmation] receipt email failed:', statusEmail?.message || 'Unknown email error', { orderNumber: order.orderNumber });
     }
+    if (!order.deliveryAdminNotifiedAt) {
+      const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+      const sellerProductIds = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
+      let storeNames = [];
+      try {
+        const sellerProducts = sellerProductIds.length
+          ? await Product.find({ _id: mongoose.trusted({ $in: sellerProductIds }) }).select('_id seller').lean()
+          : [];
+        const sellerIds = [...new Set(sellerProducts.map((product) => product.seller ? String(product.seller) : '').filter(Boolean))];
+        const sellerAccounts = sellerIds.length ? await User.find({ _id: mongoose.trusted({ $in: sellerIds }) }).select('name storeName sellerProfile.storeName').lean() : [];
+        storeNames = sellerAccounts.map((seller) => seller.sellerProfile?.storeName || seller.storeName || seller.name).filter(Boolean);
+      } catch (sellerLookupError) {
+        console.error('[Delivery confirmation] seller name lookup for admin notification failed:', sellerLookupError.message);
+      }
+      const deliveredAt = order.deliveryConfirmedAt ? new Date(order.deliveryConfirmedAt).toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' }) : 'Not available';
+      const adminDeliveryEmail = await sendSalesNotificationEmail({
+        subject: 'DELIVERED — customer receipt confirmed: ' + order.orderNumber,
+        html: '<main style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:auto;padding:24px"><h2 style="color:#166534">Order delivered — customer receipt confirmed</h2><p>Order: <strong>' + escapeHtml(order.orderNumber) + '</strong></p><p>Overall status: <strong>Delivered</strong></p><p>Seller store(s): ' + escapeHtml(storeNames.join(', ') || 'Sylva Technologies marketplace') + '</p><p>Recipient: <strong>' + escapeHtml(order.deliveryConfirmationRecipientName || order.deliveryConfirmationSignature || 'Not provided') + '</strong></p><p>Recipient type: ' + (authorizedRecipient ? 'Authorized person acting for the customer' : 'Customer / recipient') + '</p><p>Customer authorization confirmed: ' + (authorizedRecipient && authorizationConfirmed ? 'Yes' : 'Not applicable') + '</p><p>Receipt confirmation time (EAT): ' + escapeHtml(deliveredAt) + '</p><p>Payment status: ' + escapeHtml(order.paymentStatus || 'Pending') + '</p><p>Delivery evidence has been recorded in the order. The recipient’s ID number and ID image are intentionally excluded from this notification.</p></main>',
+        text: 'Order ' + order.orderNumber + ' has been marked Delivered after recipient confirmation. Store(s): ' + (storeNames.join(', ') || 'Sylva Technologies marketplace') + '. Recipient: ' + (order.deliveryConfirmationRecipientName || order.deliveryConfirmationSignature || 'Not provided') + '. Authorized recipient: ' + (authorizedRecipient && authorizationConfirmed ? 'Yes' : 'No').toString() + '. Confirmation time EAT: ' + deliveredAt + '.',
+      });
+      if (adminDeliveryEmail?.success) {
+        order.deliveryAdminNotifiedAt = new Date();
+        await order.save();
+      } else {
+        console.error('[Delivery confirmation] admin delivery notification failed:', adminDeliveryEmail?.message || 'Unknown email error', { orderNumber: order.orderNumber });
+      }
+    }
+
     return res.json({
       success: true,
       message: 'Delivery confirmed. Seller earnings have been credited to the seller wallet and Sylva commission has been recorded.',
