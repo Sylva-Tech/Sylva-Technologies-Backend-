@@ -1330,6 +1330,19 @@ router.post('/confirm-delivery', async (req, res) => {
       order.deliveryConfirmationIp = String(req.ip || '').slice(0, 100);
       order.deliveryConfirmationUserAgent = String(req.get('user-agent') || '').slice(0, 500);
       order.status = 'Delivered';
+      for (const sellerFulfillment of order.sellerFulfillments || []) {
+        if (sellerFulfillment.status !== 'Delivered') {
+          sellerFulfillment.status = 'Delivered';
+          sellerFulfillment.history.push({
+            status: 'Delivered',
+            changedAt: new Date(),
+            changedBy: null,
+            note: 'Customer or authorized recipient confirmed physical receipt.',
+            trackingNumber: sellerFulfillment.trackingNumber || '',
+            carrier: sellerFulfillment.carrier || '',
+          });
+        }
+      }
       order.statusHistory.push({
         status: 'Delivered',
         changedAt: new Date(),
