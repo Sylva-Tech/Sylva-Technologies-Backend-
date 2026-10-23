@@ -307,7 +307,32 @@ const orderSchema = new mongoose.Schema(
       default: 'Pending',
     },
 
+    // Seller-specific fulfillment tracking, so each seller manages only their own items.
+    sellerFulfillments: [{
+      seller: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+      status: { type: String, enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped'], default: 'Pending' },
+      trackingNumber: { type: String, trim: true, maxlength: 120, default: '' },
+      carrier: { type: String, trim: true, maxlength: 120, default: '' },
+      note: { type: String, trim: true, maxlength: 1000, default: '' },
+      history: [{
+        status: { type: String, enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped'], required: true },
+        changedAt: { type: Date, default: Date.now },
+        changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+        note: { type: String, trim: true, maxlength: 1000, default: '' },
+        trackingNumber: { type: String, trim: true, maxlength: 120, default: '' },
+        carrier: { type: String, trim: true, maxlength: 120, default: '' },
+      }],
+    }],
+    statusHistory: [{
+      status: { type: String, trim: true, maxlength: 80, required: true },
+      changedAt: { type: Date, default: Date.now },
+      changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      actorRole: { type: String, trim: true, maxlength: 30, default: '' },
+      note: { type: String, trim: true, maxlength: 1000, default: '' },
+    }],
+
     // Customer receipt confirmation and settlement audit.
+    deliveryAdminNotifiedAt: { type: Date, default: null },
     deliveryConfirmationTokenHash: { type: String, default: '', select: false },
     deliveryConfirmationExpiresAt: { type: Date, default: null, index: true },
     deliveryConfirmedAt: { type: Date, default: null, index: true },
