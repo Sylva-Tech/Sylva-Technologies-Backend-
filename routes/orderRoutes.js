@@ -817,7 +817,7 @@ router.get('/delivery-confirmation/:token', async (req, res) => {
     }
     const order = await Order.findOne({ deliveryConfirmationTokenHash: hashDeliveryToken(token) })
       .select('+deliveryConfirmationTokenHash')
-      .select('orderNumber status paymentStatus deliveryConfirmationExpiresAt deliveryConfirmedAt customerName customerDetails items');
+      .select('orderNumber status paymentStatus deliveryConfirmationExpiresAt deliveryConfirmedAt customer customerName customerDetails items');
     if (!order) {
       return res.status(404).json({ success: false, message: 'This delivery confirmation link is invalid or has already been used.' });
     }
@@ -828,17 +828,39 @@ router.get('/delivery-confirmation/:token', async (req, res) => {
       return res.status(409).json({ success: false, message: 'This order is not eligible for delivery confirmation yet.' });
     }
     const details = order.customerDetails || {};
+    const productIds = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
+    const products = productIds.length
+      ? await Product.find({ _id: { $in: productIds } }).select('_id seller name').populate('seller', '_id name sellerProfile.storeName').lean()
+      : [];
+    const sellerByProduct = new Map(products.map((product) => [String(product._id), product.seller || null]));
+    const storeMap = new Map();
+    (order.items || []).forEach((item) => {
+      const productId = item?.product ? String(item.product._id || item.product) : '';
+      const seller = sellerByProduct.get(productId);
+      const storeId = seller?._id ? String(seller._id) : 'SYLVA-PLATFORM';
+      const storeName = seller ? String(seller.sellerProfile?.storeName || seller.name || 'Marketplace Seller').trim() : 'Sylva Technologies';
+      if (!storeMap.has(storeId)) storeMap.set(storeId, { storeName, storeId, items: [] });
+      storeMap.get(storeId).items.push({ name: item.name, quantity: item.quantity });
+    });
+    const stores = [...storeMap.values()];
     return res.json({
       success: true,
       data: {
         orderNumber: order.orderNumber,
         status: order.status,
         alreadyConfirmed: Boolean(order.deliveryConfirmedAt),
-        items: (order.items || []).map((item) => ({
-          name: item.name,
-          quantity: item.quantity,
-          subtotal: item.subtotal,
-        })),
+        customerId: order.customer ? String(order.customer) : (details.customerReference || 'CUSTOMER'),
+        stores,
+        items: (order.items || []).map((item) => {
+          const productId = item?.product ? String(item.product._id || item.product) : '';
+          const seller = sellerByProduct.get(productId);
+          return {
+            name: item.name,
+            quantity: item.quantity,
+            subtotal: item.subtotal,
+            storeName: seller ? String(seller.sellerProfile?.storeName || seller.name || 'Marketplace Seller').trim() : 'Sylva Technologies',
+          };
+        }),
         deliveryNote: {
           recipient: details.fullName || order.customerName || '',
           phone: details.phone || '',
