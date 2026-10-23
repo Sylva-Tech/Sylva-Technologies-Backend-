@@ -266,8 +266,11 @@ const applySellerSettlement = async (order) => {
     settledCount += 1;
   }
 
+  // Orders containing only Sylva-owned products have no seller wallet to settle.
+  // Treat that as a successful no-op; otherwise the delivery receipt is saved but
+  // the API incorrectly reports settlement failure and never completes the flow.
   return {
-    settled: groupedSettlements.size > 0 && settledCount === groupedSettlements.size,
+    settled: groupedSettlements.size === 0 || settledCount === groupedSettlements.size,
     count: settledCount,
     expected: groupedSettlements.size,
   };
