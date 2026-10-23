@@ -1017,8 +1017,10 @@ router.get('/seller/my-orders', protect, async (req, res) => {
           : internationalSeller && !canConvertToUsd
             ? 'Exchange rate configuration required'
             : 'Pending settlement';
+      const sellerFulfillment = (order.sellerFulfillments || []).find((entry) => String(entry.seller?._id || entry.seller) === sellerId) || null;
       sellerOrders.push({
         ...order,
+        sellerFulfillment,
         customerDetails: safeDeliveryDetails,
         items: sellerItems,
         sellerGross,
@@ -1037,6 +1039,160 @@ router.get('/seller/my-orders', protect, async (req, res) => {
   } catch (error) {
     console.error('Get seller orders error:', error.message);
     return res.status(500).json({ success: false, message: 'Unable to retrieve seller orders.' });
+  }
+});
+
+/*
+|--------------------------------------------------------------------------
+| SELLER FULFILLMENT WORKFLOW
+|--------------------------------------------------------------------------
+| Each seller may advance only their own items through the fulfillment stages.
+| A parent order is globally Shipped only after every seller group is shipped.
+|--------------------------------------------------------------------------
+*/
+router.post('/seller/:id/fulfillment-status', protect, async (req, res) => {
+  try {
+    if (req.user?.role !== 'seller') {
+      return res.status(403).json({ success: false, message: 'Seller access is required.' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid order ID.' });
+    }
+
+    const allowedStatuses = ['Confirmed', 'Processing', 'Ready for Delivery', 'Shipped'];
+    const status = String(req.body?.status || '').trim();
+    const note = String(req.body?.note || '').trim().slice(0, 1000);
+    const trackingNumber = String(req.body?.trackingNumber || '').trim().slice(0, 120);
+    const carrier = String(req.body?.carrier || '').trim().slice(0, 120);
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: 'Choose a valid fulfillment stage.' });
+    }
+    if (status === 'Shipped' && !trackingNumber && !note) {
+      return res.status(400).json({ success: false, message: 'Add a tracking number or a dispatch note before marking the order Shipped.' });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
+    if (['Cancelled', 'Delivered'].includes(order.status) || order.deliveryConfirmedAt) {
+      return res.status(409).json({ success: false, message: 'This order is cancelled or already delivered and cannot be advanced.' });
+    }
+    if (!['Paid', 'Cash on Delivery', 'WhatsApp Order'].includes(String(order.paymentStatus === 'Paid' ? 'Paid' : order.paymentMethod))) {
+      return res.status(409).json({ success: false, message: 'This order must have verified payment or use an approved pay-on-delivery order method before fulfillment.' });
+    }
+
+    const productIds = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
+    const products = productIds.length
+      ? await Product.find({ _id: mongoose.trusted({ $in: productIds }) }).select('_id seller').lean()
+      : [];
+    const sellerProductIds = new Set(products.filter((product) => String(product.seller || '') === String(req.user._id)).map((product) => String(product._id)));
+    const sellerItems = (order.items || []).filter((item) => item?.product && sellerProductIds.has(String(item.product._id || item.product)));
+    if (!sellerItems.length) {
+      return res.status(403).json({ success: false, message: 'This order does not contain products belonging to your seller account.' });
+    }
+
+    const sellerIds = [...new Set(products.map((product) => product.seller ? String(product.seller) : '').filter(Boolean))];
+    let fulfillment = (order.sellerFulfillments || []).find((entry) => String(entry.seller?._id || entry.seller) === String(req.user._id));
+    if (!fulfillment) {
+      fulfillment = order.sellerFulfillments.create({ seller: req.user._id, status: 'Pending', history: [] });
+      order.sellerFulfillments.push(fulfillment);
+    }
+    const stageOrder = ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped'];
+    const currentStatus = String(fulfillment.status || 'Pending');
+    const currentIndex = stageOrder.indexOf(currentStatus);
+    const nextIndex = stageOrder.indexOf(status);
+    if (nextIndex < currentIndex || nextIndex > currentIndex + 1) {
+      return res.status(409).json({
+        success: false,
+        message: currentIndex >= nextIndex
+          ? 'Fulfillment stages cannot be moved backwards.'
+          : 'Complete the previous fulfillment stage first.',
+        data: { currentStatus },
+      });
+    }
+    if (currentStatus === status) {
+      return res.json({ success: true, message: 'This seller fulfillment stage is already recorded.', data: { status: currentStatus, orderStatus: order.status } });
+    }
+
+    const previousSellerStatus = currentStatus;
+    fulfillment.status = status;
+    fulfillment.note = note;
+    fulfillment.trackingNumber = trackingNumber || fulfillment.trackingNumber || '';
+    fulfillment.carrier = carrier || fulfillment.carrier || '';
+    fulfillment.history.push({
+      status,
+      changedAt: new Date(),
+      changedBy: req.user._id,
+      note,
+      trackingNumber: fulfillment.trackingNumber,
+      carrier: fulfillment.carrier,
+    });
+    order.statusHistory.push({
+      status: 'Seller ' + status,
+      changedAt: new Date(),
+      changedBy: req.user._id,
+      actorRole: 'seller',
+      note: 'Seller ' + String(req.user.name || 'Seller') + ': ' + (note || status) +
+        (fulfillment.trackingNumber ? ' | Tracking: ' + fulfillment.trackingNumber : '') +
+        (fulfillment.carrier ? ' | Carrier: ' + fulfillment.carrier : ''),
+    });
+
+    const statusBySeller = new Map((order.sellerFulfillments || []).map((entry) => [String(entry.seller?._id || entry.seller), String(entry.status || 'Pending')]));
+    statusBySeller.set(String(req.user._id), status);
+    const everySellerShipped = sellerIds.length > 0 && sellerIds.every((sellerId) => statusBySeller.get(sellerId) === 'Shipped');
+    const everySellerReady = sellerIds.length > 0 && sellerIds.every((sellerId) => ['Ready for Delivery', 'Shipped'].includes(statusBySeller.get(sellerId) || 'Pending'));
+    const anySellerInProgress = sellerIds.some((sellerId) => ['Processing', 'Ready for Delivery', 'Shipped'].includes(statusBySeller.get(sellerId) || 'Pending'));
+    const anySellerConfirmed = sellerIds.some((sellerId) => ['Confirmed', 'Processing', 'Ready for Delivery', 'Shipped'].includes(statusBySeller.get(sellerId) || 'Pending'));
+    const previousOrderStatus = order.status;
+    order.status = everySellerShipped ? 'Shipped' : everySellerReady ? 'Ready for Delivery' : anySellerInProgress ? 'Processing' : anySellerConfirmed ? 'Confirmed' : 'Pending';
+    await order.save();
+
+    const sellerAccount = await User.findById(req.user._id).select('name email storeName sellerProfile.storeName').lean();
+    const storeName = sellerAccount?.sellerProfile?.storeName || sellerAccount?.storeName || sellerAccount?.name || 'Marketplace seller';
+    let deliveryConfirmationLink = '';
+    if (order.status === 'Shipped' && order.paymentStatus === 'Paid' && !order.deliveryConfirmedAt) {
+      deliveryConfirmationLink = await createDeliveryConfirmationToken(order);
+    }
+
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    const statusEmail = order.customerEmail || order.customerDetails?.email;
+    if (statusEmail) {
+      const customerEmailResult = await sendOrderStatusUpdateEmail({
+        to: statusEmail,
+        customerName: order.customerName || order.customerDetails?.fullName || 'Customer',
+        orderNumber: order.orderNumber,
+        status: status + ' (' + storeName + ')',
+        deliveryConfirmationLink,
+      });
+      if (!customerEmailResult?.success) console.error('[Seller fulfillment] customer status email failed:', customerEmailResult?.message || 'Unknown email error', { orderNumber: order.orderNumber, status });
+    }
+
+    const adminEmailResult = await sendSalesNotificationEmail({
+      subject: 'Seller fulfillment update: ' + order.orderNumber + ' — ' + status,
+      html: '<main style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:auto;padding:24px"><h2 style="color:#166534">Marketplace fulfillment update</h2><p>Order <strong>' + escapeHtml(order.orderNumber) + '</strong></p><p>Seller store: <strong>' + escapeHtml(storeName) + '</strong></p><p>Seller stage: ' + escapeHtml(previousSellerStatus) + ' → <strong>' + escapeHtml(status) + '</strong></p><p>Overall order status: ' + escapeHtml(previousOrderStatus) + ' → <strong>' + escapeHtml(order.status) + '</strong></p><p>Customer: ' + escapeHtml(order.customerName || order.customerDetails?.fullName || 'Customer') + '</p><p>Payment: ' + escapeHtml(order.paymentStatus || 'Pending') + '</p><p>Tracking/carrier: ' + escapeHtml([fulfillment.carrier, fulfillment.trackingNumber].filter(Boolean).join(' · ') || 'Not supplied') + '</p><p>Seller note: ' + escapeHtml(note || '—') + '</p></main>',
+      text: 'Order ' + order.orderNumber + ': seller ' + storeName + ' changed fulfillment from ' + previousSellerStatus + ' to ' + status + '. Overall order status: ' + order.status + '. Tracking: ' + (fulfillment.trackingNumber || 'Not supplied') + '.',
+    });
+    if (!adminEmailResult?.success) console.error('[Seller fulfillment] admin notification failed:', adminEmailResult?.message || 'Unknown email error', { orderNumber: order.orderNumber, status });
+
+    return res.json({
+      success: true,
+      message: 'Fulfillment updated to ' + status + '. Customer and Sylva operations have been notified.',
+      data: {
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        sellerFulfillment: {
+          status: fulfillment.status,
+          trackingNumber: fulfillment.trackingNumber,
+          carrier: fulfillment.carrier,
+          note: fulfillment.note,
+          history: fulfillment.history,
+        },
+        status: order.status,
+        deliveryConfirmationLinkSent: Boolean(deliveryConfirmationLink),
+      },
+    });
+  } catch (error) {
+    console.error('[Seller fulfillment] status update failed:', error.stack || error.message);
+    return res.status(500).json({ success: false, message: 'Unable to update seller fulfillment status right now.' });
   }
 });
 
@@ -1174,6 +1330,13 @@ router.post('/confirm-delivery', async (req, res) => {
       order.deliveryConfirmationIp = String(req.ip || '').slice(0, 100);
       order.deliveryConfirmationUserAgent = String(req.get('user-agent') || '').slice(0, 500);
       order.status = 'Delivered';
+      order.statusHistory.push({
+        status: 'Delivered',
+        changedAt: new Date(),
+        changedBy: null,
+        actorRole: authorizedRecipient ? 'authorized_recipient' : 'recipient',
+        note: authorizedRecipient ? 'Delivery receipt confirmed by an authorized recipient.' : 'Delivery receipt confirmed by recipient.',
+      });
       await order.save();
     }
 
@@ -1212,6 +1375,34 @@ router.post('/confirm-delivery', async (req, res) => {
       });
       if (!statusEmail?.success) console.error('[Delivery confirmation] receipt email failed:', statusEmail?.message || 'Unknown email error', { orderNumber: order.orderNumber });
     }
+    if (!order.deliveryAdminNotifiedAt) {
+      const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+      const sellerProductIds = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
+      let storeNames = [];
+      try {
+        const sellerProducts = sellerProductIds.length
+          ? await Product.find({ _id: mongoose.trusted({ $in: sellerProductIds }) }).select('_id seller').lean()
+          : [];
+        const sellerIds = [...new Set(sellerProducts.map((product) => product.seller ? String(product.seller) : '').filter(Boolean))];
+        const sellerAccounts = sellerIds.length ? await User.find({ _id: mongoose.trusted({ $in: sellerIds }) }).select('name storeName sellerProfile.storeName').lean() : [];
+        storeNames = sellerAccounts.map((seller) => seller.sellerProfile?.storeName || seller.storeName || seller.name).filter(Boolean);
+      } catch (sellerLookupError) {
+        console.error('[Delivery confirmation] seller name lookup for admin notification failed:', sellerLookupError.message);
+      }
+      const deliveredAt = order.deliveryConfirmedAt ? new Date(order.deliveryConfirmedAt).toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' }) : 'Not available';
+      const adminDeliveryEmail = await sendSalesNotificationEmail({
+        subject: 'DELIVERED — customer receipt confirmed: ' + order.orderNumber,
+        html: '<main style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:auto;padding:24px"><h2 style="color:#166534">Order delivered — customer receipt confirmed</h2><p>Order: <strong>' + escapeHtml(order.orderNumber) + '</strong></p><p>Overall status: <strong>Delivered</strong></p><p>Seller store(s): ' + escapeHtml(storeNames.join(', ') || 'Sylva Technologies marketplace') + '</p><p>Recipient: <strong>' + escapeHtml(order.deliveryConfirmationRecipientName || order.deliveryConfirmationSignature || 'Not provided') + '</strong></p><p>Recipient type: ' + (authorizedRecipient ? 'Authorized person acting for the customer' : 'Customer / recipient') + '</p><p>Customer authorization confirmed: ' + (authorizedRecipient && authorizationConfirmed ? 'Yes' : 'Not applicable') + '</p><p>Receipt confirmation time (EAT): ' + escapeHtml(deliveredAt) + '</p><p>Payment status: ' + escapeHtml(order.paymentStatus || 'Pending') + '</p><p>Delivery evidence has been recorded in the order. The recipient’s ID number and ID image are intentionally excluded from this notification.</p></main>',
+        text: 'Order ' + order.orderNumber + ' has been marked Delivered after recipient confirmation. Store(s): ' + (storeNames.join(', ') || 'Sylva Technologies marketplace') + '. Recipient: ' + (order.deliveryConfirmationRecipientName || order.deliveryConfirmationSignature || 'Not provided') + '. Authorized recipient: ' + (authorizedRecipient && authorizationConfirmed ? 'Yes' : 'No').toString() + '. Confirmation time EAT: ' + deliveredAt + '.',
+      });
+      if (adminDeliveryEmail?.success) {
+        order.deliveryAdminNotifiedAt = new Date();
+        await order.save();
+      } else {
+        console.error('[Delivery confirmation] admin delivery notification failed:', adminDeliveryEmail?.message || 'Unknown email error', { orderNumber: order.orderNumber });
+      }
+    }
+
     return res.json({
       success: true,
       message: 'Delivery confirmed. Seller earnings have been credited to the seller wallet and Sylva commission has been recorded.',
@@ -2654,7 +2845,18 @@ router.patch(
 
       await Order.updateOne(
         { _id: order._id },
-        { $set: { status } }
+        {
+          $set: { status },
+          $push: {
+            statusHistory: {
+              status,
+              changedAt: new Date(),
+              changedBy: req.user._id,
+              actorRole: 'admin',
+              note: 'Admin updated overall order status from ' + previousStatus + ' to ' + status + '.',
+            },
+          },
+        }
       );
 
       const updated =
