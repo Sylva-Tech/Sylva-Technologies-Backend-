@@ -411,10 +411,10 @@ const releaseSellerProceedsFromPlatformWallet = async (order) => {
         $inc: { pendingBalance: -seller.grossAmount },
         $set: {
           lastUpdatedAt: now,
-          'transactions.$.status': 'completed',
-          'transactions.$.processedAt': now,
-          'transactions.$.updatedAt': now,
-          'transactions.$.description': 'Seller proceeds released from escrow after customer delivery confirmation for order ' + order.orderNumber + '.',
+          'transactions.$[hold].status': 'completed',
+          'transactions.$[hold].processedAt': now,
+          'transactions.$[hold].updatedAt': now,
+          'transactions.$[hold].description': 'Seller proceeds released from escrow after customer delivery confirmation for order ' + order.orderNumber + '.',
         },
         $push: {
           transactions: {
@@ -432,7 +432,7 @@ const releaseSellerProceedsFromPlatformWallet = async (order) => {
           },
         },
       },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true, arrayFilters: [{ 'hold.reference': holdReference, 'hold.status': 'pending' }] }
     );
     if (updated) {
       platform = updated;
