@@ -372,6 +372,7 @@ const sendPaidOrderEmails = async (order) => {
       },
     });
     if (!adminEmailResult?.success) console.error('Admin order/payment notification email was not sent:', adminEmailResult?.message || 'Unknown email error', { orderNumber: populatedOrder.orderNumber });
+    await sendSellerOrderEmails(populatedOrder, 'payment');
   } catch (error) {
     console.error('Paid order email notification failed:', error.message);
   }
@@ -379,14 +380,41 @@ const sendPaidOrderEmails = async (order) => {
 
 const escapeEmailHtml = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-const sendSellerOrderEmails = async (order) => {
+const sendSellerOrderEmails = async (order, event = 'new_order', previousStatus = '') => {
   try {
     const populated = await Order.findById(order._id).populate({
       path: 'items.product',
       select: 'name seller',
-      populate: { path: 'seller', select: 'name email sellerProfile.storeEmail sellerProfile.storeName' },
+      populate: { path: 'seller', select: 'name email sellerProfile.storeEmail sellerProfile.storeName sellerProfile.country' },
     });
     if (!populated) return;
+
+    const eventCopy = {
+      new_order: {
+        subject: 'New customer order',
+        heading: 'You have received a new order',
+        message: 'A customer order includes products from your store.',
+      },
+      payment: {
+        subject: 'Payment confirmed for order',
+        heading: 'Customer payment confirmed',
+        message: 'Payment for this order has been verified by Sylva Technologies.',
+      },
+      status: {
+        subject: 'Order status update',
+        heading: 'Your order status has changed',
+        message: 'The order fulfillment status was updated from ' + (previousStatus || 'previous status') + ' to ' + (populated.status || 'Pending') + '.',
+      },
+      wallet_credit: {
+        subject: 'Seller wallet settlement processed',
+        heading: 'Seller wallet settlement processed',
+        message: 'Delivery was confirmed and the seller settlement process has completed for this order.',
+      },
+    }[event] || {
+      subject: 'Order update',
+      heading: 'Order update',
+      message: 'There is an update to this order.',
+    };
 
     const groups = new Map();
     for (const item of populated.items || []) {
@@ -398,10 +426,15 @@ const sendSellerOrderEmails = async (order) => {
       groups.get(sellerId).items.push(item);
     }
 
+    const configuredCommission = Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.04);
+    const commissionRate = Number.isFinite(configuredCommission)
+      ? Math.min(1, Math.max(0, configuredCommission > 1 ? configuredCommission / 100 : configuredCommission))
+      : 0.04;
+
     for (const { seller, items } of groups.values()) {
       const recipient = String(seller.sellerProfile?.storeEmail || seller.email || '').trim();
       if (!recipient) {
-        console.warn('[Seller order email] Seller has no email address:', { orderNumber: populated.orderNumber, sellerId: String(seller._id) });
+        console.warn('[Seller order email] Seller has no email address:', { orderNumber: populated.orderNumber, sellerId: String(seller._id), event });
         continue;
       }
 
@@ -410,6 +443,7 @@ const sendSellerOrderEmails = async (order) => {
         Number(item.quantity || 0) + '</td><td style="padding:9px;border-bottom:1px solid #e5e7eb;text-align:right">KSh ' +
         Number(item.subtotal || 0).toLocaleString('en-KE') + '</td></tr>').join('');
       const details = populated.customerDetails || {};
+      // Share only fulfillment details needed by this seller; never expose customer ID numbers.
       const addressLines = [
         details.fullName, details.phone, details.email,
         details.country, details.county, details.subCounty, details.ward,
@@ -419,29 +453,39 @@ const sendSellerOrderEmails = async (order) => {
       const safePaymentStatus = escapeEmailHtml(populated.paymentStatus || 'Pending');
       const safePaymentMethod = escapeEmailHtml(populated.paymentMethod || 'Not specified');
       const deliveryHtml = addressLines.map((line) => '<div style="padding:3px 0">' + escapeEmailHtml(line) + '</div>').join('');
-      const sellerGross = items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+      const sellerGross = roundMoney(items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0));
+      const sellerCommission = roundMoney(sellerGross * commissionRate);
+      const sellerNet = roundMoney(sellerGross - sellerCommission);
+      const sellerCountry = String(seller.sellerProfile?.country || 'KE').toUpperCase();
+      const netLabel = !['KE', 'KENYA'].includes(sellerCountry) && Number(process.env.WALLET_KES_PER_USD) > 0
+        ? 'Estimated net after 4% commission: KSh ' + sellerNet.toLocaleString('en-KE') + ' before configured USD conversion.'
+        : 'Estimated net after platform commission (' + (commissionRate * 100) + '%): KSh ' + sellerNet.toLocaleString('en-KE') + '.';
+      const eventSubject = eventCopy.subject + ' ' + populated.orderNumber + ' — Sylva Technologies';
       const emailResult = await sendMail({
         to: recipient,
         sender: 'orders',
-        subject: 'New customer order ' + populated.orderNumber + ' — Sylva Technologies',
+        subject: eventSubject,
         html: '<div style="font-family:Arial,sans-serif;color:#17211b;max-width:720px;margin:auto;padding:24px">' +
-          '<h2 style="color:#166534">You have received a new order</h2><p>Hello ' + escapeEmailHtml(seller.sellerProfile?.storeName || seller.name || 'Seller') +
-          ', a customer order includes products from your store.</p><p><b>Order:</b> ' + safeOrderNumber + '<br><b>Order status:</b> ' +
+          '<h2 style="color:#166534">' + escapeEmailHtml(eventCopy.heading) + '</h2><p>Hello ' + escapeEmailHtml(seller.sellerProfile?.storeName || seller.name || 'Seller') +
+          ', ' + escapeEmailHtml(eventCopy.message) + '</p><p><b>Order:</b> ' + safeOrderNumber + '<br><b>Order status:</b> ' +
           escapeEmailHtml(populated.status || 'Pending') + '<br><b>Payment status:</b> ' + safePaymentStatus + '<br><b>Payment method:</b> ' + safePaymentMethod + '</p>' +
           '<h3>Items in your store</h3><table style="border-collapse:collapse;width:100%"><thead><tr><th align="left" style="padding:9px;border-bottom:2px solid #ddd">Product</th><th style="padding:9px;border-bottom:2px solid #ddd">Qty</th><th align="right" style="padding:9px;border-bottom:2px solid #ddd">Item total</th></tr></thead><tbody>' +
-          itemRows + '</tbody></table><p><b>Gross value of your items:</b> KSh ' + sellerGross.toLocaleString('en-KE') +
-          '</p><h3>Customer delivery note</h3><div style="background:#f8faf8;border:1px solid #dce5dd;border-radius:8px;padding:14px">' +
-          (deliveryHtml || 'No delivery information provided.') + '</div><p>Review this order in your Sylva Seller Centre. Funds are credited to your wallet according to the marketplace settlement and delivery rules.</p>' +
+          itemRows + '</tbody></table><p><b>Gross value of your items:</b> KSh ' + sellerGross.toLocaleString('en-KE') + '<br>' +
+          '<b>Platform commission estimate:</b> KSh ' + sellerCommission.toLocaleString('en-KE') + '<br><b>' + escapeEmailHtml(netLabel) + '</b></p>' +
+          '<h3>Customer delivery note</h3><div style="background:#f8faf8;border:1px solid #dce5dd;border-radius:8px;padding:14px">' +
+          (deliveryHtml || 'No delivery information provided.') + '</div><p>Use the delivery details only to fulfil this order. Seller settlement follows the marketplace payment and delivery rules.</p>' +
           '<p><a href="https://www.sylvatechnologies.co.ke/seller/dashboard" style="display:inline-block;background:#166534;color:#fff;padding:12px 18px;text-decoration:none;border-radius:6px">Open Seller Dashboard</a></p></div>',
-        text: 'New order ' + populated.orderNumber + '. Order status: ' + (populated.status || 'Pending') +
-          '. Payment status: ' + (populated.paymentStatus || 'Pending') + '. Payment method: ' + (populated.paymentMethod || '') +
-          '. Your item gross: KSh ' + sellerGross + '. Customer delivery details: ' + addressLines.join(', ') +
+        text: eventCopy.heading + '. ' + eventCopy.message + ' Order ' + populated.orderNumber +
+          '. Status: ' + (populated.status || 'Pending') + '. Payment status: ' + (populated.paymentStatus || 'Pending') +
+          '. Payment method: ' + (populated.paymentMethod || '') + '. Seller items gross: KSh ' + sellerGross +
+          '. Estimated commission: KSh ' + sellerCommission + '. Estimated net: KSh ' + sellerNet +
+          '. Customer delivery details: ' + addressLines.join(', ') +
           '. Review it at https://www.sylvatechnologies.co.ke/seller/dashboard',
       });
-      if (!emailResult?.success) console.error('[Seller order email] Failed:', emailResult?.message || 'Unknown email error', { orderNumber: populated.orderNumber, sellerId: String(seller._id) });
+      if (!emailResult?.success) console.error('[Seller order email] Failed:', emailResult?.message || 'Unknown email error', { orderNumber: populated.orderNumber, sellerId: String(seller._id), event });
     }
   } catch (error) {
-    console.error('[Seller order email] Notification failed:', error.message, { orderNumber: order?.orderNumber });
+    console.error('[Seller order email] Notification failed:', error.message, { orderNumber: order?.orderNumber, event });
   }
 };
 
@@ -556,15 +600,30 @@ router.get('/', protect, adminOnly, async (req, res) => {
         'customer',
         'name email phone createdAt adminReviewedAt'
       )
-      .populate(
-        'items.product',
-        'name slug price images stock'
-      )
+      .populate({
+        path: 'items.product',
+        select: 'name slug price images stock seller',
+        populate: { path: 'seller', select: 'name sellerProfile.storeName' },
+      })
       .sort({ createdAt: -1 });
+
+    const classifiedOrders = orders.map((order) => {
+      const hasSellerItems = (order.items || []).some((item) => Boolean(item.product?.seller));
+      return { ...order.toObject(), orderType: hasSellerItems ? 'marketplace' : 'platform' };
+    });
+    const requestedType = String(req.query.type || 'all').toLowerCase();
+    const filteredOrders = ['marketplace', 'platform'].includes(requestedType)
+      ? classifiedOrders.filter((order) => order.orderType === requestedType)
+      : classifiedOrders;
 
     return res.json({
       success: true,
-      data: orders,
+      data: filteredOrders,
+      counts: {
+        all: classifiedOrders.length,
+        marketplace: classifiedOrders.filter((order) => order.orderType === 'marketplace').length,
+        platform: classifiedOrders.filter((order) => order.orderType === 'platform').length,
+      },
     });
   } catch (error) {
     console.error('Get all orders error:', error);
@@ -834,6 +893,7 @@ router.post('/confirm-delivery', async (req, res) => {
     if (!settlementResult.settled) {
       return res.status(409).json({ success: false, message: 'Receipt was recorded, but seller settlement is not yet complete. Please retry shortly or contact support; the link remains available for retry.' });
     }
+    await sendSellerOrderEmails(order, 'wallet_credit');
     const commissionResult = await recordPlatformCommissionForSettlements(order);
     order.sellerSettledAt = new Date();
     if (commissionResult.recorded || commissionResult.recorded === 0) order.platformCommissionRecordedAt = new Date();
@@ -2302,6 +2362,9 @@ router.patch(
             'items.product',
             'name slug price images stock'
           );
+
+      // Notify only sellers whose own products are part of this order.
+      if (previousStatus !== status) await sendSellerOrderEmails(updated, 'status', previousStatus);
 
       // Keep the customer informed whenever an admin changes fulfillment status.
       const statusCustomerEmail = updated.customerEmail || updated.customerDetails?.email || updated.customer?.email;
