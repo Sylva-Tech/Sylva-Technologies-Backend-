@@ -313,6 +313,12 @@ const orderSchema = new mongoose.Schema(
     deliveryConfirmedAt: { type: Date, default: null, index: true },
     deliveryConfirmationSignature: { type: String, default: '', trim: true, maxlength: 120 },
     deliveryConfirmationSignatureImage: { type: String, default: '', maxlength: 250000 },
+    // Recipient identity evidence is excluded from default queries to avoid leaking it to seller-facing order views.
+    deliveryConfirmationRecipientName: { type: String, default: '', trim: true, maxlength: 120 },
+    deliveryConfirmationRecipientIdNumber: { type: String, default: '', trim: true, maxlength: 50 },
+    deliveryConfirmationRecipientIdImage: { type: String, default: '', maxlength: 1450000, select: false },
+    deliveryConfirmationIsAuthorizedRecipient: { type: Boolean, default: false },
+    deliveryConfirmationCustomerAuthorizationConfirmed: { type: Boolean, default: false },
     deliveryConfirmationIp: { type: String, default: '', maxlength: 100 },
     deliveryConfirmationUserAgent: { type: String, default: '', maxlength: 500 },
     sellerSettledAt: { type: Date, default: null },
