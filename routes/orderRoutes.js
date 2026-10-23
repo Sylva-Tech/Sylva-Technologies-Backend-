@@ -1091,9 +1091,22 @@ router.post('/confirm-delivery', async (req, res) => {
       await order.save();
     }
 
+    // Ensure M-Pesa seller proceeds are represented as held platform funds even if
+    // an earlier callback failed after marking the order paid.
+    const escrowHold = await holdSellerProceedsInPlatformWallet(order);
+    if (order.paymentMethod === 'M-Pesa' && escrowHold.expected && !escrowHold.complete) {
+      return res.status(409).json({ success: false, message: 'Seller proceeds could not be fully reserved in the platform wallet. Please retry or contact support.' });
+    }
+
     const settlementResult = await applySellerSettlement(order);
     if (!settlementResult.settled) {
       return res.status(409).json({ success: false, message: 'Receipt was recorded, but seller settlement is not yet complete. Please retry shortly or contact support; the link remains available for retry.' });
+    }
+    if (order.paymentMethod === 'M-Pesa') {
+      const escrowRelease = await releaseSellerProceedsFromPlatformWallet(order);
+      if (!escrowRelease.complete) {
+        return res.status(409).json({ success: false, message: 'Seller wallet was credited, but the platform escrow release is still pending. Please retry shortly or contact support.' });
+      }
     }
     await sendSellerOrderEmails(order, 'wallet_credit');
     const commissionResult = await recordPlatformCommissionForSettlements(order);
@@ -2052,6 +2065,7 @@ router.post('/mpesa/callback', async (req, res) => {
     // A status check may have already confirmed payment. Still accept a later
     // successful callback so the official Safaricom receipt can be recorded.
     if (order.paymentStatus === 'Paid' && Number(callback.ResultCode) !== 0) {
+      await holdSellerProceedsInPlatformWallet(order);
       return res.json({ ResultCode: 0, ResultDesc: 'Payment already confirmed.' });
     }
     if (Number(callback.ResultCode) !== 0) {
@@ -2127,6 +2141,7 @@ router.post('/mpesa/callback', async (req, res) => {
         { _id: order._id, paymentStatus: 'Paid' },
         { $set: { mpesaReceiptNumber: receipt, paymentReference: receipt } }
       );
+      await holdSellerProceedsInPlatformWallet(order);
       return res.json({ ResultCode: 0, ResultDesc: 'Payment receipt recorded.' });
     }
     const paidOrder = await Order.findOneAndUpdate(
@@ -2143,8 +2158,11 @@ router.post('/mpesa/callback', async (req, res) => {
       },
       { returnDocument: 'after' }
     );
-    if (paidOrder) await sendPaidOrderEmails(paidOrder);
-    return res.json({ ResultCode: 0, ResultDesc: paidOrder ? 'Payment confirmed.' : 'Callback already processed.' });
+    if (paidOrder) {
+      await holdSellerProceedsInPlatformWallet(paidOrder);
+      await sendPaidOrderEmails(paidOrder);
+    }
+    return res.json({ ResultCode: 0, ResultDesc: paidOrder ? 'Payment confirmed and seller proceeds held pending delivery.' : 'Callback already processed.' });
   } catch (error) {
     console.error('M-Pesa order callback failed:', error.response?.data || error.message);
     return res.status(500).json({ ResultCode: 1, ResultDesc: 'Callback processing failed.' });
@@ -2212,6 +2230,7 @@ router.get('/mpesa/status/:orderNumber', protect, async (req, res) => {
             );
             if (confirmed) {
               order = confirmed;
+              await holdSellerProceedsInPlatformWallet(confirmed);
               await sendPaidOrderEmails(confirmed);
             } else {
               order = await Order.findById(order._id).select('orderNumber trackingCode paymentStatus status total paymentMethod paymentReference mpesaCheckoutRequestId mpesaReceiptNumber paidAt createdAt items subtotal deliveryFee customerName customerEmail customerPhone customerDetails mpesaPhone');
