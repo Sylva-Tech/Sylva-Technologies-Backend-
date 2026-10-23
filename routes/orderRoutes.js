@@ -1068,9 +1068,23 @@ router.get('/delivery-confirmation/:token', async (req, res) => {
     }
     const details = order.customerDetails || {};
     const productIds = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
-    const products = productIds.length
-      ? await Product.find({ _id: { $in: productIds } }).select('_id seller name').populate('seller', '_id name sellerProfile.storeName').lean()
-      : [];
+
+    // This app enables mongoose.set('sanitizeFilter', true). Explicitly trust
+    // the $in operator so Mongoose does not treat it as untrusted user input.
+    // Store metadata is optional: a lookup problem must not hide the delivery note.
+    let products = [];
+    if (productIds.length) {
+      try {
+        products = await Product.find({
+          _id: mongoose.trusted({ $in: productIds }),
+        })
+          .select('_id seller name')
+          .populate('seller', '_id name sellerProfile.storeName')
+          .lean();
+      } catch (productLookupError) {
+        console.error('[Delivery confirmation] optional product/store lookup failed:', productLookupError.message);
+      }
+    }
     const sellerByProduct = new Map(products.map((product) => [String(product._id), product.seller || null]));
     const storeMap = new Map();
     (order.items || []).forEach((item) => {
