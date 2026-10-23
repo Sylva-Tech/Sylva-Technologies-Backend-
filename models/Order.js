@@ -310,12 +310,12 @@ const orderSchema = new mongoose.Schema(
     // Seller-specific fulfillment tracking, so each seller manages only their own items.
     sellerFulfillments: [{
       seller: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-      status: { type: String, enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped'], default: 'Pending' },
+      status: { type: String, enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered'], default: 'Pending' },
       trackingNumber: { type: String, trim: true, maxlength: 120, default: '' },
       carrier: { type: String, trim: true, maxlength: 120, default: '' },
       note: { type: String, trim: true, maxlength: 1000, default: '' },
       history: [{
-        status: { type: String, enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped'], required: true },
+        status: { type: String, enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered'], required: true },
         changedAt: { type: Date, default: Date.now },
         changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
         note: { type: String, trim: true, maxlength: 1000, default: '' },
