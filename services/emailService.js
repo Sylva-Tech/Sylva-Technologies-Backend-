@@ -100,7 +100,7 @@ const appendCustomerCareHtml = (html = '') => {
 const appendCustomerCareText = (text = '') => {
   const content = String(text || '');
   if (content.includes(CUSTOMER_CARE_PHONE)) return content;
-  return content + '\\n\\nSylva Technologies Customer Care: 0700932014';
+  return content + '\n\nSylva Technologies Customer Care: 0700932014';
 };
 
 // ============================================================
