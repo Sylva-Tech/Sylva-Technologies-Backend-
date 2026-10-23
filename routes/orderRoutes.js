@@ -884,9 +884,12 @@ router.post('/confirm-delivery', async (req, res) => {
   try {
     const token = String(req.body?.token || '').trim();
     const signature = String(req.body?.signature || '').trim();
+    const signatureImage = String(req.body?.signatureImage || '').trim();
+    const idNumber = String(req.body?.idNumber || '').trim();
     const acknowledged = req.body?.acknowledged === true;
-    if (token.length < 40 || token.length > 200 || !signature || signature.length > 120 || !acknowledged) {
-      return res.status(400).json({ success: false, message: 'Enter your full name as an electronic signature and confirm that you received the product and delivery note.' });
+    const validSignatureImage = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(signatureImage) && signatureImage.length <= 240000;
+    if (token.length < 40 || token.length > 200 || !signature || signature.length > 120 || !idNumber || idNumber.length > 50 || !validSignatureImage || !acknowledged) {
+      return res.status(400).json({ success: false, message: 'Enter your full name and ID number, sign in the signature box, and confirm receipt of the product and delivery note.' });
     }
     const tokenHash = hashDeliveryToken(token);
     const order = await Order.findOne({ deliveryConfirmationTokenHash: tokenHash }).select('+deliveryConfirmationTokenHash');
@@ -905,6 +908,8 @@ router.post('/confirm-delivery', async (req, res) => {
     if (!order.deliveryConfirmedAt) {
       order.deliveryConfirmedAt = new Date();
       order.deliveryConfirmationSignature = signature;
+      order.deliveryConfirmationSignatureImage = signatureImage;
+      order.customerDetails = { ...(order.customerDetails?.toObject?.() || order.customerDetails || {}), idNumber };
       order.deliveryConfirmationIp = String(req.ip || '').slice(0, 100);
       order.deliveryConfirmationUserAgent = String(req.get('user-agent') || '').slice(0, 500);
       order.status = 'Delivered';
