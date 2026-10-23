@@ -1087,8 +1087,10 @@ router.post('/seller/:id/fulfillment-status', protect, async (req, res) => {
     if (['Cancelled', 'Delivered'].includes(order.status) || order.deliveryConfirmedAt) {
       return res.status(409).json({ success: false, message: 'This order is cancelled or already delivered and cannot be advanced.' });
     }
-    if (!['Paid', 'Cash on Delivery', 'WhatsApp Order'].includes(String(order.paymentStatus === 'Paid' ? 'Paid' : order.paymentMethod))) {
-      return res.status(409).json({ success: false, message: 'This order must have verified payment or use an approved pay-on-delivery order method before fulfillment.' });
+    const terminalPaymentStates = ['Failed', 'Refunded', 'Refund Pending', 'Refund Processing', 'Refund Failed'];
+    const approvedPayOnDelivery = ['Cash on Delivery', 'WhatsApp Order'].includes(String(order.paymentMethod || ''));
+    if (terminalPaymentStates.includes(String(order.paymentStatus || '')) || (order.paymentStatus !== 'Paid' && !approvedPayOnDelivery)) {
+      return res.status(409).json({ success: false, message: 'This order must have verified payment or use an approved pay-on-delivery method before fulfillment. Failed or refunded orders cannot be processed.' });
     }
 
     const productIds = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
