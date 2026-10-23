@@ -1139,10 +1139,14 @@ router.post('/confirm-delivery', async (req, res) => {
     const signature = String(req.body?.signature || '').trim();
     const signatureImage = String(req.body?.signatureImage || '').trim();
     const idNumber = String(req.body?.idNumber || '').trim();
+    const idDocumentImage = String(req.body?.idDocumentImage || '').trim();
+    const authorizedRecipient = req.body?.authorizedRecipient === true;
+    const authorizationConfirmed = req.body?.authorizationConfirmed === true;
     const acknowledged = req.body?.acknowledged === true;
     const validSignatureImage = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(signatureImage) && signatureImage.length <= 240000;
-    if (token.length < 40 || token.length > 200 || !signature || signature.length > 120 || !idNumber || idNumber.length > 50 || !validSignatureImage || !acknowledged) {
-      return res.status(400).json({ success: false, message: 'Enter your full name and ID number, sign in the signature box, and confirm receipt of the product and delivery note.' });
+    const validIdDocumentImage = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(idDocumentImage) && idDocumentImage.length <= 1450000;
+    if (token.length < 40 || token.length > 200 || !signature || signature.length > 120 || !idNumber || idNumber.length > 50 || !validSignatureImage || !validIdDocumentImage || !acknowledged || (authorizedRecipient && !authorizationConfirmed)) {
+      return res.status(400).json({ success: false, message: 'Enter the recipient’s full name and ID number, upload a clear ID/passport image, sign, and confirm receipt. If receiving on behalf of the customer, confirm their authorization.' });
     }
     const tokenHash = hashDeliveryToken(token);
     const order = await Order.findOne({ deliveryConfirmationTokenHash: tokenHash }).select('+deliveryConfirmationTokenHash');
@@ -1162,7 +1166,11 @@ router.post('/confirm-delivery', async (req, res) => {
       order.deliveryConfirmedAt = new Date();
       order.deliveryConfirmationSignature = signature;
       order.deliveryConfirmationSignatureImage = signatureImage;
-      order.customerDetails = { ...(order.customerDetails?.toObject?.() || order.customerDetails || {}), idNumber };
+      order.deliveryConfirmationRecipientName = signature;
+      order.deliveryConfirmationRecipientIdNumber = idNumber;
+      order.deliveryConfirmationRecipientIdImage = idDocumentImage;
+      order.deliveryConfirmationIsAuthorizedRecipient = authorizedRecipient;
+      order.deliveryConfirmationCustomerAuthorizationConfirmed = authorizedRecipient && authorizationConfirmed;
       order.deliveryConfirmationIp = String(req.ip || '').slice(0, 100);
       order.deliveryConfirmationUserAgent = String(req.get('user-agent') || '').slice(0, 500);
       order.status = 'Delivered';
