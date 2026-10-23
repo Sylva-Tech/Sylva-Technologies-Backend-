@@ -312,6 +312,7 @@ const orderSchema = new mongoose.Schema(
     deliveryConfirmationExpiresAt: { type: Date, default: null, index: true },
     deliveryConfirmedAt: { type: Date, default: null, index: true },
     deliveryConfirmationSignature: { type: String, default: '', trim: true, maxlength: 120 },
+    deliveryConfirmationSignatureImage: { type: String, default: '', maxlength: 250000 },
     deliveryConfirmationIp: { type: String, default: '', maxlength: 100 },
     deliveryConfirmationUserAgent: { type: String, default: '', maxlength: 500 },
     sellerSettledAt: { type: Date, default: null },
