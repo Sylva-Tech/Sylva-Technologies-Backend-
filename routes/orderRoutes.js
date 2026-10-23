@@ -1100,7 +1100,7 @@ router.post('/seller/:id/fulfillment-status', protect, async (req, res) => {
     const currentStatus = String(fulfillment.status || 'Pending');
     const currentIndex = stageOrder.indexOf(currentStatus);
     const nextIndex = stageOrder.indexOf(status);
-    if (nextIndex < 0 || nextIndex > currentIndex + 1) {
+    if (nextIndex < currentIndex || nextIndex > currentIndex + 1) {
       return res.status(409).json({
         success: false,
         message: currentIndex >= nextIndex
