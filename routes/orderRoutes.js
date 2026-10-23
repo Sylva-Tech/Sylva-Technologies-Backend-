@@ -871,6 +871,67 @@ router.get('/my-orders', protect, async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
+| CUSTOMER REQUESTS A FRESH SECURE DELIVERY CONFIRMATION EMAIL
+|--------------------------------------------------------------------------
+| Lets an authenticated customer recover access if the original email is missing
+| or the delivery link expired. The bearer token is only sent by email.
+|--------------------------------------------------------------------------
+*/
+router.post('/:id/delivery-confirmation-link', protect, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid order ID.' });
+    }
+
+    const order = await Order.findOne({
+      _id: req.params.id,
+      customer: req.user._id,
+    });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found in your account.' });
+    }
+    if (order.deliveryConfirmedAt || order.status === 'Delivered') {
+      return res.status(409).json({ success: false, message: 'Delivery has already been confirmed for this order.' });
+    }
+    if (order.status !== 'Shipped') {
+      return res.status(409).json({ success: false, message: 'The delivery form becomes available after your order is marked Shipped.' });
+    }
+    if (order.paymentStatus !== 'Paid') {
+      return res.status(409).json({ success: false, message: 'Payment must be verified before the delivery form can be issued.' });
+    }
+
+    const recipient = String(order.customerEmail || order.customerDetails?.email || req.user.email || '').trim();
+    if (!recipient) {
+      return res.status(400).json({ success: false, message: 'There is no email address on this order. Please contact Sylva Support.' });
+    }
+
+    const deliveryConfirmationLink = await createDeliveryConfirmationToken(order);
+    const emailResult = await sendOrderStatusUpdateEmail({
+      to: recipient,
+      customerName: order.customerName || order.customerDetails?.fullName || req.user.name || 'Customer',
+      orderNumber: order.orderNumber,
+      status: 'Shipped',
+      deliveryConfirmationLink,
+    });
+
+    if (!emailResult?.success) {
+      console.error('[Delivery confirmation] customer requested link but email failed:', emailResult?.message || 'Unknown email error', { orderNumber: order.orderNumber });
+      return res.status(502).json({ success: false, message: 'We could not send the delivery form email right now. Please try again or contact Support.' });
+    }
+
+    return res.json({
+      success: true,
+      message: 'A fresh secure delivery confirmation link has been sent to your order email. Check your Inbox and Junk/Spam folders.',
+    });
+  } catch (error) {
+    console.error('[Delivery confirmation] customer link request failed:', error.stack || error.message);
+    return res.status(500).json({ success: false, message: 'Unable to send the delivery form email right now.' });
+  }
+});
+
+/*
+|--------------------------------------------------------------------------
 | GET SELLER ORDERS
 |--------------------------------------------------------------------------
 | Return only line items owned by the authenticated seller. Delivery details
