@@ -74,6 +74,36 @@ const getFromEmail = (type = 'verification') => {
 };
 
 // ============================================================
+// CUSTOMER CARE FOOTER — APPLY TO EVERY OUTGOING EMAIL
+// ============================================================
+
+const CUSTOMER_CARE_PHONE = '0700932014';
+
+const appendCustomerCareHtml = (html = '') => {
+  const content = String(html || '');
+  if (content.includes(CUSTOMER_CARE_PHONE)) return content;
+
+  const footer = `
+    <div style="margin:24px auto 0;padding:16px 20px;max-width:640px;border-top:1px solid #e5e7eb;background:#f8fafc;color:#475569;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;text-align:center;">
+      <strong style="color:#166534;">Sylva Technologies Customer Care</strong><br>
+      Need help with this email or your order? Call
+      <a href="tel:0700932014" style="color:#166534;font-weight:bold;text-decoration:none;">0700932014</a>.
+    </div>
+  `;
+
+  if (/<\/body\s*>/i.test(content)) {
+    return content.replace(/<\/body\s*>/i, footer + '</body>');
+  }
+  return content + footer;
+};
+
+const appendCustomerCareText = (text = '') => {
+  const content = String(text || '');
+  if (content.includes(CUSTOMER_CARE_PHONE)) return content;
+  return content + '\n\nSylva Technologies Customer Care: 0700932014';
+};
+
+// ============================================================
 // GENERIC SEND MAIL FUNCTION
 // ============================================================
 
@@ -133,8 +163,8 @@ const sendMail = async ({
             }
           : {}),
         subject,
-        html,
-        text,
+        html: appendCustomerCareHtml(html),
+        text: appendCustomerCareText(text),
       });
 
     if (error) {
