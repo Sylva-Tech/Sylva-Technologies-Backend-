@@ -1,4 +1,5 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -18,6 +19,20 @@ const {
 } = require('../services/emailService');
 
 const router = express.Router();
+
+// Additional per-IP protection for password guessing and credential stuffing.
+// This is stricter than the general /api/auth limiter configured in app.js.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 8,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many login attempts. Please wait 15 minutes before trying again.',
+  },
+});
+
 const verifyTurnstile = require('../middleware/turnstileVerification');
 
 // Validate Turnstile tokens before sensitive account actions. Payment callbacks
@@ -835,26 +850,39 @@ router.post(
  * POST /api/auth/login
  * ============================================================ */
 
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
-    const {
-      email,
-      password,
-    } = req.body;
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+      ? req.body
+      : {};
+    const { email, password } = body;
 
-    const normalizedEmail =
-      normalizeEmail(email);
-
-    if (!normalizedEmail || !password) {
+    // Accept only scalar strings. Never allow attacker-controlled objects or
+    // MongoDB operators such as {$ne: null} to reach database query filters.
+    if (typeof email !== 'string' || typeof password !== 'string') {
       return res.status(400).json({
-        message:
-          'Email and password are required.',
+        success: false,
+        message: 'Enter a valid email address and password.',
       });
     }
 
-    const user = await User.findOne({
-      email: normalizedEmail,
-    });
+    const normalizedEmail = normalizeEmail(email);
+
+    if (
+      !normalizedEmail ||
+      normalizedEmail.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) ||
+      password.length === 0 ||
+      password.length > 1024
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Enter a valid email address and password.',
+      });
+    }
+
+    // Query by a validated string only; do not spread request body into filters.
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user || user.accountDeleted) {
       return res.status(401).json({
