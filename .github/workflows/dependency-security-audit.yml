@@ -24,5 +24,7 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Run backend tests
+        run: npm test
       - name: Run dependency vulnerability audit
         run: npm audit --audit-level=high
