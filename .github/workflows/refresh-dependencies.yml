@@ -1,0 +1,42 @@
+name: Refresh npm Dependencies
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 7 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up patched Node.js 24 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install current lockfile
+        run: npm ci
+      - name: Update compatible dependencies
+        run: npm update
+      - name: Apply available compatible security fixes
+        run: npm audit fix || echo "Some advisories require a manual breaking-change review."
+      - name: Open dependency update pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automation/npm-security-refresh
+          delete-branch: true
+          title: "chore(deps): refresh npm dependencies and security fixes"
+          commit-message: "chore(deps): refresh npm dependencies and security fixes"
+          body: |
+            Automated dependency refresh using npm's compatible update rules and available non-breaking audit fixes.
+
+            Please review the lockfile diff, run the application tests/build, and inspect any remaining npm audit advisories before merging.
+          labels: |
+            dependencies
+            security
