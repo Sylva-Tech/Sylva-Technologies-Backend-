@@ -549,11 +549,33 @@ router.post('/register', async (req, res) => {
       confirmPassword,
     } = req.body;
 
+    if (
+      typeof name !== 'string' ||
+      typeof email !== 'string' ||
+      typeof phone !== 'string' ||
+      typeof idNumber !== 'string' ||
+      typeof password !== 'string'
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Enter valid text values for all required account fields.',
+      });
+    }
+
     const normalizedEmail = normalizeEmail(email);
+    const normalizedIdNumber = idNumber.trim();
 
-    const normalizedIdNumber = String(idNumber || '').trim();
-
-    if (!name || !normalizedEmail || !phone || !normalizedIdNumber || !password) {
+    if (
+      !name.trim() ||
+      name.length > 120 ||
+      !normalizedEmail ||
+      normalizedEmail.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) ||
+      !phone.trim() ||
+      !normalizedIdNumber ||
+      !password ||
+      password.length > 1024
+    ) {
       return res.status(400).json({
         message: 'Name, email, phone, government ID number and password are required.',
       });
