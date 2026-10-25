@@ -1463,7 +1463,7 @@ router.post('/confirm-delivery', async (req, res) => {
     }
     // Notify every seller whose product appears in this order. Do not include ID data.
     try {
-      const escapeSellerEmail = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');
+      const escapeSellerEmail = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       const productIdsForNotice = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
       const noticeProducts = productIdsForNotice.length
         ? await Product.find({ _id: mongoose.trusted({ $in: productIdsForNotice }) }).select('_id seller name').lean()
