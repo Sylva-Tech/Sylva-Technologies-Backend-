@@ -1463,7 +1463,7 @@ router.post('/confirm-delivery', async (req, res) => {
     }
     // Notify every seller whose product appears in this order. Do not include ID data.
     try {
-      const escapeSellerEmail = (value) => String(value ?? '').replace(/[&<>\"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[char]));
+      const escapeSellerEmail = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');
       const productIdsForNotice = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
       const noticeProducts = productIdsForNotice.length
         ? await Product.find({ _id: mongoose.trusted({ $in: productIdsForNotice }) }).select('_id seller name').lean()
@@ -1499,12 +1499,13 @@ router.post('/confirm-delivery', async (req, res) => {
     // Send a useful customer confirmation with direct guidance to review the order and products.
     const customerReviewEmail = order.customerEmail || order.customerDetails?.email;
     if (customerReviewEmail) {
+      const escapeCustomerEmail = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');
       const reviewUrl = 'https://www.sylvatechnologies.co.ke/profile';
       const reviewNotice = await sendMail({
         to: customerReviewEmail,
         subject: 'Your Sylva order ' + order.orderNumber + ' has been received — please share your review',
         sender: 'orders',
-        html: '<main style="font-family:Arial,sans-serif;max-width:640px;margin:auto;padding:24px;color:#23382a"><h2 style="color:#176b43">Thank you for confirming delivery</h2><p>Hello ' + escapeHtml(order.customerName || order.customerDetails?.fullName || 'Customer') + ',</p><p>Your signed receipt for order <strong>' + escapeHtml(order.orderNumber) + '</strong> has been recorded.</p><p>Your feedback helps us improve the ordering, communication and delivery experience. Please sign in, open <strong>My Account → Orders</strong>, choose this order and submit a review of the delivery process and each product you purchased.</p><p style="margin:24px 0"><a href="' + reviewUrl + '" style="display:inline-block;padding:12px 18px;background:#176b43;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">Review your order and products</a></p><p>If anything was wrong with the order, contact support@sylvatechnologies.co.ke so our team can help.</p><p>Thank you for shopping with Sylva Technologies.</p></main>',
+        html: '<main style="font-family:Arial,sans-serif;max-width:640px;margin:auto;padding:24px;color:#23382a"><h2 style="color:#176b43">Thank you for confirming delivery</h2><p>Hello ' + escapeCustomerEmail(order.customerName || order.customerDetails?.fullName || 'Customer') + ',</p><p>Your signed receipt for order <strong>' + escapeCustomerEmail(order.orderNumber) + '</strong> has been recorded.</p><p>Your feedback helps us improve the ordering, communication and delivery experience. Please sign in, open <strong>My Account → Orders</strong>, choose this order and submit a review of the delivery process and each product you purchased.</p><p style="margin:24px 0"><a href="' + reviewUrl + '" style="display:inline-block;padding:12px 18px;background:#176b43;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">Review your order and products</a></p><p>If anything was wrong with the order, contact support@sylvatechnologies.co.ke so our team can help.</p><p>Thank you for shopping with Sylva Technologies.</p></main>',
         text: 'Your signed receipt for order ' + order.orderNumber + ' has been recorded. Please sign in at ' + reviewUrl + ', open My Account → Orders, choose this order, and review the delivery process and each product. Contact support@sylvatechnologies.co.ke if you need help.'
       });
       if (!reviewNotice?.success) console.error('[Delivery confirmation] customer review email failed:', reviewNotice?.message || 'Unknown email error', { orderNumber: order.orderNumber });
