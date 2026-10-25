@@ -340,7 +340,9 @@ const orderSchema = new mongoose.Schema(
     deliveryConfirmationSignatureImage: { type: String, default: '', maxlength: 250000 },
     // Recipient identity evidence is excluded from default queries to avoid leaking it to seller-facing order views.
     deliveryConfirmationRecipientName: { type: String, default: '', trim: true, maxlength: 120 },
-    deliveryConfirmationRecipientIdNumber: { type: String, default: '', trim: true, maxlength: 50 },
+    // Identity numbers and document images are excluded from default/seller-facing order queries.
+    deliveryConfirmationRecipientIdNumber: { type: String, default: '', trim: true, maxlength: 50, select: false },
+    deliveryCollectionType: { type: String, enum: ['self_collection', 'second_party_collection'], default: 'self_collection' },
     deliveryConfirmationRecipientIdImage: { type: String, default: '', maxlength: 1450000, select: false },
     deliveryConfirmationIsAuthorizedRecipient: { type: Boolean, default: false },
     deliveryConfirmationCustomerAuthorizationConfirmed: { type: Boolean, default: false },
