@@ -1370,6 +1370,7 @@ router.post('/confirm-delivery', async (req, res) => {
     const authorizedRecipient = req.body?.authorizedRecipient === true;
     const authorizationConfirmed = req.body?.authorizationConfirmed === true;
     const acknowledged = req.body?.acknowledged === true;
+    const collectionType = ['self_collection', 'second_party_collection'].includes(String(req.body?.collectionType || '')) ? String(req.body.collectionType) : 'self_collection';
     const validSignatureImage = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(signatureImage) && signatureImage.length <= 240000;
     const validIdDocumentImage = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(idDocumentImage) && idDocumentImage.length <= 1450000;
     if (token.length < 40 || token.length > 200 || !signature || signature.length > 120 || !idNumber || idNumber.length > 50 || !validSignatureImage || !validIdDocumentImage || !acknowledged || (authorizedRecipient && !authorizationConfirmed)) {
@@ -1398,6 +1399,7 @@ router.post('/confirm-delivery', async (req, res) => {
       order.deliveryConfirmationRecipientIdImage = idDocumentImage;
       order.deliveryConfirmationIsAuthorizedRecipient = authorizedRecipient;
       order.deliveryConfirmationCustomerAuthorizationConfirmed = authorizedRecipient && authorizationConfirmed;
+      order.deliveryCollectionType = collectionType;
       order.deliveryConfirmationIp = String(req.ip || '').slice(0, 100);
       order.deliveryConfirmationUserAgent = String(req.get('user-agent') || '').slice(0, 500);
       order.status = 'Delivered';
@@ -1459,6 +1461,54 @@ router.post('/confirm-delivery', async (req, res) => {
       });
       if (!statusEmail?.success) console.error('[Delivery confirmation] receipt email failed:', statusEmail?.message || 'Unknown email error', { orderNumber: order.orderNumber });
     }
+    // Notify every seller whose product appears in this order. Do not include ID data.
+    try {
+      const productIdsForNotice = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
+      const noticeProducts = productIdsForNotice.length
+        ? await Product.find({ _id: mongoose.trusted({ $in: productIdsForNotice }) }).select('_id seller name').lean()
+        : [];
+      const sellerIdsForNotice = [...new Set(noticeProducts.map((product) => product.seller ? String(product.seller) : '').filter(Boolean))];
+      const sellerNotices = sellerIdsForNotice.length
+        ? await User.find({ _id: mongoose.trusted({ $in: sellerIdsForNotice }) }).select('name email storeName sellerProfile.storeName').lean()
+        : [];
+      const sellerItemNames = new Map();
+      for (const product of noticeProducts) {
+        const sellerId = product.seller ? String(product.seller) : '';
+        if (!sellerId) continue;
+        if (!sellerItemNames.has(sellerId)) sellerItemNames.set(sellerId, []);
+        sellerItemNames.get(sellerId).push(product.name || 'Product');
+      }
+      for (const seller of sellerNotices) {
+        if (!seller.email) continue;
+        const storeName = seller.sellerProfile?.storeName || seller.storeName || seller.name || 'Marketplace seller';
+        const itemsText = [...new Set(sellerItemNames.get(String(seller._id)) || [])].join(', ') || 'Your product(s)';
+        const sellerNotice = await sendMail({
+          to: seller.email,
+          subject: 'Delivery confirmed for order ' + order.orderNumber,
+          sender: 'orders',
+          html: '<main style="font-family:Arial,sans-serif;max-width:640px;margin:auto;padding:24px;color:#23382a"><h2 style="color:#176b43">Customer receipt confirmed</h2><p>Hello ' + escapeHtml(storeName) + ',</p><p>The recipient has signed for order <strong>' + escapeHtml(order.orderNumber) + '</strong>.</p><p><strong>Products:</strong> ' + escapeHtml(itemsText) + '</p><p><strong>Collection type:</strong> ' + (collectionType === 'second_party_collection' ? 'Authorized second-party collection' : 'Customer self-collection') + '</p><p><strong>Recipient:</strong> ' + escapeHtml(order.deliveryConfirmationRecipientName || signature) + '</p><p><strong>Confirmed:</strong> ' + escapeHtml(new Date(order.deliveryConfirmedAt).toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' })) + ' (EAT)</p><p>Identity document images and ID numbers are not included in seller notifications. View order details in your seller dashboard.</p></main>',
+          text: 'Delivery confirmed for order ' + order.orderNumber + '. Products: ' + itemsText + '. Collection type: ' + collectionType + '. Recipient: ' + (order.deliveryConfirmationRecipientName || signature) + '. Identity document data is not included.'
+        });
+        if (!sellerNotice?.success) console.error('[Delivery confirmation] seller notification failed:', sellerNotice?.message || 'Unknown email error', { orderNumber: order.orderNumber, sellerId: String(seller._id) });
+      }
+    } catch (sellerNoticeError) {
+      console.error('[Delivery confirmation] seller notification processing failed:', sellerNoticeError.stack || sellerNoticeError.message, { orderNumber: order.orderNumber });
+    }
+
+    // Send a useful customer confirmation with direct guidance to review the order and products.
+    const customerReviewEmail = order.customerEmail || order.customerDetails?.email;
+    if (customerReviewEmail) {
+      const reviewUrl = 'https://www.sylvatechnologies.co.ke/profile';
+      const reviewNotice = await sendMail({
+        to: customerReviewEmail,
+        subject: 'Your Sylva order ' + order.orderNumber + ' has been received — please share your review',
+        sender: 'orders',
+        html: '<main style="font-family:Arial,sans-serif;max-width:640px;margin:auto;padding:24px;color:#23382a"><h2 style="color:#176b43">Thank you for confirming delivery</h2><p>Hello ' + escapeHtml(order.customerName || order.customerDetails?.fullName || 'Customer') + ',</p><p>Your signed receipt for order <strong>' + escapeHtml(order.orderNumber) + '</strong> has been recorded.</p><p>Your feedback helps us improve the ordering, communication and delivery experience. Please sign in, open <strong>My Account → Orders</strong>, choose this order and submit a review of the delivery process and each product you purchased.</p><p style="margin:24px 0"><a href="' + reviewUrl + '" style="display:inline-block;padding:12px 18px;background:#176b43;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">Review your order and products</a></p><p>If anything was wrong with the order, contact support@sylvatechnologies.co.ke so our team can help.</p><p>Thank you for shopping with Sylva Technologies.</p></main>',
+        text: 'Your signed receipt for order ' + order.orderNumber + ' has been recorded. Please sign in at ' + reviewUrl + ', open My Account → Orders, choose this order, and review the delivery process and each product. Contact support@sylvatechnologies.co.ke if you need help.'
+      });
+      if (!reviewNotice?.success) console.error('[Delivery confirmation] customer review email failed:', reviewNotice?.message || 'Unknown email error', { orderNumber: order.orderNumber });
+    }
+
     if (!order.deliveryAdminNotifiedAt) {
       const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
       const sellerProductIds = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
