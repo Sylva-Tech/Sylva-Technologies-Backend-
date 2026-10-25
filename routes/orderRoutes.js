@@ -867,7 +867,7 @@ router.get('/:id/delivery-evidence', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid order ID.' });
     }
     const order = await Order.findById(req.params.id)
-      .select('+deliveryConfirmationRecipientIdImage')
+      .select('+deliveryConfirmationRecipientIdImage +deliveryConfirmationRecipientIdNumber')
       .populate({ path: 'items.product', select: 'seller name', populate: { path: 'seller', select: '_id sellerProfile.storeName name' } });
     if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
     if (!order.deliveryConfirmedAt || order.status !== 'Delivered') {
@@ -1463,6 +1463,7 @@ router.post('/confirm-delivery', async (req, res) => {
     }
     // Notify every seller whose product appears in this order. Do not include ID data.
     try {
+      const escapeSellerEmail = (value) => String(value ?? '').replace(/[&<>\"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[char]));
       const productIdsForNotice = [...new Set((order.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
       const noticeProducts = productIdsForNotice.length
         ? await Product.find({ _id: mongoose.trusted({ $in: productIdsForNotice }) }).select('_id seller name').lean()
@@ -1486,7 +1487,7 @@ router.post('/confirm-delivery', async (req, res) => {
           to: seller.email,
           subject: 'Delivery confirmed for order ' + order.orderNumber,
           sender: 'orders',
-          html: '<main style="font-family:Arial,sans-serif;max-width:640px;margin:auto;padding:24px;color:#23382a"><h2 style="color:#176b43">Customer receipt confirmed</h2><p>Hello ' + escapeHtml(storeName) + ',</p><p>The recipient has signed for order <strong>' + escapeHtml(order.orderNumber) + '</strong>.</p><p><strong>Products:</strong> ' + escapeHtml(itemsText) + '</p><p><strong>Collection type:</strong> ' + (collectionType === 'second_party_collection' ? 'Authorized second-party collection' : 'Customer self-collection') + '</p><p><strong>Recipient:</strong> ' + escapeHtml(order.deliveryConfirmationRecipientName || signature) + '</p><p><strong>Confirmed:</strong> ' + escapeHtml(new Date(order.deliveryConfirmedAt).toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' })) + ' (EAT)</p><p>Identity document images and ID numbers are not included in seller notifications. View order details in your seller dashboard.</p></main>',
+          html: '<main style="font-family:Arial,sans-serif;max-width:640px;margin:auto;padding:24px;color:#23382a"><h2 style="color:#176b43">Customer receipt confirmed</h2><p>Hello ' + escapeSellerEmail(storeName) + ',</p><p>The recipient has signed for order <strong>' + escapeSellerEmail(order.orderNumber) + '</strong>.</p><p><strong>Products:</strong> ' + escapeSellerEmail(itemsText) + '</p><p><strong>Collection type:</strong> ' + (collectionType === 'second_party_collection' ? 'Authorized second-party collection' : 'Customer self-collection') + '</p><p><strong>Recipient:</strong> ' + escapeSellerEmail(order.deliveryConfirmationRecipientName || signature) + '</p><p><strong>Confirmed:</strong> ' + escapeSellerEmail(new Date(order.deliveryConfirmedAt).toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' })) + ' (EAT)</p><p>Identity document images and ID numbers are not included in seller notifications. View order details in your seller dashboard.</p></main>',
           text: 'Delivery confirmed for order ' + order.orderNumber + '. Products: ' + itemsText + '. Collection type: ' + collectionType + '. Recipient: ' + (order.deliveryConfirmationRecipientName || signature) + '. Identity document data is not included.'
         });
         if (!sellerNotice?.success) console.error('[Delivery confirmation] seller notification failed:', sellerNotice?.message || 'Unknown email error', { orderNumber: order.orderNumber, sellerId: String(seller._id) });
