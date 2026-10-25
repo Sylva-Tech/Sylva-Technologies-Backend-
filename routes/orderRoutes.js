@@ -1499,7 +1499,7 @@ router.post('/confirm-delivery', async (req, res) => {
     // Send a useful customer confirmation with direct guidance to review the order and products.
     const customerReviewEmail = order.customerEmail || order.customerDetails?.email;
     if (customerReviewEmail) {
-      const escapeCustomerEmail = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');
+      const escapeCustomerEmail = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       const reviewUrl = 'https://www.sylvatechnologies.co.ke/profile';
       const reviewNotice = await sendMail({
         to: customerReviewEmail,
