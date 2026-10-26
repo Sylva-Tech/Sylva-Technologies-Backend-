@@ -116,8 +116,8 @@ router.post('/topup/pesapal', protect, payoutRateLimit, async (req, res) => {
     const backendUrl = String(process.env.API_BASE_URL || 'https://api.sylvatechnologies.co.ke').replace(/\/$/, '');
     const payment = await submitPesapalOrder({
       reference: merchantReference, amount, description: 'Sylva Technologies wallet deposit',
-      callbackUrl: frontendUrl + '/payment/callback?provider=pesapal&purpose=wallet&transactionId=' + encodeURIComponent(String(transactionId)),
-      cancellationUrl: frontendUrl + '/payment/callback?provider=pesapal&purpose=wallet&transactionId=' + encodeURIComponent(String(transactionId)),
+      callbackUrl: frontendUrl + '/payment/callback?provider=pesapal&purpose=wallet&returnTo=' + (isAdminDeposit ? 'admin' : user.role === 'seller' ? 'seller' : 'customer') + '&transactionId=' + encodeURIComponent(String(transactionId)),
+      cancellationUrl: frontendUrl + '/payment/callback?provider=pesapal&purpose=wallet&returnTo=' + (isAdminDeposit ? 'admin' : user.role === 'seller' ? 'seller' : 'customer') + '&transactionId=' + encodeURIComponent(String(transactionId)),
       notificationId: process.env.PESAPAL_WALLET_IPN_ID || process.env.PESAPAL_IPN_ID,
       billingAddress: { email_address: user.email, phone_number: user.phone || user.sellerProfile?.mpesaPhone || '', country_code: 'KE', first_name: String(user.name || 'Sylva Customer').split(' ')[0], last_name: String(user.name || 'Customer').split(' ').slice(1).join(' ') || 'Customer', line_1: 'Kenya', city: 'Nairobi' },
     });
