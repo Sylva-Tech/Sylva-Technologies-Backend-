@@ -2367,7 +2367,7 @@ if (paymentMethod === 'Pesapal') {
       description: 'Sylva Technologies order ' + order.orderNumber,
       callbackUrl: frontendBaseUrl + '/payment/callback?provider=pesapal&purpose=order&reference=' + encodeURIComponent(order.orderNumber),
       cancellationUrl: frontendBaseUrl + '/payment/callback?provider=pesapal&purpose=order&reference=' + encodeURIComponent(order.orderNumber),
-      notificationId: process.env.PESAPAL_IPN_ID,
+      notificationId: process.env.PESAPAL_ORDER_IPN_ID || process.env.PESAPAL_IPN_ID,
       billingAddress: {
         email_address: customerEmail,
         phone_number: String(customerDetails.phone || ''),
@@ -2866,6 +2866,16 @@ const reconcilePesapalOrder = async (reference, trackingId) => {
   }
   return order;
 };
+
+router.post('/pesapal/register-ipn', protect, adminOnly, requireVerified, async (req, res) => {
+  try {
+    const backendUrl = String(process.env.API_BASE_URL || 'https://api.sylvatechnologies.co.ke').replace(/\/$/, '');
+    const data = await require('../services/pesapalService').registerPesapalIpn(backendUrl + '/api/orders/pesapal/ipn', 'GET');
+    return res.json({ success: true, message: 'Pesapal order IPN registered. Save the returned ID as PESAPAL_ORDER_IPN_ID in Render.', data: { ipnId: data.ipn_id, url: data.url, status: data.ipn_status } });
+  } catch (error) {
+    return res.status(error.statusCode || 502).json({ success: false, message: error.message || 'Unable to register Pesapal order IPN.' });
+  }
+});
 
 router.get('/pesapal/ipn', async (req, res) => {
   const trackingId = String(req.query?.OrderTrackingId || '').trim();
