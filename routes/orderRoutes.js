@@ -14,6 +14,7 @@ const {
   verifyTransaction,
   refundTransaction,
 } = require('../services/paystackService');
+const { submitPesapalOrder, getPesapalTransactionStatus } = require('../services/pesapalService');
 
 const {
 
@@ -757,6 +758,32 @@ const confirmPaidOrder = async (order, transaction) => {
     await sendPaidOrderEmails(order);
   }
 
+  return order;
+};
+
+const confirmPesapalPaidOrder = async (order, transaction) => {
+  if (!transaction || Number(transaction.status_code) !== 1) throw new Error('Pesapal has not confirmed a completed payment.');
+  if (String(transaction.merchant_reference || '') !== String(order.paymentReference || order.orderNumber)) throw new Error('Pesapal merchant reference does not match this order.');
+  if (String(transaction.currency || '').toUpperCase() !== 'KES' || Math.round(Number(transaction.amount) * 100) !== Math.round(Number(order.total || 0) * 100)) throw new Error('Verified Pesapal amount or currency does not match this order.');
+  if (order.status === 'Cancelled') {
+    if (order.paymentStatus !== 'Refund Pending') {
+      order.paymentStatus = 'Refund Pending';
+      order.pesapalReconciliationNote = 'Payment completed after cancellation; manual refund reconciliation is required.';
+      await order.save();
+    }
+    return order;
+  }
+  let newlyConfirmed = false;
+  if (order.paymentStatus !== 'Paid') {
+    const updated = await Order.findOneAndUpdate(
+      { _id: order._id, paymentStatus: mongoose.trusted({ $ne: 'Paid' }), status: mongoose.trusted({ $ne: 'Cancelled' }) },
+      { $set: { paymentStatus: 'Paid', paidAt: new Date(), cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000), status: order.status === 'Pending' ? 'Confirmed' : order.status } },
+      { returnDocument: 'after' }
+    );
+    if (updated) { order = updated; newlyConfirmed = true; }
+    else order = await Order.findById(order._id);
+  }
+  if (newlyConfirmed && order?.paymentStatus === 'Paid') await sendPaidOrderEmails(order);
   return order;
 };
 
@@ -1669,7 +1696,7 @@ const createOrderFromRequest = async ({
       });
     }
 
-    if (!['Paystack', 'Card', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
+    if (!['Paystack', 'Card', 'Pesapal', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
       return res.status(400).json({
         success: false,
         message: 'Choose Wallet, M-Pesa, Paystack, or Visa/Mastercard to pay for your order.',
@@ -2331,6 +2358,44 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
   }
 }
 
+if (paymentMethod === 'Pesapal') {
+  try {
+    const frontendBaseUrl = String(process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://www.sylvatechnologies.co.ke').split(',')[0].trim().replace(/\/$/, '');
+    const payment = await submitPesapalOrder({
+      reference: order.orderNumber,
+      amount: orderTotal,
+      description: 'Sylva Technologies order ' + order.orderNumber,
+      callbackUrl: frontendBaseUrl + '/payment/callback?provider=pesapal&purpose=order&reference=' + encodeURIComponent(order.orderNumber),
+      cancellationUrl: frontendBaseUrl + '/payment/callback?provider=pesapal&purpose=order&reference=' + encodeURIComponent(order.orderNumber),
+      notificationId: process.env.PESAPAL_IPN_ID,
+      billingAddress: {
+        email_address: customerEmail,
+        phone_number: String(customerDetails.phone || ''),
+        country_code: 'KE',
+        first_name: String(customerDetails.fullName || 'Customer').split(' ')[0],
+        last_name: String(customerDetails.fullName || 'Customer').split(' ').slice(1).join(' ') || 'Customer',
+        line_1: String(customerDetails.address || customerDetails.deliveryLocation || 'Kenya').slice(0, 100),
+        city: String(customerDetails.county || 'Nairobi').slice(0, 50),
+        state: String(customerDetails.county || '').slice(0, 50),
+      },
+    });
+    order.paymentReference = order.orderNumber;
+    order.pesapalTrackingId = payment.trackingId;
+    await order.save();
+    populatedOrder.paymentReference = order.paymentReference;
+    populatedOrder.pesapalTrackingId = payment.trackingId;
+    paystackPayment = { authorization_url: payment.redirectUrl, reference: order.orderNumber, provider: 'Pesapal', trackingId: payment.trackingId };
+    console.info('Pesapal payment initialized:', order.orderNumber);
+  } catch (pesapalError) {
+    console.error('Pesapal order payment initialization failed:', pesapalError.response?.data || pesapalError.message);
+    try {
+      for (const item of preparedItems) await Product.updateOne({ _id: item.product }, { $inc: { stock: item.quantity } });
+      await Order.findByIdAndDelete(order._id);
+    } catch (rollbackError) { console.error('Pesapal order rollback error:', rollbackError.message); }
+    return res.status(pesapalError.statusCode || 502).json({ success: false, message: pesapalError.message || 'Unable to initialize Pesapal payment. Please try again.' });
+  }
+}
+
     // Notify the sales inbox as soon as an order has been successfully created.
     // This event is separate from the later payment-confirmed notification.
     try {
@@ -2548,6 +2613,10 @@ router.post('/mpesa/callback', async (req, res) => {
       paymentStatus: 'Paid',
     });
     if (duplicate) return res.json({ ResultCode: 0, ResultDesc: 'Receipt already used.' });
+
+    if (order.paymentStatus === 'Paid' && order.paymentMethod === 'Pesapal') {
+      return res.status(409).json({ success: false, message: 'Pesapal payments require support-assisted refund reconciliation. The order has not been cancelled.' });
+    }
 
     if (order.paymentStatus === 'Paid') {
       await Order.updateOne(
@@ -2781,6 +2850,59 @@ router.post('/paystack/verify', protect, async (req, res) => {
   } catch (error) {
     console.error('Paystack verification failed:', error.message);
     return res.status(400).json({ success: false, message: error.message || 'Unable to verify payment.' });
+  }
+});
+
+/* Pesapal callbacks never prove payment by themselves: query Pesapal before updating an order. */
+const reconcilePesapalOrder = async (reference, trackingId) => {
+  const order = await Order.findOne({ $or: [{ orderNumber: String(reference || '') }, { paymentReference: String(reference || '') }] });
+  if (!order || order.paymentMethod !== 'Pesapal') throw Object.assign(new Error('Pesapal order was not found.'), { statusCode: 404 });
+  if (!trackingId || String(order.pesapalTrackingId || '') !== String(trackingId)) throw Object.assign(new Error('Pesapal tracking ID does not match this order.'), { statusCode: 400 });
+  const status = await getPesapalTransactionStatus(trackingId);
+  if (Number(status.status_code) === 1) return confirmPesapalPaidOrder(order, status);
+  if ([2, 3].includes(Number(status.status_code)) && order.paymentStatus === 'Pending') {
+    order.paymentStatus = 'Failed';
+    await order.save();
+  }
+  return order;
+};
+
+router.get('/pesapal/ipn', async (req, res) => {
+  const trackingId = String(req.query?.OrderTrackingId || '').trim();
+  const reference = String(req.query?.OrderMerchantReference || '').trim();
+  try {
+    if (trackingId && reference) await reconcilePesapalOrder(reference, trackingId);
+    return res.json({ orderNotificationType: 'IPNCHANGE', orderTrackingId: trackingId, orderMerchantReference: reference, status: 200 });
+  } catch (error) {
+    console.error('Pesapal order IPN reconciliation failed:', error.message);
+    return res.status(500).json({ orderNotificationType: 'IPNCHANGE', orderTrackingId: trackingId, orderMerchantReference: reference, status: 500 });
+  }
+});
+router.post('/pesapal/ipn', async (req, res) => {
+  const trackingId = String(req.body?.OrderTrackingId || req.body?.orderTrackingId || '').trim();
+  const reference = String(req.body?.OrderMerchantReference || req.body?.orderMerchantReference || '').trim();
+  try {
+    if (trackingId && reference) await reconcilePesapalOrder(reference, trackingId);
+    return res.json({ orderNotificationType: 'IPNCHANGE', orderTrackingId: trackingId, orderMerchantReference: reference, status: 200 });
+  } catch (error) {
+    console.error('Pesapal order IPN reconciliation failed:', error.message);
+    return res.status(500).json({ orderNotificationType: 'IPNCHANGE', orderTrackingId: trackingId, orderMerchantReference: reference, status: 500 });
+  }
+});
+
+router.post('/pesapal/verify', protect, async (req, res) => {
+  try {
+    const reference = String(req.body?.reference || '').trim();
+    const trackingId = String(req.body?.trackingId || '').trim();
+    if (!reference || !trackingId) return res.status(400).json({ success: false, message: 'Order reference and Pesapal tracking ID are required.' });
+    const order = await Order.findOne({ $or: [{ orderNumber: reference }, { paymentReference: reference }] });
+    if (!order || order.paymentMethod !== 'Pesapal') return res.status(404).json({ success: false, message: 'Pesapal order was not found.' });
+    const isAdmin = req.user.role === 'admin';
+    if (!isAdmin && (!order.customer || String(order.customer) !== String(req.user._id))) return res.status(403).json({ success: false, message: 'You are not authorized to verify this order.' });
+    const updated = await reconcilePesapalOrder(reference, trackingId);
+    return res.status(updated.paymentStatus === 'Pending' ? 202 : 200).json({ success: true, message: updated.paymentStatus === 'Paid' ? 'Pesapal payment verified.' : 'Pesapal payment is not yet confirmed.', data: { _id: updated._id, orderNumber: updated.orderNumber, trackingCode: updated.trackingCode, paymentStatus: updated.paymentStatus, status: updated.status, paidAt: updated.paidAt, total: updated.total } });
+  } catch (error) {
+    return res.status(error.statusCode || 502).json({ success: false, message: error.message || 'Unable to verify Pesapal payment.' });
   }
 });
 
