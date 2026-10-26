@@ -220,6 +220,7 @@ const orderSchema = new mongoose.Schema(
     'PayPal',
     'WhatsApp Order',
     'Paystack',
+    'Pesapal',
     'Card',
     'Wallet',
   ],
@@ -250,6 +251,13 @@ const orderSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: '',
+    },
+
+    pesapalTrackingId: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true,
     },
 
     paidAt: {
