@@ -212,7 +212,7 @@ app.use(
 
 app.use(
   express.json({
-    limit: '1mb',
+    limit: '9mb',
     strict: true,
     verify: (req, res, buffer) => {
       // Paystack signs the exact request bytes, so preserve them before JSON parsing.
