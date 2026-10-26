@@ -221,10 +221,15 @@ const orderSchema = new mongoose.Schema(
     'WhatsApp Order',
     'Paystack',
     'Card',
+    'Pesapal',
     'Wallet',
   ],
   default: 'Cash on Delivery',
 },
+
+    pesapalOrderTrackingId: { type: String, trim: true, default: '', index: true },
+
+    pesapalMerchantReference: { type: String, trim: true, default: '', index: true },
 
     mpesaPhone: {
       type: String,
