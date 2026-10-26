@@ -8,11 +8,11 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
   try {
     const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
-    if (mongoUri) {
-      await connectDB();
-    } else {
-      console.warn('MONGO_URI/MONGODB_URI is not set. The API will start without MongoDB until the environment is configured.');
+    if (!mongoUri) {
+      throw new Error('MONGO_URI or MONGODB_URI is required. Refusing to start without a database connection.');
     }
+
+    await connectDB();
 
   app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
