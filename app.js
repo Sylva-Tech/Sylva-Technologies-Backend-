@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
+const { rejectMongoOperatorInjection } = require('./middleware/mongoInputGuard');
 
 const authRoutes = require('./routes/authRoutes');
 const productRoutes = require('./routes/productRoutes');
@@ -211,7 +212,7 @@ app.use(
 
 app.use(
   express.json({
-    limit: '10mb',
+    limit: '1mb',
     strict: true,
     verify: (req, res, buffer) => {
       // Paystack signs the exact request bytes, so preserve them before JSON parsing.
@@ -225,10 +226,13 @@ app.use(
 app.use(
   express.urlencoded({
     extended: false,
-    limit: '10mb',
-    parameterLimit: 100,
+    limit: '100kb',
+    parameterLimit: 50,
   })
 );
+
+// Block client-supplied MongoDB operators, dotted paths and prototype keys.
+app.use('/api', rejectMongoOperatorInjection);
 
 /*
 |--------------------------------------------------------------------------
