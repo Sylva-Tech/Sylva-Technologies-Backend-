@@ -33,6 +33,36 @@ const loginLimiter = rateLimit({
   },
 });
 
+// Additional throttles for sensitive account workflows.
+const passwordRecoveryLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many password recovery attempts. Please try again later.' },
+});
+const emailVerificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 6,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many verification requests. Please try again later.' },
+});
+const registrationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many registration attempts. Please try again later.' },
+});
+const kraLookupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many identity lookup requests. Please try again later.' },
+});
+
 const verifyTurnstile = require('../middleware/turnstileVerification');
 
 // Validate Turnstile tokens before sensitive account actions. Payment callbacks
@@ -173,7 +203,7 @@ const AFRICAN_COUNTRY_CODES = new Set('DZ AO BJ BW BF BI CV CM CF TD KM CG CD CI
  * POST /api/auth/kra/pin-checker-by-id
  * Consumer credentials stay server-side; never accept them from the browser.
  */
-router.post('/kra/pin-checker-by-id', async (req, res) => {
+router.post('/kra/pin-checker-by-id', kraLookupLimiter, async (req, res) => {
   try {
     const result = await checkPinById({
       taxpayerType: req.body?.TaxpayerType,
@@ -330,6 +360,7 @@ router.post(
 
 router.post(
   '/seller/register',
+  registrationLimiter,
   sellerUpload.fields([
     { name: 'idFront', maxCount: 1 },
     { name: 'idBack', maxCount: 1 },
@@ -538,7 +569,7 @@ router.post(
   }
 );
 
-router.post('/register', async (req, res) => {
+router.post('/register', registrationLimiter, async (req, res) => {
   try {
     const {
       name,
@@ -735,6 +766,7 @@ router.post('/register', async (req, res) => {
 
 router.post(
   '/resend-verification-code',
+  emailVerificationLimiter,
   async (req, res) => {
     let verificationCode = null;
 
@@ -987,6 +1019,7 @@ router.post('/login', loginLimiter, async (req, res) => {
 
 router.post(
   '/forgot-password',
+  passwordRecoveryLimiter,
   async (req, res) => {
     try {
       const {
@@ -1150,6 +1183,7 @@ router.post(
 
 router.post(
   '/verify-password-reset-code',
+  passwordRecoveryLimiter,
   async (req, res) => {
     try {
       const {
@@ -1396,6 +1430,7 @@ router.post(
 
 router.post(
   '/reset-password',
+  passwordRecoveryLimiter,
   async (req, res) => {
     try {
       const {
@@ -1554,7 +1589,7 @@ router.post(
  * POST /api/auth/resend-verification
  * ============================================================ */
 
-router.post('/resend-verification', async (req, res) => {
+router.post('/resend-verification', emailVerificationLimiter, async (req, res) => {
   try {
     const authHeader = req.headers.authorization || '';
     if (!authHeader.startsWith('Bearer ')) {
@@ -1742,6 +1777,7 @@ router.get(
 
 router.post(
   '/verify-email-code',
+  emailVerificationLimiter,
   async (req, res) => {
     try {
       const {
