@@ -2224,7 +2224,7 @@ if (paymentMethod === 'Pesapal') {
         ? 'https://www.sylvatechnologies.co.ke'
         : 'http://localhost:5173')
     ).split(',')[0].trim().replace(/\/$/, '');
-    const ipnId = String(process.env.PESAPAL_IPN_ID || '').trim();
+    const ipnId = String(process.env.PESAPAL_ORDER_IPN_ID || process.env.PESAPAL_IPN_ID || '').trim();
     const callbackUrl = `${frontendBaseUrl}/payment/callback?provider=pesapal&orderNumber=${encodeURIComponent(order.orderNumber)}`;
     const result = await submitPesapalOrder({
       amount: orderTotal,
@@ -2874,7 +2874,10 @@ router.all('/pesapal/ipn', async (req, res) => {
           { $set: { paymentStatus: 'Paid', paidAt: new Date(), cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000), status: order.status === 'Pending' ? 'Confirmed' : order.status } },
           { returnDocument: 'after' }
         );
-        if (updated) await sendPaidOrderEmails(updated);
+        if (updated) {
+          await holdSellerProceedsInPlatformWallet(updated);
+          await sendPaidOrderEmails(updated);
+        }
       }
     }
     return res.status(200).json({ received: true });
@@ -2910,7 +2913,10 @@ router.post('/pesapal/verify', protect, async (req, res) => {
           { $set: { paymentStatus: 'Paid', paidAt: new Date(), cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000), status: order.status === 'Pending' ? 'Confirmed' : order.status } },
           { returnDocument: 'after' }
         );
-        if (updated) await sendPaidOrderEmails(updated);
+        if (updated) {
+          await holdSellerProceedsInPlatformWallet(updated);
+          await sendPaidOrderEmails(updated);
+        }
       }
     } else {
       return res.status(409).json({ success: false, paymentStatus: order.paymentStatus, message: 'Pesapal has not confirmed this payment yet. If you paid, retry verification shortly.' });
