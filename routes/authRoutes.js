@@ -55,6 +55,13 @@ const registrationLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, message: 'Too many registration attempts. Please try again later.' },
 });
+const kraLookupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many identity lookup requests. Please try again later.' },
+});
 
 const verifyTurnstile = require('../middleware/turnstileVerification');
 
@@ -196,7 +203,7 @@ const AFRICAN_COUNTRY_CODES = new Set('DZ AO BJ BW BF BI CV CM CF TD KM CG CD CI
  * POST /api/auth/kra/pin-checker-by-id
  * Consumer credentials stay server-side; never accept them from the browser.
  */
-router.post('/kra/pin-checker-by-id', async (req, res) => {
+router.post('/kra/pin-checker-by-id', kraLookupLimiter, async (req, res) => {
   try {
     const result = await checkPinById({
       taxpayerType: req.body?.TaxpayerType,
