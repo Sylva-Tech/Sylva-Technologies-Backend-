@@ -15,6 +15,194 @@ const {
 } = require('../middleware/authMiddleware');
 
 const router = express.Router();
+const { submitPesapalOrder, getPesapalTransactionStatus, registerPesapalIpn } = require('../services/pesapalService');
+
+const verifyAndCreditPesapalWalletDeposit = async (transactionId, trackingIdFromRequest = '') => {
+  if (!mongoose.isValidObjectId(transactionId)) throw Object.assign(new Error('Invalid deposit reference.'), { statusCode: 400 });
+  const pendingQuery = { _id: new mongoose.Types.ObjectId(transactionId), category: 'pesapal_topup' };
+  const [platform, user] = await Promise.all([
+    AdminWallet.findOne({ key: 'platform', transactions: mongoose.trusted({ $elemMatch: pendingQuery }) }),
+    User.findOne({ 'wallet.transactions': mongoose.trusted({ $elemMatch: pendingQuery }) }),
+  ]);
+  const isPlatform = Boolean(platform);
+  const owner = isPlatform ? platform : user;
+  if (!owner) throw Object.assign(new Error('Pesapal deposit was not found in the expected wallet.'), { statusCode: 404 });
+  const tx = isPlatform ? platform.transactions.id(transactionId) : user.wallet.transactions.id(transactionId);
+  if (!tx) throw Object.assign(new Error('Deposit transaction was not found.'), { statusCode: 404 });
+  if (tx.status === 'completed') return { status: 'completed', transactionId: String(tx._id), amount: Number(tx.amount), availableBalance: Number(isPlatform ? platform.availableBalance : user.wallet.availableBalance) };
+  if (tx.status !== 'pending') return { status: tx.status, transactionId: String(tx._id), amount: Number(tx.amount) };
+  const trackingId = String(trackingIdFromRequest || tx.metadata?.pesapalTrackingId || '');
+  if (!trackingId || trackingId !== String(tx.metadata?.pesapalTrackingId || '')) {
+    throw Object.assign(new Error('Pesapal tracking reference does not match this deposit.'), { statusCode: 400 });
+  }
+  const status = await getPesapalTransactionStatus(trackingId);
+  const statusCode = Number(status.status_code);
+  if (statusCode !== 1) {
+    if ([2, 3].includes(statusCode)) {
+      const failedFilter = isPlatform
+        ? { _id: platform._id, transactions: mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending' } }) }
+        : { _id: user._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending' } }) };
+      const failedUpdate = isPlatform
+        ? { $set: { 'transactions.$.status': 'failed', 'transactions.$.description': 'Pesapal deposit was not completed.', 'transactions.$.processedAt': new Date(), 'transactions.$.updatedAt': new Date() } }
+        : { $set: { 'wallet.transactions.$.status': 'failed', 'wallet.transactions.$.description': 'Pesapal deposit was not completed.', 'wallet.transactions.$.processedAt': new Date(), 'wallet.transactions.$.updatedAt': new Date(), 'wallet.lastUpdatedAt': new Date() } };
+      await (isPlatform ? AdminWallet : User).updateOne(failedFilter, failedUpdate);
+      return { status: 'failed', transactionId: String(tx._id), amount: Number(tx.amount) };
+    }
+    return { status: 'pending', transactionId: String(tx._id), amount: Number(tx.amount) };
+  }
+  const paidAmount = Number(status.amount);
+  const paidCurrency = String(status.currency || '').toUpperCase();
+  const merchantReference = String(status.merchant_reference || '');
+  if (!Number.isFinite(paidAmount) || Math.round(paidAmount * 100) !== Math.round(Number(tx.amount) * 100) || paidCurrency !== 'KES' || merchantReference !== String(tx.metadata?.merchantReference || '')) {
+    throw Object.assign(new Error('Pesapal payment details do not match the deposit. Funds have not been credited; contact support for reconciliation.'), { statusCode: 409 });
+  }
+  const now = new Date();
+  const successFilter = isPlatform
+    ? { _id: platform._id, transactions: mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.pesapalTrackingId': trackingId } }) }
+    : { _id: user._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.pesapalTrackingId': trackingId } }) };
+  const successUpdate = isPlatform
+    ? { $inc: { availableBalance: Number(tx.amount) }, $set: { lastUpdatedAt: now, 'transactions.$.status': 'completed', 'transactions.$.description': 'Pesapal wallet deposit confirmed.', 'transactions.$.processedAt': now, 'transactions.$.updatedAt': now, 'transactions.$.metadata.paymentMethod': String(status.payment_method || '') } }
+    : { $inc: { 'wallet.availableBalance': Number(tx.amount) }, $set: { 'wallet.lastUpdatedAt': now, 'wallet.transactions.$.status': 'completed', 'wallet.transactions.$.description': 'Pesapal wallet deposit confirmed.', 'wallet.transactions.$.processedAt': now, 'wallet.transactions.$.updatedAt': now, 'wallet.transactions.$.metadata.paymentMethod': String(status.payment_method || '') } };
+  const updated = await (isPlatform ? AdminWallet : User).findOneAndUpdate(successFilter, successUpdate, { returnDocument: 'after' });
+  if (!updated) {
+    const latest = isPlatform
+      ? await AdminWallet.findOne({ key: 'platform', 'transactions._id': tx._id })
+      : await User.findOne({ _id: user._id, 'wallet.transactions._id': tx._id });
+    const latestTx = isPlatform ? latest?.transactions.id(tx._id) : latest?.wallet?.transactions?.id(tx._id);
+    if (latestTx?.status !== 'completed') throw Object.assign(new Error('Wallet deposit could not be reconciled safely. Please retry status check.'), { statusCode: 409 });
+    return { status: 'completed', transactionId: String(tx._id), amount: Number(tx.amount), availableBalance: Number(isPlatform ? latest.availableBalance : latest.wallet.availableBalance) };
+  }
+  const updatedTx = isPlatform ? updated.transactions.id(tx._id) : updated.wallet.transactions.id(tx._id);
+  return { status: 'completed', transactionId: String(tx._id), amount: Number(tx.amount), availableBalance: Number(isPlatform ? updated.availableBalance : updated.wallet.availableBalance), reference: updatedTx?.reference || tx.reference };
+};
+
+router.post('/topup/pesapal', protect, payoutRateLimit, async (req, res) => {
+  let user;
+  let transaction;
+  try {
+    user = await User.findById(req.user._id);
+    const isAdminDeposit = user?.role === 'admin' && user?.isVerified === true;
+    if (!user || (!isAdminDeposit && !isEligibleWalletTopup(user))) {
+      return res.status(403).json({ success: false, message: 'Verify your account first. Deposits are available to verified customers, approved active sellers, and verified administrators.' });
+    }
+    const amount = Number(req.body?.amount);
+    if (!Number.isSafeInteger(amount) || amount < 10 || amount > 150000) {
+      return res.status(400).json({ success: false, message: 'Enter a whole-number deposit between KSh 10 and KSh 150,000.' });
+    }
+    const now = new Date();
+    const transactionId = new mongoose.Types.ObjectId();
+    const merchantReference = 'SYLVA-WALLET-' + transactionId.toString().toUpperCase();
+    const accountDisplayName = getWalletAccountDisplayName(user);
+    transaction = {
+      _id: transactionId, type: 'credit', amount, category: 'pesapal_topup', status: 'pending',
+      description: 'Wallet deposit awaiting Pesapal confirmation.',
+      reference: accountDisplayName + ' ' + merchantReference,
+      createdAt: now, updatedAt: now, processedAt: null,
+      metadata: { provider: 'pesapal', initiatedBy: String(user._id), walletOwnerType: isAdminDeposit ? 'platform' : 'user', merchantReference, accountDisplayName },
+    };
+    if (isAdminDeposit) {
+      let platform = await AdminWallet.findOne({ key: 'platform' });
+      if (!platform) platform = new AdminWallet({ key: 'platform', currency: 'KES' });
+      platform.transactions.push(transaction);
+      platform.lastUpdatedAt = now;
+      await platform.save();
+    } else {
+      const wallet = ensureWallet(user);
+      wallet.transactions.unshift(transaction);
+      wallet.lastUpdatedAt = now;
+      await user.save();
+    }
+    const frontendUrl = String(process.env.FRONTEND_URL || 'https://www.sylvatechnologies.co.ke').split(',')[0].trim().replace(/\/$/, '');
+    const backendUrl = String(process.env.API_BASE_URL || 'https://api.sylvatechnologies.co.ke').replace(/\/$/, '');
+    const payment = await submitPesapalOrder({
+      reference: merchantReference, amount, description: 'Sylva Technologies wallet deposit',
+      callbackUrl: frontendUrl + '/payment/callback?provider=pesapal&purpose=wallet&transactionId=' + encodeURIComponent(String(transactionId)),
+      cancellationUrl: frontendUrl + '/payment/callback?provider=pesapal&purpose=wallet&transactionId=' + encodeURIComponent(String(transactionId)),
+      notificationId: process.env.PESAPAL_IPN_ID,
+      billingAddress: { email_address: user.email, phone_number: user.phone || user.sellerProfile?.mpesaPhone || '', country_code: 'KE', first_name: String(user.name || 'Sylva Customer').split(' ')[0], last_name: String(user.name || 'Customer').split(' ').slice(1).join(' ') || 'Customer', line_1: 'Kenya', city: 'Nairobi' },
+    });
+    const savedFilter = isAdminDeposit
+      ? { key: 'platform', 'transactions._id': transactionId, 'transactions.status': 'pending' }
+      : { _id: user._id, 'wallet.transactions._id': transactionId, 'wallet.transactions.status': 'pending' };
+    const savedUpdate = isAdminDeposit
+      ? { $set: { 'transactions.$.metadata.pesapalTrackingId': payment.trackingId, 'transactions.$.metadata.pesapalRedirectUrl': payment.redirectUrl, 'transactions.$.updatedAt': new Date() } }
+      : { $set: { 'wallet.transactions.$.metadata.pesapalTrackingId': payment.trackingId, 'wallet.transactions.$.metadata.pesapalRedirectUrl': payment.redirectUrl, 'wallet.transactions.$.updatedAt': new Date() } };
+    await (isAdminDeposit ? AdminWallet : User).updateOne(savedFilter, savedUpdate);
+    return res.status(202).json({ success: true, message: 'Continue to Pesapal to complete your deposit. Your wallet will update after payment is verified.', data: { transactionId: String(transactionId), amount, reference: merchantReference, status: 'pending', redirectUrl: payment.redirectUrl } });
+  } catch (error) {
+    console.error('Pesapal wallet deposit initialization failed:', error.response?.data || error.message);
+    if (transaction?._id && user?._id) {
+      try {
+        const isAdminDeposit = user.role === 'admin' && user.isVerified === true;
+        const filter = isAdminDeposit
+          ? { key: 'platform', transactions: mongoose.trusted({ $elemMatch: { _id: transaction._id, status: 'pending' } }) }
+          : { _id: user._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { _id: transaction._id, status: 'pending' } }) };
+        const update = isAdminDeposit
+          ? { $set: { 'transactions.$.status': 'failed', 'transactions.$.description': 'Pesapal deposit could not be initialized.', 'transactions.$.processedAt': new Date() } }
+          : { $set: { 'wallet.transactions.$.status': 'failed', 'wallet.transactions.$.description': 'Pesapal deposit could not be initialized.', 'wallet.transactions.$.processedAt': new Date(), 'wallet.transactions.$.updatedAt': new Date() } };
+        await (isAdminDeposit ? AdminWallet : User).updateOne(filter, update);
+      } catch (rollbackError) { console.error('Unable to mark Pesapal deposit initialization as failed:', rollbackError.message); }
+    }
+    return res.status(error.statusCode || 502).json({ success: false, message: error.message || 'Unable to start Pesapal wallet deposit.' });
+  }
+});
+
+router.post('/topup/pesapal/verify', protect, payoutRateLimit, async (req, res) => {
+  try {
+    const transactionId = String(req.body?.transactionId || '').trim();
+    if (!mongoose.isValidObjectId(transactionId)) return res.status(400).json({ success: false, message: 'Invalid deposit reference.' });
+    const user = await User.findById(req.user._id);
+    const isAdmin = user?.role === 'admin';
+    const owner = isAdmin
+      ? await AdminWallet.findOne({ key: 'platform', 'transactions._id': transactionId })
+      : await User.findOne({ _id: req.user._id, 'wallet.transactions._id': transactionId });
+    if (!owner) return res.status(404).json({ success: false, message: 'Deposit transaction was not found in your wallet.' });
+    const tx = isAdmin ? owner.transactions.id(transactionId) : owner.wallet.transactions.id(transactionId);
+    if (!tx || tx.category !== 'pesapal_topup') return res.status(404).json({ success: false, message: 'Pesapal deposit was not found.' });
+    const data = await verifyAndCreditPesapalWalletDeposit(transactionId, String(req.body?.trackingId || tx.metadata?.pesapalTrackingId || ''));
+    const latest = isAdmin ? await AdminWallet.findOne({ key: 'platform' }) : await User.findById(req.user._id);
+    const balance = isAdmin ? latest?.availableBalance : latest?.wallet?.availableBalance;
+    return res.status(data.status === 'pending' ? 202 : 200).json({ success: true, message: data.status === 'completed' ? 'Deposit confirmed and wallet balance updated.' : data.status === 'failed' ? 'Pesapal did not complete this deposit.' : 'Payment is still pending confirmation.', data: { ...data, availableBalance: Number(balance || 0) } });
+  } catch (error) {
+    return res.status(error.statusCode || 502).json({ success: false, message: error.message || 'Unable to verify Pesapal deposit.' });
+  }
+});
+
+const handlePesapalWalletIpn = async (req, res) => {
+  try {
+    const trackingId = String(req.query?.OrderTrackingId || req.body?.OrderTrackingId || req.body?.orderTrackingId || '').trim();
+    const merchantReference = String(req.query?.OrderMerchantReference || req.body?.OrderMerchantReference || req.body?.orderMerchantReference || '').trim();
+    if (!trackingId || !merchantReference) return res.status(400).json({ status: 400, message: 'Missing Pesapal transaction references.' });
+    const [platform, user] = await Promise.all([
+      AdminWallet.findOne({ key: 'platform', 'transactions.metadata.pesapalTrackingId': trackingId }),
+      User.findOne({ 'wallet.transactions.metadata.pesapalTrackingId': trackingId }),
+    ]);
+    const owner = platform || user;
+    const tx = platform
+      ? platform.transactions.find((entry) => entry.metadata?.pesapalTrackingId === trackingId)
+      : user?.wallet?.transactions?.find((entry) => entry.metadata?.pesapalTrackingId === trackingId);
+    if (tx && tx.metadata?.merchantReference === merchantReference) {
+      await verifyAndCreditPesapalWalletDeposit(String(tx._id), trackingId);
+    }
+    return res.json({ orderNotificationType: 'IPNCHANGE', orderTrackingId: trackingId, orderMerchantReference: merchantReference, status: 200 });
+  } catch (error) {
+    console.error('Pesapal wallet IPN reconciliation failed:', error.message);
+    return res.status(500).json({ status: 500, message: 'Unable to reconcile Pesapal wallet deposit.' });
+  }
+};
+router.get('/pesapal/ipn', handlePesapalWalletIpn);
+router.post('/pesapal/ipn', handlePesapalWalletIpn);
+
+router.post('/pesapal/register-ipn', protect, adminOnly, requireVerified, async (req, res) => {
+  try {
+    const backendUrl = String(process.env.API_BASE_URL || 'https://api.sylvatechnologies.co.ke').replace(/\/$/, '');
+    const data = await registerPesapalIpn(backendUrl + '/api/wallet/pesapal/ipn', 'GET');
+    return res.json({ success: true, message: 'Pesapal IPN registered. Save the returned IPN ID as PESAPAL_IPN_ID in Render.', data: { ipnId: data.ipn_id, url: data.url, status: data.ipn_status } });
+  } catch (error) {
+    return res.status(error.statusCode || 502).json({ success: false, message: error.message || 'Unable to register Pesapal IPN.' });
+  }
+});
+
 
 // Fail closed: a missing or misspelled environment must never select Production.
 // Sandbox is the safe default until Safaricom approves Go Live.
