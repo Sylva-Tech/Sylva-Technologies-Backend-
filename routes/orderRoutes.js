@@ -289,7 +289,7 @@ const applySellerSettlement = async (order) => {
 };
 
 
-// Track seller-owned M-Pesa proceeds as held platform funds until the customer confirms delivery.
+// Track seller-owned M-Pesa and Pesapal proceeds as held platform funds until the customer confirms delivery.
 // This is an internal ledger hold; the actual M-Pesa collection remains in the configured business Till.
 const getSellerOrderGrossAmounts = async (order) => {
   const productIds = [...new Set((order?.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
@@ -322,7 +322,7 @@ const sellerEscrowReference = (order, sellerId) => 'seller-escrow:order:' + Stri
 const sellerEscrowReleaseReference = (order, sellerId) => 'seller-escrow-release:order:' + String(order.orderNumber) + ':' + String(sellerId);
 
 const holdSellerProceedsInPlatformWallet = async (order) => {
-  if (!order || order.paymentMethod !== 'M-Pesa' || order.paymentStatus !== 'Paid') {
+  if (!order || !['M-Pesa', 'Pesapal'].includes(order.paymentMethod) || order.paymentStatus !== 'Paid') {
     return { held: 0, expected: 0, skipped: true };
   }
   const sellerAmounts = await getSellerOrderGrossAmounts(order);
@@ -369,7 +369,7 @@ const holdSellerProceedsInPlatformWallet = async (order) => {
               grossAmount: seller.grossAmount,
               commissionRate: Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.04),
               releaseCondition: 'Customer confirms delivery',
-              paymentMethod: 'M-Pesa',
+              paymentMethod: order.paymentMethod,
             },
             createdAt: now,
             updatedAt: now,
@@ -395,7 +395,7 @@ const holdSellerProceedsInPlatformWallet = async (order) => {
 };
 
 const releaseSellerProceedsFromPlatformWallet = async (order) => {
-  if (!order || order.paymentMethod !== 'M-Pesa') return { released: 0, expected: 0, skipped: true };
+  if (!order || !['M-Pesa', 'Pesapal'].includes(order.paymentMethod)) return { released: 0, expected: 0, skipped: true };
   const sellerAmounts = await getSellerOrderGrossAmounts(order);
   if (!sellerAmounts.length) return { released: 0, expected: 0, complete: true };
   let platform = await AdminWallet.findOne({ key: 'platform' });
@@ -1427,10 +1427,10 @@ router.post('/confirm-delivery', async (req, res) => {
       await order.save();
     }
 
-    // Ensure M-Pesa seller proceeds are represented as held platform funds even if
+    // Ensure supported gateway seller proceeds are represented as held platform funds even if
     // an earlier callback failed after marking the order paid.
     const escrowHold = await holdSellerProceedsInPlatformWallet(order);
-    if (order.paymentMethod === 'M-Pesa' && escrowHold.expected && !escrowHold.complete) {
+    if (['M-Pesa', 'Pesapal'].includes(order.paymentMethod) && escrowHold.expected && !escrowHold.complete) {
       return res.status(409).json({ success: false, message: 'Seller proceeds could not be fully reserved in the platform wallet. Please retry or contact support.' });
     }
 
@@ -1438,7 +1438,7 @@ router.post('/confirm-delivery', async (req, res) => {
     if (!settlementResult.settled) {
       return res.status(409).json({ success: false, message: 'Receipt was recorded, but seller settlement is not yet complete. Please retry shortly or contact support; the link remains available for retry.' });
     }
-    if (order.paymentMethod === 'M-Pesa') {
+    if (['M-Pesa', 'Pesapal'].includes(order.paymentMethod)) {
       const escrowRelease = await releaseSellerProceedsFromPlatformWallet(order);
       if (!escrowRelease.complete) {
         return res.status(409).json({ success: false, message: 'Seller wallet was credited, but the platform escrow release is still pending. Please retry shortly or contact support.' });
