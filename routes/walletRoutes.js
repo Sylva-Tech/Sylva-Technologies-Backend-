@@ -1930,7 +1930,7 @@ router.post('/topup/pesapal', protect, payoutRateLimit, async (req, res) => {
       const result = await submitPesapalOrder({
         amount, reference: merchantReference, description: 'Sylva Technologies wallet deposit ' + merchantReference,
         email: user.email, phone: user.phone,
-        callbackUrl: frontendBaseUrl + '/wallet?pesapalWalletTransactionId=' + encodeURIComponent(String(transactionId)) + '&OrderMerchantReference=' + encodeURIComponent(merchantReference),
+        callbackUrl: frontendBaseUrl + (isAdminDeposit ? '/admin/wallet' : user.role === 'seller' ? '/seller/wallet' : '/wallet') + '?pesapalWalletTransactionId=' + encodeURIComponent(String(transactionId)) + '&OrderMerchantReference=' + encodeURIComponent(merchantReference),
         notificationId: String(process.env.PESAPAL_WALLET_IPN_ID || '').trim(),
         billingAddress: { first_name: String(user.name || 'Customer').trim().split(/\s+/)[0], last_name: String(user.name || 'Customer').trim().split(/\s+/).slice(1).join(' ') || 'Customer', country_code: 'KE' },
       });
