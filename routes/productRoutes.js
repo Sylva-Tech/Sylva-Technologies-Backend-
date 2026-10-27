@@ -992,6 +992,7 @@ router.post(
         category,
         subcategory,
         sku,
+        code,
         price,
         oldPrice,
         stock,
@@ -1020,7 +1021,7 @@ router.post(
         !name ||
         !brand ||
         !category ||
-        !sku ||
+        !(String(code || sku || '').trim()) ||
         price === undefined ||
         price === ''
       ) {
@@ -2244,20 +2245,19 @@ router.post(
       const productSlug =
         buildSlug(name);
 
-      const normalizedSku =
-        String(sku)
+      // Google Sheets uses "Code" as the canonical product identifier.
+      // Accept legacy "sku" payloads while keeping both fields synchronized.
+      const normalizedCode =
+        String(code || sku)
           .trim()
           .toUpperCase();
 
       const duplicate =
         await Product.findOne({
           $or: [
-            {
-              slug: productSlug,
-            },
-            {
-              sku: normalizedSku,
-            },
+            { slug: productSlug },
+            { code: normalizedCode },
+            { sku: normalizedCode },
           ],
         });
 
@@ -2305,8 +2305,11 @@ router.post(
           slug:
             productSlug,
 
+          code:
+            normalizedCode,
+
           sku:
-            normalizedSku,
+            normalizedCode,
 
           brand,
 
@@ -2565,6 +2568,7 @@ if (
         'brand',
         'category',
         'subcategory',
+        'code',
         'sku',
         'price',
         'oldPrice',
@@ -2718,30 +2722,38 @@ if (
       }
 
       /*
-       * Normalize SKU.
+       * Normalize the canonical product Code and keep the legacy SKU
+       * synchronized for existing catalogue/search integrations.
        */
-      if (req.body.sku) {
-        const normalizedSku =
-          String(req.body.sku)
-            .trim()
-            .toUpperCase();
-const duplicateSku =
-  await Product.findOne({
-    sku: normalizedSku,
-  });
+      if (req.body.code !== undefined || req.body.sku !== undefined) {
+        const normalizedCode = String(req.body.code || req.body.sku || '')
+          .trim()
+          .toUpperCase();
 
-if (
-  duplicateSku &&
-  duplicateSku._id.toString() !== product._id.toString()
-) {
-  return res.status(400).json({
-    success: false,
-    message:
-      'Another product already uses this SKU.',
-  });
-}
-        product.sku =
-          normalizedSku;
+        if (!normalizedCode || normalizedCode.length > 100) {
+          return res.status(400).json({
+            success: false,
+            message: 'Product code is required and must be 100 characters or fewer.',
+          });
+        }
+
+        const duplicateCode = await Product.findOne({
+          $or: [
+            { code: normalizedCode },
+            { sku: normalizedCode },
+          ],
+          _id: mongoose.trusted({ $ne: product._id }),
+        }).select('_id');
+
+        if (duplicateCode) {
+          return res.status(409).json({
+            success: false,
+            message: 'Another product already uses this Code / SKU. Enter a unique product code.',
+          });
+        }
+
+        product.code = normalizedCode;
+        product.sku = normalizedCode;
       }
 
       /*
