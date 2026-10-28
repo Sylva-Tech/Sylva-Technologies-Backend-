@@ -59,7 +59,7 @@ router.put('/', protect, adminOnly, async (req, res) => {
     const config = await MovingBarConfig.findOneAndUpdate(
       { key: 'homepage' },
       { $set: { items } },
-      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+      { returnDocument: 'after', upsert: true, runValidators: true, setDefaultsOnInsert: true }
     ).lean();
     return res.json({ success: true, message: 'Moving-bar announcements saved.', items: config.items });
   } catch (error) {
