@@ -133,7 +133,7 @@ router.put('/rates/:id', protect, adminOnly, async (req, res) => {
     if (!Number.isFinite(fee) || fee < 0 || !Number.isInteger(deliveryMinDays) || deliveryMinDays < 1 || !Number.isInteger(deliveryMaxDays) || deliveryMaxDays < deliveryMinDays || typeof active !== 'boolean') {
       return res.status(400).json({ success: false, message: 'Enter a non-negative fee, valid delivery day range, and active status.' });
     }
-    const rate = await ShippingRate.findByIdAndUpdate(req.params.id, { $set: { fee, deliveryMinDays, deliveryMaxDays, active } }, { new: true, runValidators: true });
+    const rate = await ShippingRate.findByIdAndUpdate(req.params.id, { $set: { fee, deliveryMinDays, deliveryMaxDays, active } }, { returnDocument: 'after', runValidators: true });
     if (!rate) return res.status(404).json({ success: false, message: 'Shipping rate not found.' });
     return res.json({ success: true, rate, message: 'Shipping rate saved.' });
   } catch (error) {
