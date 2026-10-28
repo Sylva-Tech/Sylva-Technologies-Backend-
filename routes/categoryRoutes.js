@@ -155,6 +155,69 @@ router.post('/admin/seed-catalog', protect, adminOnly, async (req, res) => {
   }
 });
 
+// Safely place existing products into the new catalogue hierarchy using their names and current category labels.
+// This never creates, deletes, hides, or changes prices/stock/approval for products.
+router.post('/admin/organize-existing-products', protect, adminOnly, async (req, res) => {
+  try {
+    const allCategories = await Category.find({ isActive: true }).select('_id name slug parentCategory').lean();
+    const bySlug = new Map(allCategories.map((item) => [item.slug, item]));
+    const byId = new Map(allCategories.map((item) => [String(item._id), item]));
+    const rules = [
+      { slug: 'laptops', terms: [/\\blaptop\\b/i, /\\bnotebook\\b/i, /thinkpad/i, /elitebook/i, /probook/i, /latitude/i, /pavilion/i, /macbook/i, /chromebook/i] },
+      { slug: 'desktops', terms: [/\\bdesktop\\b/i, /\\btower pc\\b/i, /\\ball.in.one pc\\b/i, /\\bmini pc\\b/i] },
+      { slug: 'monitors', terms: [/\\bmonitor\\b/i, /\\bdisplay\\b/i, /\\bcomputer screen\\b/i] },
+      { slug: 'printers', terms: [/\\bprinter\\b/i, /\\bmultifunction\\b/i, /\\bplotter\\b/i] },
+      { slug: 'ink-toner', terms: [/\\btoner\\b/i, /\\bink cartridge\\b/i, /\\bink bottle\\b/i] },
+      { slug: 'routers', terms: [/\\brouter\\b/i, /\\bmodem\\b/i, /\\bmifi\\b/i, /\\b4g\\b.*\\brouter\\b/i, /\\b5g\\b.*\\brouter\\b/i] },
+      { slug: 'network-switches', terms: [/\\bswitch(es)?\\b/i] },
+      { slug: 'access-points-wifi', terms: [/access point/i, /wifi extender/i, /mesh wifi/i] },
+      { slug: 'network-cables-adapters', terms: [/ethernet cable/i, /network cable/i, /rj45/i, /network adapter/i] },
+      { slug: 'keyboards-mice', terms: [/\\bkeyboard\\b/i, /\\bmouse\\b/i, /\\bmice\\b/i] },
+      { slug: 'docks-hubs', terms: [/\\bdock(ing)? station\\b/i, /\\busb.?c hub\\b/i, /\\bport replicator\\b/i] },
+      { slug: 'webcams-headsets', terms: [/\\bwebcam\\b/i, /\\bheadset\\b/i, /\\bearphones?\\b/i, /\\bheadphones?\\b/i, /\\bmicrophone\\b/i] },
+      { slug: 'memory-ram', terms: [/\\bram\\b/i, /memory module/i, /ddr[345]/i] },
+      { slug: 'ssd-hard-drives', terms: [/\\bssd\\b/i, /solid.state drive/i, /internal hard drive/i, /\\bhdd\\b/i] },
+      { slug: 'processors-graphics', terms: [/\\bprocessor\\b/i, /\\bcpu\\b/i, /\\bgpu\\b/i, /graphics card/i, /\\bnvidia geforce\\b/i, /\\bamd radeon\\b/i] },
+      { slug: 'external-drives', terms: [/external drive/i, /portable ssd/i, /external hard drive/i] },
+      { slug: 'usb-drives-memory-cards', terms: [/\\busb flash\\b/i, /\\bflash drive\\b/i, /memory card/i, /\\bsd card\\b/i] },
+      { slug: 'consoles-controllers', terms: [/\\bplaystation\\b/i, /\\bxbox\\b/i, /\\bnintendo switch\\b/i, /game controller/i, /gamepad/i] },
+      { slug: 'gaming-headsets', terms: [/gaming headset/i, /gaming headphones/i] },
+      { slug: 'speakers-audio', terms: [/\\bspeaker(s)?\\b/i, /soundbar/i, /\\bbluetooth audio\\b/i] },
+      { slug: 'digital-cameras', terms: [/\\bcamera\\b/i, /\\bdslr\\b/i, /mirrorless/i] },
+      { slug: 'action-cameras', terms: [/\\baction camera\\b/i, /gopro/i, /insta360/i] },
+      { slug: 'camera-lenses-filters', terms: [/camera lens/i, /\\blens(es)?\\b/i, /camera filter/i] },
+      { slug: 'projectors', terms: [/\\bprojector\\b/i] },
+      { slug: 'ups-surge-protection', terms: [/\\bups\\b/i, /surge protector/i, /voltage regulator/i] },
+      { slug: 'chargers-power-banks', terms: [/\\bcharger\\b/i, /power bank/i, /charging cable/i] },
+      { slug: 'televisions-displays', terms: [/\\btelevision\\b/i, /\\btv\\b/i, /smart tv/i] },
+      { slug: 'smart-devices', terms: [/smart home/i, /smart plug/i, /smart device/i] },
+    ];
+    const products = await Product.find({}).select('_id name category subcategory').lean();
+    let updated = 0;
+    let unchanged = 0;
+    let unmatched = 0;
+    const examples = [];
+    for (const product of products) {
+      const currentCategory = byId.get(String(product.category));
+      const haystack = [product.name, product.subcategory, currentCategory?.name].filter(Boolean).join(' ');
+      const rule = rules.find((candidate) => candidate.terms.some((term) => term.test(haystack)));
+      const target = rule ? bySlug.get(rule.slug) : null;
+      if (!target || (currentCategory && String(currentCategory._id) === String(target._id) && product.subcategory === target.name)) {
+        if (!target) unmatched += 1;
+        else unchanged += 1;
+        continue;
+      }
+      await Product.updateOne({ _id: product._id }, { $set: { category: target._id, subcategory: target.name } });
+      updated += 1;
+      if (examples.length < 8) examples.push({ name: product.name, category: target.name });
+    }
+    return res.json({ success: true, message: 'Existing products were organised into matching categories. All product records and commercial details were preserved.', totalProducts: products.length, updated, unchanged, unmatched, examples });
+  } catch (error) {
+    console.error('Unable to organise existing products:', error);
+    return res.status(500).json({ message: 'Unable to organise existing products.' });
+  }
+});
+
 router.get('/admin/all', protect, adminOnly, async (req, res) => {
   try {
     const categories = await Category.find({}).sort({ name: 1 });
