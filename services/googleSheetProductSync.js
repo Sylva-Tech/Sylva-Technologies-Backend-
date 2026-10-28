@@ -83,6 +83,44 @@ async function getGoogleSheetRows() {
           : '';
     });
 
+    // The sheet header row is normalized to lowercase above. Restore the
+    // canonical camelCase keys expected by the shared product model so fields
+    // such as oldPrice, shortDescription and deliveryFee do not disappear.
+    const headerAliases = {
+      oldprice: 'oldPrice',
+      shortdescription: 'shortDescription',
+      keyfeatures: 'keyFeatures',
+      warrantyduration: 'warrantyDuration',
+      warrantyterms: 'warrantyTerms',
+      deliveryduration: 'deliveryDuration',
+      deliveryfee: 'deliveryFee',
+      deliveryterms: 'deliveryTerms',
+      deliverylocations: 'deliveryLocations',
+      returnperiod: 'returnPeriod',
+      returnpolicy: 'returnPolicy',
+      returnconditions: 'returnConditions',
+      whatsincluded: 'whatsIncluded',
+      offermessage: 'offerMessage',
+      offerstartdate: 'offerStartDate',
+      offerenddate: 'offerEndDate',
+      isnew: 'isNew',
+      isactive: 'isActive',
+      flashsale: 'flashSale',
+      shortdescription: 'shortDescription',
+      specifications: 'specifications',
+      condition: 'condition',
+    };
+    for (const [lowercaseKey, canonicalKey] of Object.entries(headerAliases)) {
+      if (Object.prototype.hasOwnProperty.call(row, lowercaseKey)) {
+        row[canonicalKey] = row[lowercaseKey];
+      }
+    }
+
+    // Older sheet templates may use SKU instead of Code. Keep both identifiers
+    // in sync so imports update the same product rather than creating duplicates.
+    row.code = String(row.code || row.sku || '').trim();
+    row.sku = String(row.sku || row.code || '').trim();
+
     row.__sheetRowNumber = index + 1;
 
     /*
