@@ -43,7 +43,7 @@ router.patch('/:id/folder', protect, adminOnly, async (req, res) => {
     const message = await SupportMessage.findByIdAndUpdate(
       req.params.id,
       { $set: { folder } },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     ).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion');
     if (!message) return res.status(404).json({ success: false, message: 'Enquiry not found.' });
     return res.json({ success: true, message: 'Website enquiry moved to ' + folder + '.', enquiry: decryptMessageContent(message) });
@@ -67,7 +67,7 @@ router.get('/:id', protect, adminOnly, async (req, res) => {
 });
 router.patch('/:id/read', protect, adminOnly, async (req, res) => {
   try {
-    const message = await SupportMessage.findByIdAndUpdate(req.params.id, { isRead: req.body?.isRead !== false }, { new: true, runValidators: true }).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion');
+    const message = await SupportMessage.findByIdAndUpdate(req.params.id, { isRead: req.body?.isRead !== false }, { returnDocument: 'after', runValidators: true }).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion');
     if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
     return res.json({ success: true, message: decryptMessageContent(message) });
   } catch (e) {
