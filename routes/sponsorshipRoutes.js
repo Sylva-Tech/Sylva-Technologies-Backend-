@@ -185,7 +185,7 @@ router.post('/products/:productId', protect, approvedSellerOnly, async (req, res
             },
           },
         },
-        { new: true, runValidators: true },
+        { returnDocument: 'after', runValidators: true },
       );
 
       if (!user) {
