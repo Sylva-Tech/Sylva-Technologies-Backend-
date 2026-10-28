@@ -1073,7 +1073,7 @@ router.post(
           $set: { 'wallet.lastUpdatedAt': now },
           $push: { 'wallet.transactions': { $each: [transaction], $position: 0 } },
         },
-        { new: true, runValidators: true }
+        { returnDocument: 'after', runValidators: true }
       );
 
       if (!updatedUser) {
@@ -1168,7 +1168,7 @@ router.post('/payout-request-usd', protect, payoutRateLimit, async (req, res) =>
         $set: { 'usdWallet.lastUpdatedAt': now },
         $push: { 'usdWallet.transactions': { $each: [transaction], $position: 0 } },
       },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
     if (!updatedUser) {
       return res.status(409).json({ success: false, message: 'Your USD wallet changed or another withdrawal is pending. Refresh and try again.' });
@@ -2232,7 +2232,7 @@ router.post('/topup/paypal/capture', protect, payoutRateLimit, async (req, res) 
           'usdWallet.transactions.$.updatedAt': now,
         },
       },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
     if (!updatedUser) {
       const latest = await User.findById(user._id);
