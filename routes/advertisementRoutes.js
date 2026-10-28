@@ -1,4 +1,5 @@
 const express = require('express');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
 const Advertisement = require('../models/Advertisement');
 
 const router = express.Router();
@@ -57,7 +58,7 @@ const sendActiveAdvertisements = async (req, res) => {
 
 // Admin management list: include inactive and scheduled banners as well.
 // Keep this route before the public '/' route so '/all' is not treated as an ID.
-router.get('/all', async (req, res) => {
+router.get('/all', protect, adminOnly, async (req, res) => {
   try {
     const advertisements = await Advertisement.find({})
       .sort({ priority: -1, createdAt: -1 })
@@ -84,7 +85,7 @@ router.get('/', sendActiveAdvertisements);
 | CREATE ADVERTISEMENT
 |--------------------------------------------------------------------------
 */
-router.post('/', async (req, res) => {
+router.post('/', protect, adminOnly, async (req, res) => {
   try {
     const {
       title,
@@ -155,7 +156,7 @@ router.post('/', async (req, res) => {
 | UPDATE ADVERTISEMENT
 |--------------------------------------------------------------------------
 */
-router.put('/:id', async (req, res) => {
+router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
     const {
       title,
@@ -261,7 +262,7 @@ router.put('/:id', async (req, res) => {
 | DELETE ADVERTISEMENT
 |--------------------------------------------------------------------------
 */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
     const advertisement = await Advertisement.findById(req.params.id);
 
