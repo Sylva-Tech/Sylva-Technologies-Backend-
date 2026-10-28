@@ -2145,6 +2145,7 @@ router.post(
         name,
         brand,
         category,
+        code,
         sku,
         price,
         oldPrice,
@@ -2178,18 +2179,24 @@ router.post(
         seller,
       } = req.body;
 
+      // The product model requires a primary product code. Older admin
+      // forms send this value as "sku", while the current sheet workflow
+      // calls it "code". Accept either to keep both forms compatible.
+      const submittedCode = String(code || sku || '').trim();
+      const submittedSku = String(sku || '').trim();
+
       if (
         !name ||
         !brand ||
         !category ||
-        !sku ||
+        !submittedCode ||
         price === undefined ||
         price === ''
       ) {
         return res.status(400).json({
           success: false,
           message:
-            'Required product fields are missing.',
+            'Required product fields are missing. Enter a product code/SKU.',
         });
       }
 
@@ -2251,28 +2258,26 @@ router.post(
       const productSlug =
         buildSlug(name);
 
-      const normalizedSku =
-        String(sku)
-          .trim()
-          .toUpperCase();
+      const normalizedCode = submittedCode.toUpperCase();
+      const normalizedSku = submittedSku
+        ? submittedSku.toUpperCase()
+        : undefined;
 
-      const duplicate =
-        await Product.findOne({
-          $or: [
-            {
-              slug: productSlug,
-            },
-            {
-              sku: normalizedSku,
-            },
-          ],
-        });
+      const duplicateConditions = [
+        { slug: productSlug },
+        { code: normalizedCode },
+      ];
+      if (normalizedSku) duplicateConditions.push({ sku: normalizedSku });
+
+      const duplicate = await Product.findOne({
+        $or: duplicateConditions,
+      });
 
       if (duplicate) {
         return res.status(400).json({
           success: false,
           message:
-            'Product with the same slug or SKU already exists.',
+            'Product with the same name, product code, or SKU already exists.',
         });
       }
 
@@ -2312,8 +2317,10 @@ router.post(
           slug:
             productSlug,
 
-          sku:
-            normalizedSku,
+          code:
+            normalizedCode,
+
+          ...(normalizedSku ? { sku: normalizedSku } : {}),
 
           brand,
 
