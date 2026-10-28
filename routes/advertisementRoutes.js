@@ -93,6 +93,8 @@ router.post('/', protect, adminOnly, async (req, res) => {
       image,
       imageUrl,
       mobileImageUrl,
+      backgroundColor,
+      marketingMessage,
       seoTitle,
       seoDescription,
       seoKeywords,
@@ -119,6 +121,8 @@ router.post('/', protect, adminOnly, async (req, res) => {
       image: image || '',
       imageUrl: imageUrl || '',
       mobileImageUrl: mobileImageUrl || '',
+      backgroundColor: /^#[0-9a-fA-F]{6}$/.test(String(backgroundColor || '#eaf6ee')) ? String(backgroundColor || '#eaf6ee') : '#eaf6ee',
+      marketingMessage: String(marketingMessage || 'Power Your Day with Reliable Technology.').trim().slice(0, 120),
       seoTitle: String(seoTitle || '').trim().slice(0, 70),
       seoDescription: String(seoDescription || '').trim().slice(0, 160),
       seoKeywords: Array.isArray(seoKeywords) ? seoKeywords.map(value => String(value).trim()).filter(Boolean).slice(0, 15) : String(seoKeywords || '').split(',').map(value => value.trim()).filter(Boolean).slice(0, 15),
@@ -204,6 +208,13 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
 
     if (mobileImageUrl !== undefined) {
       advertisement.mobileImageUrl = mobileImageUrl || '';
+    }
+
+    if (backgroundColor !== undefined) {
+      advertisement.backgroundColor = /^#[0-9a-fA-F]{6}$/.test(String(backgroundColor)) ? String(backgroundColor) : '#eaf6ee';
+    }
+    if (marketingMessage !== undefined) {
+      advertisement.marketingMessage = String(marketingMessage || '').trim().slice(0, 120);
     }
 
     if (seoTitle !== undefined) advertisement.seoTitle = String(seoTitle || '').trim().slice(0, 70);
