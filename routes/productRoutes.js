@@ -215,16 +215,19 @@ router.get('/', async (req, res) => {
       Math.max(1, Number(limit) || 12)
     );
 
-    // Expire paid seller promotions on demand so stale Featured flags are cleared
-    // even when a free hosting instance has been asleep.
-    await Product.updateMany(
-      {
-        seller: mongoose.trusted({ $ne: null }),
-        featured: true,
-        featuredExpiresAt: mongoose.trusted({ $lte: new Date() }),
-      },
-      { $set: { featured: false, isNew: false, sponsorshipStatus: 'expired' } },
-    );
+    // Run promotion expiry maintenance only for featured catalogue requests,
+    // not every ordinary product search. This avoids an unnecessary DB write
+    // on the most common mobile browsing path.
+    if (featured === 'true') {
+      await Product.updateMany(
+        {
+          seller: mongoose.trusted({ $ne: null }),
+          featured: true,
+          featuredExpiresAt: mongoose.trusted({ $lte: new Date() }),
+        },
+        { $set: { featured: false, isNew: false, sponsorshipStatus: 'expired' } },
+      );
+    }
 
     /*
      * Public catalogue only shows:
@@ -386,91 +389,53 @@ router.get('/', async (req, res) => {
     }
 
     /*
-     * Fetch all matching products first.
+     * Use database pagination for the normal catalogue. Previously the route
+     * loaded every matching product into Node, populated every seller/category,
+     * then sliced the result; this becomes slow as the catalogue grows and is
+     * particularly costly on mobile connections.
      */
-    let products =
-      await Product.find(filter)
-        .populate(
-          'category',
-          'name slug'
-        )
-        .populate(
-          'seller',
-          'name email sellerProfile.storeName'
-        )
-        .sort(sortOption);
+    const needsDateWindowFiltering = flashSale === 'true' || offer === 'true';
+    if (!needsDateWindowFiltering) {
+      const [pageProducts, totalProducts] = await Promise.all([
+        Product.find(filter)
+          .populate('category', 'name slug')
+          .populate('seller', 'name email sellerProfile.storeName')
+          .sort(sortOption)
+          .skip((safePage - 1) * safeLimit)
+          .limit(safeLimit)
+          .lean(),
+        Product.countDocuments(filter),
+      ]);
 
-    /*
-     * For offer/flash-sale requests,
-     * ensure the current date is inside
-     * the optional offer date range.
-     */
-    if (
-      flashSale === 'true' ||
-      offer === 'true'
-    ) {
-      const now = new Date();
-
-      products = products.filter(
-        (product) => {
-          const start =
-            product.offerStartDate
-              ? new Date(
-                  product.offerStartDate
-                )
-              : null;
-
-          const end =
-            product.offerEndDate
-              ? new Date(
-                  product.offerEndDate
-                )
-              : null;
-
-          const hasStarted =
-            !start ||
-            start.getTime() <=
-              now.getTime();
-
-          const hasNotEnded =
-            !end ||
-            end.getTime() >
-              now.getTime();
-
-          return (
-            hasStarted &&
-            hasNotEnded
-          );
-        }
-      );
+      return res.json({
+        products: pageProducts,
+        page: safePage,
+        totalPages: Math.ceil(totalProducts / safeLimit),
+        totalProducts,
+      });
     }
 
-    const totalProducts =
-      products.length;
+    // Offers and flash sales retain their existing date-window checks.
+    let products = await Product.find(filter)
+      .populate('category', 'name slug')
+      .populate('seller', 'name email sellerProfile.storeName')
+      .sort(sortOption);
 
-    const totalPages =
-      Math.ceil(
-        totalProducts / safeLimit
-      );
+    const now = new Date();
+    products = products.filter((product) => {
+      const start = product.offerStartDate ? new Date(product.offerStartDate) : null;
+      const end = product.offerEndDate ? new Date(product.offerEndDate) : null;
+      return (!start || start.getTime() <= now.getTime()) &&
+        (!end || end.getTime() > now.getTime());
+    });
 
-    const startIndex =
-      (safePage - 1) * safeLimit;
-
-    const paginatedProducts =
-      products.slice(
-        startIndex,
-        startIndex + safeLimit
-      );
-
+    const totalProducts = products.length;
+    const totalPages = Math.ceil(totalProducts / safeLimit);
+    const startIndex = (safePage - 1) * safeLimit;
     return res.json({
-      products:
-        paginatedProducts,
-
-      page:
-        safePage,
-
+      products: products.slice(startIndex, startIndex + safeLimit),
+      page: safePage,
       totalPages,
-
       totalProducts,
     });
   } catch (error) {
