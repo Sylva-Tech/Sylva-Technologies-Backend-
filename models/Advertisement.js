@@ -7,6 +7,8 @@ const advertisementSchema = new mongoose.Schema(
     image: { type: String, default: '' },
     imageUrl: { type: String, default: '' },
     mobileImageUrl: { type: String, default: '' },
+    backgroundColor: { type: String, trim: true, match: /^#[0-9a-fA-F]{6}$/, default: '#eaf6ee' },
+    marketingMessage: { type: String, trim: true, maxlength: 120, default: 'Power Your Day with Reliable Technology.' },
     seoTitle: { type: String, trim: true, default: '', maxlength: 70 },
     seoDescription: { type: String, trim: true, default: '', maxlength: 160 },
     seoKeywords: { type: [String], default: [] },
