@@ -4,6 +4,7 @@ const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 const safeItem = (item = {}) => ({
+  ...( /^[a-f0-9]{24}$/i.test(String(item._id || '')) ? { _id: String(item._id) } : {}),
   label: String(item.label || '').trim().slice(0, 80),
   text: String(item.text || '').trim().slice(0, 240),
   href: String(item.href || '/shop').trim().slice(0, 500),
@@ -14,7 +15,13 @@ const safeItem = (item = {}) => ({
 router.get('/', async (req, res) => {
   try {
     const config = await MovingBarConfig.findOne({ key: 'homepage' }).lean();
-    const items = (config?.items || [])
+    const items = (config?.items || [
+      { label: 'Free Delivery', text: 'On selected orders across Kenya', href: '/shop', active: true, priority: 50 },
+      { label: 'Quality IT Products', text: 'Laptops, desktops and accessories', href: '/shop', active: true, priority: 40 },
+      { label: 'Trusted Support', text: 'Helpful support for your technology needs', href: '/support', active: true, priority: 30 },
+      { label: 'Secure Payments', text: 'Checkout with confidence', href: '/shop', active: true, priority: 20 },
+      { label: 'Sell on Sylva', text: 'Join our seller marketplace', href: '/sell-on-sylva', active: true, priority: 10 },
+    ])
       .filter(item => item.active !== false)
       .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
     return res.json({ success: true, items });
@@ -27,7 +34,13 @@ router.get('/', async (req, res) => {
 router.get('/all', protect, adminOnly, async (req, res) => {
   try {
     const config = await MovingBarConfig.findOne({ key: 'homepage' }).lean();
-    return res.json({ success: true, items: config?.items || [] });
+    return res.json({ success: true, items: config?.items || [
+      { label: 'Free Delivery', text: 'On selected orders across Kenya', href: '/shop', active: true, priority: 50 },
+      { label: 'Quality IT Products', text: 'Laptops, desktops and accessories', href: '/shop', active: true, priority: 40 },
+      { label: 'Trusted Support', text: 'Helpful support for your technology needs', href: '/support', active: true, priority: 30 },
+      { label: 'Secure Payments', text: 'Checkout with confidence', href: '/shop', active: true, priority: 20 },
+      { label: 'Sell on Sylva', text: 'Join our seller marketplace', href: '/sell-on-sylva', active: true, priority: 10 },
+    ] });
   } catch (error) {
     console.error('Moving bar admin load failed:', error.message);
     return res.status(500).json({ success: false, message: 'Unable to load homepage announcements.' });
