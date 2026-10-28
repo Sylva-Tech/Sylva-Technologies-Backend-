@@ -199,6 +199,7 @@ router.get('/', async (req, res) => {
       flashSale,
       offer,
       inStock,
+      condition,
       sort,
       page = 1,
       limit = 12,
@@ -253,8 +254,12 @@ router.get('/', async (req, res) => {
         });
       }
 
-      filter.category =
-        categoryRecord._id;
+      // Selecting a top-level category includes products in its subcategories.
+      const childCategories = await Category.find({ parentCategory: categoryRecord._id, isActive: true }).select('_id').lean();
+      const categoryIds = [categoryRecord._id, ...childCategories.map(item => item._id)];
+      filter.category = categoryIds.length > 1
+        ? mongoose.trusted({ $in: categoryIds })
+        : categoryRecord._id;
     }
 
     /*
@@ -300,6 +305,13 @@ router.get('/', async (req, res) => {
      */
     if (offer === 'true') {
       filter.offer = true;
+    }
+
+    /*
+     * Product condition (new, refurbished or used).
+     */
+    if (['New', 'Refurbished', 'Used'].includes(condition)) {
+      filter.condition = condition;
     }
 
     /*
