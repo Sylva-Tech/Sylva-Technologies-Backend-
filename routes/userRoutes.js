@@ -29,7 +29,7 @@ router.patch('/:id/admin-review', protect, adminOnly, async (req, res) => {
     const user = await User.findOneAndUpdate(
       { _id: req.params.id, role: 'customer' },
       { $set: { adminReviewedAt: new Date(), adminReviewedBy: req.user._id } },
-      { new: true }
+      { returnDocument: 'after' }
     ).select('-password');
 
     if (!user) {
