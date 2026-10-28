@@ -168,6 +168,8 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
       image,
       imageUrl,
       mobileImageUrl,
+      backgroundColor,
+      marketingMessage,
       seoTitle,
       seoDescription,
       seoKeywords,
