@@ -25,7 +25,9 @@ router.get('/', protect, adminOnly, async (req, res) => {
   try {
     const allowedFolders = ['inbox', 'archive', 'trash'];
     const folder = allowedFolders.includes(req.query.folder) ? req.query.folder : 'inbox';
-    const folderQuery = folder === 'inbox' ? mongoose.trusted({ $or: [{ folder: 'inbox' }, { folder: { $exists: false } }] }) : { folder };
+    const folderQuery = folder === 'inbox'
+      ? { $or: [{ folder: 'inbox' }, { folder: mongoose.trusted({ $exists: false }) }] }
+      : { folder };
     const messages = await SupportMessage.find(folderQuery).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion').sort({ isRead: 1, receivedAt: -1 }).limit(300).lean();
     return res.json({ success: true, folder, messages: messages.map(item => { const opened = decryptMessageContent(item); delete opened.html; return opened; }) });
   } catch (e) {
