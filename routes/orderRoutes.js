@@ -375,7 +375,7 @@ const holdSellerProceedsInPlatformWallet = async (order) => {
           },
         },
       },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
     if (updated) {
       platform = updated;
@@ -446,7 +446,7 @@ const releaseSellerProceedsFromPlatformWallet = async (order) => {
           },
         },
       },
-      { new: true, runValidators: true, arrayFilters: [{ 'hold.reference': holdReference, 'hold.status': 'pending' }] }
+      { returnDocument: 'after', runValidators: true, arrayFilters: [{ 'hold.reference': holdReference, 'hold.status': 'pending' }] }
     );
     if (updated) {
       platform = updated;
