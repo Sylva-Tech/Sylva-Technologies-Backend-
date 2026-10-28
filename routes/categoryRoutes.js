@@ -70,7 +70,7 @@ router.post('/admin/seed-catalog', protect, adminOnly, async (req, res) => {
       const saved = await Category.findOneAndUpdate(
         { slug: item.slug },
         { $setOnInsert: { ...item, parentCategory: null, isActive: true } },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
       );
       if (!existing) createdCategories += 1;
       categoryBySlug.set(item.slug, saved._id);
@@ -81,7 +81,7 @@ router.post('/admin/seed-catalog', protect, adminOnly, async (req, res) => {
       const saved = await Category.findOneAndUpdate(
         { slug },
         { $setOnInsert: { name, slug, description, image: roots.find(item => item.slug === parentSlug)?.image || '', parentCategory: categoryBySlug.get(parentSlug), isActive: true } },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
       );
       if (!existing) createdCategories += 1;
       categoryBySlug.set(slug, saved._id);
@@ -136,7 +136,7 @@ router.post('/admin/seed-catalog', protect, adminOnly, async (req, res) => {
       await Brand.findOneAndUpdate(
         { slug },
         { $setOnInsert: { name, slug, description, logo, isActive: true } },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
       );
       if (!existing) createdBrands += 1;
     }
