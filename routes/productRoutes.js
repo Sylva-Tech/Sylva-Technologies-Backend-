@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 
 const Product = require('../models/Product');
 const Category = require('../models/Category');
+const Brand = require('../models/Brand');
 const User = require('../models/User');
 
 const {
@@ -182,6 +183,35 @@ const uploadProductImages = async (files = []) => {
 /* =========================================================
    PUBLIC PRODUCT ROUTES
    ========================================================= */
+
+/*
+ * GET /api/products/filters
+ * Public filter options for the live catalogue. Includes categories and brands
+ * already used by approved products, even when older product brands predate the brand catalogue.
+ */
+router.get('/filters', async (req, res) => {
+  try {
+    const [categories, activeBrands, productBrands] = await Promise.all([
+      Category.find({ isActive: true }).select('_id name slug parentCategory').sort({ name: 1 }).lean(),
+      Brand.find({ isActive: true }).select('_id name slug').sort({ name: 1 }).lean(),
+      Product.distinct('brand', { isActive: mongoose.trusted({ $ne: false }), approvalStatus: 'approved' }),
+    ]);
+    const brandMap = new Map();
+    for (const item of activeBrands) {
+      if (item?.name) brandMap.set(item.name.trim().toLowerCase(), { ...item, name: item.name.trim() });
+    }
+    for (const value of productBrands) {
+      const name = String(value || '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (!brandMap.has(key)) brandMap.set(key, { _id: 'product-brand-' + key.replace(/[^a-z0-9]+/g, '-'), name, slug: buildSlug(name), fromExistingProduct: true });
+    }
+    return res.json({ categories, brands: [...brandMap.values()].sort((a, b) => a.name.localeCompare(b.name)) });
+  } catch (error) {
+    console.error('Unable to load product filters:', error);
+    return res.status(500).json({ message: 'Unable to load catalogue filters.' });
+  }
+});
 
 /*
  * GET /api/products
