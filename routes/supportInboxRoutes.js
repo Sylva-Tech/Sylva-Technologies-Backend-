@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const { Resend } = require('resend');
 const { simpleParser } = require('mailparser');
@@ -22,11 +23,34 @@ const escapeHtml = (s = '') => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;'
 
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
-    const messages = await SupportMessage.find().select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion').sort({ isRead: 1, receivedAt: -1 }).limit(300).lean();
-    return res.json({ success: true, messages: messages.map(item => { const opened = decryptMessageContent(item); delete opened.html; return opened; }) });
+    const allowedFolders = ['inbox', 'archive', 'trash'];
+    const folder = allowedFolders.includes(req.query.folder) ? req.query.folder : 'inbox';
+    const folderQuery = folder === 'inbox' ? mongoose.trusted({ $or: [{ folder: 'inbox' }, { folder: { $exists: false } }] }) : { folder };
+    const messages = await SupportMessage.find(folderQuery).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion').sort({ isRead: 1, receivedAt: -1 }).limit(300).lean();
+    return res.json({ success: true, folder, messages: messages.map(item => { const opened = decryptMessageContent(item); delete opened.html; return opened; }) });
   } catch (e) {
     console.error('Support inbox list failed:', e.message);
     return res.status(500).json({ success: false, message: 'Unable to load the support inbox.' });
+  }
+});
+
+router.patch('/:id/folder', protect, adminOnly, async (req, res) => {
+  try {
+    const folder = String(req.body?.folder || '');
+    if (!['inbox', 'archive', 'trash'].includes(folder)) {
+      return res.status(400).json({ success: false, message: 'Choose Inbox, Archive, or Trash.' });
+    }
+    const message = await SupportMessage.findByIdAndUpdate(
+      req.params.id,
+      { $set: { folder } },
+      { new: true, runValidators: true }
+    ).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion');
+    if (!message) return res.status(404).json({ success: false, message: 'Enquiry not found.' });
+    return res.json({ success: true, message: 'Website enquiry moved to ' + folder + '.', enquiry: decryptMessageContent(message) });
+  } catch (e) {
+    if (e.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid enquiry identifier.' });
+    console.error('Support enquiry folder update failed:', e.message);
+    return res.status(500).json({ success: false, message: 'Unable to move website enquiry.' });
   }
 });
 router.get('/:id', protect, adminOnly, async (req, res) => {

@@ -1,4 +1,5 @@
 const express = require('express');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
 const Advertisement = require('../models/Advertisement');
 
 const router = express.Router();
@@ -57,7 +58,7 @@ const sendActiveAdvertisements = async (req, res) => {
 
 // Admin management list: include inactive and scheduled banners as well.
 // Keep this route before the public '/' route so '/all' is not treated as an ID.
-router.get('/all', async (req, res) => {
+router.get('/all', protect, adminOnly, async (req, res) => {
   try {
     const advertisements = await Advertisement.find({})
       .sort({ priority: -1, createdAt: -1 })
@@ -84,7 +85,7 @@ router.get('/', sendActiveAdvertisements);
 | CREATE ADVERTISEMENT
 |--------------------------------------------------------------------------
 */
-router.post('/', async (req, res) => {
+router.post('/', protect, adminOnly, async (req, res) => {
   try {
     const {
       title,
@@ -92,6 +93,10 @@ router.post('/', async (req, res) => {
       image,
       imageUrl,
       mobileImageUrl,
+      seoTitle,
+      seoDescription,
+      seoKeywords,
+      imageAlt,
       link,
       buttonText,
       buttonLink,
@@ -114,6 +119,10 @@ router.post('/', async (req, res) => {
       image: image || '',
       imageUrl: imageUrl || '',
       mobileImageUrl: mobileImageUrl || '',
+      seoTitle: String(seoTitle || '').trim().slice(0, 70),
+      seoDescription: String(seoDescription || '').trim().slice(0, 160),
+      seoKeywords: Array.isArray(seoKeywords) ? seoKeywords.map(value => String(value).trim()).filter(Boolean).slice(0, 15) : String(seoKeywords || '').split(',').map(value => value.trim()).filter(Boolean).slice(0, 15),
+      imageAlt: String(imageAlt || '').trim().slice(0, 180),
       link: link || '/shop',
       buttonText: buttonText || 'Shop Now',
       buttonLink: buttonLink || link || '/shop',
@@ -147,7 +156,7 @@ router.post('/', async (req, res) => {
 | UPDATE ADVERTISEMENT
 |--------------------------------------------------------------------------
 */
-router.put('/:id', async (req, res) => {
+router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
     const {
       title,
@@ -155,6 +164,10 @@ router.put('/:id', async (req, res) => {
       image,
       imageUrl,
       mobileImageUrl,
+      seoTitle,
+      seoDescription,
+      seoKeywords,
+      imageAlt,
       link,
       buttonText,
       buttonLink,
@@ -192,6 +205,11 @@ router.put('/:id', async (req, res) => {
     if (mobileImageUrl !== undefined) {
       advertisement.mobileImageUrl = mobileImageUrl || '';
     }
+
+    if (seoTitle !== undefined) advertisement.seoTitle = String(seoTitle || '').trim().slice(0, 70);
+    if (seoDescription !== undefined) advertisement.seoDescription = String(seoDescription || '').trim().slice(0, 160);
+    if (seoKeywords !== undefined) advertisement.seoKeywords = (Array.isArray(seoKeywords) ? seoKeywords : String(seoKeywords || '').split(',')).map(value => String(value).trim()).filter(Boolean).slice(0, 15);
+    if (imageAlt !== undefined) advertisement.imageAlt = String(imageAlt || '').trim().slice(0, 180);
 
     if (link !== undefined) {
       advertisement.link = link || '/shop';
@@ -244,7 +262,7 @@ router.put('/:id', async (req, res) => {
 | DELETE ADVERTISEMENT
 |--------------------------------------------------------------------------
 */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
     const advertisement = await Advertisement.findById(req.params.id);
 
