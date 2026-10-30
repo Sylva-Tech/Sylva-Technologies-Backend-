@@ -1,7 +1,6 @@
 const axios = require('axios');
 
 const SANDBOX_BASE_URL = 'https://cybqa.pesapal.com/pesapalv3/api';
-const LIVE_BASE_URL = 'https://pay.pesapal.com/v3/api';
 let cachedToken = null;
 let tokenExpiresAt = 0;
 
