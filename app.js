@@ -18,6 +18,7 @@ const flipAdvertisementRoutes = require('./routes/flipAdvertisementRoutes');
 const movingBarRoutes = require('./routes/movingBarRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const walletRoutes = require('./routes/walletRoutes');
+const pesapalRoutes = require('./routes/pesapalRoutes');
 const sponsorshipRoutes = require('./routes/sponsorshipRoutes');
 const adminWalletRoutes = require('./routes/adminWalletRoutes');
 const sellerManagementRoutes = require('./routes/sellerManagementRoutes');
@@ -404,6 +405,7 @@ app.use('/api/moving-bar', movingBarRoutes);
 app.use('/api/admin', adminRoutes);
 
 app.use('/api/wallet', walletRoutes);
+app.use('/api/pesapal', pesapalRoutes);
 
 app.use('/api/sponsorship', sponsorshipRoutes);
 
