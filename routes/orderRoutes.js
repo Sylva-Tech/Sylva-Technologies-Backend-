@@ -9,11 +9,6 @@ const Product = require('../models/Product');
 const AdminWallet = require('../models/AdminWallet');
 const { getQuote: getShippingQuote } = require('./shippingRoutes');
 
-const {
-  initializeTransaction,
-  verifyTransaction,
-  refundTransaction,
-} = require('../services/paystackService');
 const { submitOrder: submitPesapalOrder, getTransactionStatus: getPesapalTransactionStatus } = require('../services/pesapalService');
 
 const {
@@ -677,88 +672,6 @@ const sendSellerOrderEmails = async (order, event = 'new_order', previousStatus 
   } catch (error) {
     console.error('[Seller order email] Notification failed:', error.message, { orderNumber: order?.orderNumber, event });
   }
-};
-
-const validateSuccessfulTransaction = (transaction, order) => {
-  if (!transaction || transaction.status !== 'success') {
-    throw new Error('Paystack has not confirmed a successful payment.');
-  }
-
-  if (String(transaction.reference || '') !== String(order.paymentReference || order.orderNumber)) {
-    throw new Error('Payment reference does not match this order.');
-  }
-
-  const expectedMinorAmount = Math.round(Number(order.total || 0) * 100);
-  if (Number(transaction.amount) !== expectedMinorAmount) {
-    throw new Error('The verified payment amount does not match the order total.');
-  }
-
-  if (String(transaction.currency || '').toUpperCase() !== 'KES') {
-    throw new Error('The verified payment currency does not match KES.');
-  }
-};
-
-const confirmPaidOrder = async (order, transaction) => {
-  validateSuccessfulTransaction(transaction, order);
-
-  // A late Paystack success after cancellation must be refunded, not settled to a seller.
-  if (order.status === 'Cancelled' && ['Refund Pending', 'Refund Processing', 'Refund Failed', 'Refunded'].includes(order.paymentStatus)) {
-    return order;
-  }
-
-  if (order.status === 'Cancelled') {
-    const refund = await refundTransaction({
-      reference: order.paymentReference || order.orderNumber,
-      amount: order.total,
-      customerNote: 'Payment completed after the order was cancelled.',
-    });
-    if (!refund?.status) {
-      throw new Error('Payment arrived after cancellation, but Paystack did not accept the automatic refund. Please contact support.');
-    }
-    order.paymentStatus = 'Refund Pending';
-    order.paidAt = order.paidAt || new Date();
-    order.refundReference = String(refund.data?.id || refund.data?.reference || '');
-    await order.save();
-    return order;
-  }
-
-  const wasAlreadyPaid = order.paymentStatus === 'Paid';
-  let newlyConfirmed = false;
-  if (!wasAlreadyPaid) {
-    const updated = await Order.findOneAndUpdate(
-      { _id: order._id, paymentStatus: mongoose.trusted({ $ne: 'Paid' }), status: mongoose.trusted({ $ne: 'Cancelled' }) },
-      {
-        $set: {
-          paymentStatus: 'Paid',
-          paidAt: new Date(),
-          cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000),
-          status: order.status === 'Pending' ? 'Confirmed' : order.status,
-        },
-      },
-      { returnDocument: 'after' }
-    );
-
-    if (updated) {
-      newlyConfirmed = true;
-      order = updated;
-    } else {
-      order = await Order.findById(order._id);
-      if (
-        order &&
-        order.status === 'Cancelled' &&
-        !['Refund Pending', 'Refund Processing', 'Refund Failed', 'Refunded'].includes(order.paymentStatus)
-      ) {
-        return confirmPaidOrder(order, transaction);
-      }
-    }
-  }
-
-  // Seller funds remain unsettled until fulfillment reaches Delivered.
-  if (newlyConfirmed && order.paymentStatus === 'Paid') {
-    await sendPaidOrderEmails(order);
-  }
-
-  return order;
 };
 
 const restoreOrderStock = async (order) => {
@@ -1670,7 +1583,7 @@ const createOrderFromRequest = async ({
       });
     }
 
-    if (!['Pesapal', 'Paystack', 'Card', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
+    if (!['Pesapal', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
       return res.status(400).json({
         success: false,
         message: 'Choose Wallet, M-Pesa, or Pesapal to pay for your order.',
@@ -2108,11 +2021,10 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
 
         /*
 |--------------------------------------------------------------------------
-| INITIALIZE PAYSTACK PAYMENT
+| INITIALIZE PAYMENT PROVIDERS
 |--------------------------------------------------------------------------
 */
 
-let paystackPayment = null;
 let pesapalPayment = null;
 let mpesaPayment = null;
 
@@ -2266,124 +2178,6 @@ if (paymentMethod === 'Pesapal') {
   }
 }
 
-if (['Paystack', 'Card'].includes(paymentMethod)) {
-  try {
-    const paystackReference = order.orderNumber;
-
-    const frontendBaseUrl = (
-      process.env.FRONTEND_URL ||
-      process.env.CLIENT_URL ||
-      (process.env.NODE_ENV === 'production'
-        ? 'https://www.sylvatechnologies.co.ke'
-        : 'http://localhost:5173')
-    )
-      .split(',')[0]
-      .trim()
-      .replace(/\/$/, '');
-
-    const callbackUrl =
-      `${frontendBaseUrl}/payment/callback?reference=${encodeURIComponent(
-        paystackReference
-      )}`;
-
-    const paystackResponse =
-      await initializeTransaction({
-        email: customerEmail,
-        amount: orderTotal,
-        reference: paystackReference,
-        callbackUrl,
-        channels: paymentMethod === 'Card' ? ['card'] : undefined,
-        metadata: {
-          paymentMethod,
-          orderId: order._id.toString(),
-          orderNumber: order.orderNumber,
-          trackingCode:
-            order.trackingCode ||
-            order.orderNumber,
-          customerName:
-            customerDetails.fullName,
-          customerPhone:
-            customerDetails.phone,
-        },
-      });
-
-    if (
-      !paystackResponse ||
-      !paystackResponse.status ||
-      !paystackResponse.data?.authorization_url
-    ) {
-      throw new Error(
-        paystackResponse?.message ||
-          'Paystack did not return a payment authorization URL.'
-      );
-    }
-
-    order.paymentReference =
-      paystackResponse.data.reference ||
-      paystackReference;
-
-    await order.save();
-
-    populatedOrder.paymentReference =
-      order.paymentReference;
-
-    paystackPayment = {
-      authorization_url:
-        paystackResponse.data.authorization_url,
-
-      access_code:
-        paystackResponse.data.access_code,
-
-      reference:
-        paystackResponse.data.reference ||
-        paystackReference,
-    };
-
-    console.info(
-      'Paystack payment initialized:',
-      order.orderNumber
-    );
-  } catch (paystackError) {
-    console.error(
-      'Paystack initialization error:',
-      paystackError.response?.data ||
-        paystackError.message
-    );
-
-    /*
-    |--------------------------------------------------------------------------
-    | RESTORE STOCK IF PAYSTACK INITIALIZATION FAILS
-    |--------------------------------------------------------------------------
-    */
-
-    try {
-      for (const item of preparedItems) {
-        await Product.updateOne(
-          { _id: item.product },
-          {
-            $inc: {
-              stock: item.quantity,
-            },
-          }
-        );
-      }
-
-      await Order.findByIdAndDelete(order._id);
-    } catch (rollbackError) {
-      console.error(
-        'Paystack rollback error:',
-        rollbackError
-      );
-    }
-
-    return res.status(502).json({
-      success: false,
-      message:
-        'Unable to initialize Paystack payment. Please try again.',
-    });
-  }
-}
-
     // Notify the sales inbox as soon as an order has been successfully created.
     // This event is separate from the later payment-confirmed notification.
     try {
@@ -2433,7 +2227,7 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
     await sendSellerOrderEmails(populatedOrder);
 
     // Wallet orders are already paid inside the order transaction. Send the paid
-    // receipt and payment alert here; Paystack and M-Pesa notify from verification callbacks.
+    // receipt and payment alert here; Pesapal and M-Pesa notify from verified callbacks.
     if (paymentMethod === 'Wallet' && populatedOrder.paymentStatus === 'Paid') {
       await sendPaidOrderEmails(populatedOrder);
     }
@@ -2448,15 +2242,11 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
   success: true,
   message: paymentMethod === 'Pesapal'
     ? 'Order created. Continue to Pesapal to complete payment.'
-    : paymentMethod === 'Card'
-      ? 'Order created. Continue to Paystack to pay securely with Visa or Mastercard.'
-      : paymentMethod === 'Paystack'
-        ? 'Order created. Continue to Paystack to complete your payment.'
-        : paymentMethod === 'M-Pesa'
-          ? 'M-Pesa prompt sent. Enter your PIN on your phone; the order will be confirmed after Safaricom verifies payment.'
-          : 'Order created successfully.',
+    : paymentMethod === 'M-Pesa'
+      ? 'M-Pesa prompt sent. Enter your PIN on your phone; the order will be confirmed after Safaricom verifies payment.'
+      : 'Order created successfully.',
   data: populatedOrder,
-  payment: pesapalPayment || paystackPayment,
+  payment: pesapalPayment,
   mpesaPayment,
 });
 
@@ -2716,146 +2506,28 @@ router.get('/mpesa/status/:orderNumber', protect, async (req, res) => {
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| PAYSTACK WEBHOOK
-|--------------------------------------------------------------------------
-| Configure Paystack to POST events to:
-| https://sylva-technologies-backend.onrender.com/api/orders/paystack/webhook
-*/
-
-router.post('/paystack/webhook', async (req, res) => {
-  try {
-    const secret = process.env.PAYSTACK_SECRET_KEY;
-    const signature = req.headers['x-paystack-signature'];
-    if (!secret || !signature || !req.rawBody) {
-      return res.status(401).json({ success: false, message: 'Invalid webhook signature.' });
-    }
-
-    const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex');
-    const suppliedBuffer = Buffer.from(String(signature));
-    const expectedBuffer = Buffer.from(expected);
-    if (suppliedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(suppliedBuffer, expectedBuffer)) {
-      return res.status(401).json({ success: false, message: 'Invalid webhook signature.' });
-    }
-
-    const event = req.body?.event;
-    const data = req.body?.data || {};
-
-    if (event === 'charge.success' && data.reference) {
-      const order = await Order.findOne({
-        $or: [{ paymentReference: String(data.reference) }, { orderNumber: String(data.reference) }],
-      });
-      if (order && ['Paystack', 'Card'].includes(order.paymentMethod)) {
-        const verification = await verifyTransaction(data.reference);
-        if (verification?.status && verification.data) {
-          await confirmPaidOrder(order, verification.data);
-        }
-      }
-    } else if (
-      ['refund.pending', 'refund.processing', 'refund.processed', 'refund.failed'].includes(event)
-    ) {
-      const transactionReference = data.transaction_reference || data.transaction?.reference;
-      if (transactionReference) {
-        const refundStatus = {
-          'refund.pending': 'Refund Pending',
-          'refund.processing': 'Refund Processing',
-          'refund.processed': 'Refunded',
-          'refund.failed': 'Refund Failed',
-        }[event];
-        await Order.updateOne(
-          {
-            paymentReference: String(transactionReference),
-            paymentStatus: { $in: ['Refund Pending', 'Refund Processing', 'Refund Failed'] },
-          },
-          { $set: { paymentStatus: refundStatus } }
-        );
-      }
-    }
-
-    return res.status(200).json({ received: true });
-  } catch (error) {
-    console.error('Paystack webhook processing failed:', error.message);
-    return res.status(500).json({ success: false, message: 'Webhook processing failed.' });
-  }
-});
-
-/*
-|--------------------------------------------------------------------------
-| VERIFY PAYMENT AFTER PAYSTACK REDIRECT
-|--------------------------------------------------------------------------
-*/
-
-router.post('/paystack/verify', protect, async (req, res) => {
-  try {
-    const reference = String(req.body?.reference || '').trim();
-    if (!reference) {
-      return res.status(400).json({ success: false, message: 'Payment reference is required.' });
-    }
-
-    const order = await Order.findOne({
-      $or: [{ paymentReference: reference }, { orderNumber: reference }],
-    });
-
-    if (!order || !['Paystack', 'Card'].includes(order.paymentMethod)) {
-      return res.status(404).json({ success: false, message: 'No Paystack order was found for this reference.' });
-    }
-
-    const isAdmin = req.user.role === 'admin';
-    if (!isAdmin && (!order.customer || String(order.customer) !== String(req.user._id))) {
-      return res.status(403).json({ success: false, message: 'You are not authorized to verify this order.' });
-    }
-
-    const verification = await verifyTransaction(reference);
-    if (!verification?.status || !verification.data) {
-      return res.status(502).json({ success: false, message: 'Paystack could not verify this payment yet.' });
-    }
-
-    if (verification.data.status !== 'success') {
-      return res.status(409).json({
-        success: false,
-        paymentStatus: verification.data.status || 'pending',
-        message: 'Payment has not completed. If you have paid, refresh shortly while Paystack confirms it.',
-        data: { orderNumber: order.orderNumber, paymentStatus: order.paymentStatus, status: order.status },
-      });
-    }
-
-    const updatedOrder = await confirmPaidOrder(order, verification.data);
-    return res.json({
-      success: true,
-      message: 'Payment verified successfully.',
-      data: {
-        _id: updatedOrder._id,
-        orderNumber: updatedOrder.orderNumber,
-        trackingCode: updatedOrder.trackingCode,
-        paymentStatus: updatedOrder.paymentStatus,
-        status: updatedOrder.status,
-        paidAt: updatedOrder.paidAt,
-        cancellationDeadline: updatedOrder.cancellationDeadline,
-        total: updatedOrder.total,
-      },
-    });
-  } catch (error) {
-    console.error('Paystack verification failed:', error.message);
-    return res.status(400).json({ success: false, message: error.message || 'Unable to verify payment.' });
-  }
-});
-
-
 // Pesapal IPN is a notification only: the server queries Pesapal directly and
 // checks the persisted order amount, currency, and merchant reference before payment confirmation.
+const acknowledgePesapalIpn = (res, trackingId, merchantReference, notificationType) => res.status(200).json({
+  orderNotificationType: notificationType || 'IPNCHANGE',
+  orderTrackingId: trackingId,
+  orderMerchantReference: merchantReference,
+  status: 200,
+});
+
 router.all('/pesapal/ipn', async (req, res) => {
   try {
     const trackingId = String(req.body?.OrderTrackingId || req.query?.OrderTrackingId || req.body?.orderTrackingId || req.query?.orderTrackingId || '').trim();
     const merchantReference = String(req.body?.OrderMerchantReference || req.query?.OrderMerchantReference || req.body?.orderMerchantReference || req.query?.orderMerchantReference || '').trim();
+    const notificationType = String(req.body?.OrderNotificationType || req.query?.OrderNotificationType || 'IPNCHANGE').trim();
     if (!trackingId || !merchantReference) return res.status(400).json({ success: false, message: 'Pesapal notification is missing required identifiers.' });
     const order = await Order.findOne({
       paymentMethod: 'Pesapal',
       $or: [{ pesapalOrderTrackingId: trackingId }, { orderNumber: merchantReference }],
     });
-    if (!order) return res.status(200).json({ received: true });
+    if (!order) return acknowledgePesapalIpn(res, trackingId, merchantReference, notificationType);
     if (String(order.pesapalOrderTrackingId || '') !== trackingId || String(order.orderNumber) !== merchantReference) {
-      return res.status(200).json({ received: true });
+      return acknowledgePesapalIpn(res, trackingId, merchantReference, notificationType);
     }
     const status = await getPesapalTransactionStatus(trackingId);
     const description = String(status?.payment_status_description || status?.status || '').toLowerCase();
@@ -2866,9 +2538,14 @@ router.all('/pesapal/ipn', async (req, res) => {
     if (['completed', 'complete', 'success'].includes(description) || statusCode === 1) {
       if (Math.abs(amount - Number(order.total)) > 0.01 || currency !== 'KES' || (reference && reference !== order.orderNumber)) {
         console.error('Pesapal order validation mismatch:', order.orderNumber);
-        return res.status(200).json({ received: true });
+        return acknowledgePesapalIpn(res, trackingId, merchantReference, notificationType);
       }
-      if (order.paymentStatus !== 'Paid' && order.status !== 'Cancelled') {
+      if (order.status === 'Cancelled') {
+        await Order.updateOne(
+          { _id: order._id, paymentStatus: mongoose.trusted({ $ne: 'Paid' }) },
+          { $set: { paymentStatus: 'Refund Pending', paidAt: order.paidAt || new Date(), refundReference: order.refundReference || 'MANUAL_REFUND_REVIEW' } }
+        );
+      } else if (order.paymentStatus !== 'Paid') {
         const updated = await Order.findOneAndUpdate(
           { _id: order._id, paymentStatus: 'Pending', status: mongoose.trusted({ $ne: 'Cancelled' }) },
           { $set: { paymentStatus: 'Paid', paidAt: new Date(), cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000), status: order.status === 'Pending' ? 'Confirmed' : order.status } },
@@ -2880,10 +2557,10 @@ router.all('/pesapal/ipn', async (req, res) => {
         }
       }
     }
-    return res.status(200).json({ received: true });
+    return acknowledgePesapalIpn(res, trackingId, merchantReference, notificationType);
   } catch (error) {
     console.error('Pesapal IPN processing failed:', error.response?.data || error.message);
-    return res.status(500).json({ success: false, message: 'Pesapal notification processing failed.' });
+    return res.status(500).json({ orderNotificationType: 'IPNCHANGE', status: 500, message: 'Pesapal notification processing failed.' });
   }
 });
 
@@ -2907,7 +2584,12 @@ router.post('/pesapal/verify', protect, async (req, res) => {
       if (Math.abs(amount - Number(order.total)) > 0.01 || currency !== 'KES' || (reference && reference !== order.orderNumber)) {
         return res.status(409).json({ success: false, message: 'Pesapal payment details do not match this order. Contact support before retrying.' });
       }
-      if (order.paymentStatus !== 'Paid' && order.status !== 'Cancelled') {
+      if (order.status === 'Cancelled') {
+        await Order.updateOne(
+          { _id: order._id, paymentStatus: mongoose.trusted({ $ne: 'Paid' }) },
+          { $set: { paymentStatus: 'Refund Pending', paidAt: order.paidAt || new Date(), refundReference: order.refundReference || 'MANUAL_REFUND_REVIEW' } }
+        );
+      } else if (order.paymentStatus !== 'Paid') {
         const updated = await Order.findOneAndUpdate(
           { _id: order._id, paymentStatus: 'Pending', status: mongoose.trusted({ $ne: 'Cancelled' }) },
           { $set: { paymentStatus: 'Paid', paidAt: new Date(), cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000), status: order.status === 'Pending' ? 'Confirmed' : order.status } },
@@ -2922,8 +2604,8 @@ router.post('/pesapal/verify', protect, async (req, res) => {
       return res.status(409).json({ success: false, paymentStatus: order.paymentStatus, message: 'Pesapal has not confirmed this payment yet. If you paid, retry verification shortly.' });
     }
     const updatedOrder = await Order.findById(order._id);
-    if (updatedOrder.paymentStatus !== 'Paid') return res.status(409).json({ success: false, message: 'Payment has not been confirmed. Do not pay again while the status is unclear.' });
-    return res.json({ success: true, message: 'Pesapal payment verified successfully.', data: updatedOrder });
+    if (updatedOrder.paymentStatus !== 'Paid' && updatedOrder.paymentStatus !== 'Refund Pending') return res.status(409).json({ success: false, message: 'Payment has not been confirmed. Do not pay again while the status is unclear.' });
+    return res.json({ success: true, message: updatedOrder.paymentStatus === 'Refund Pending' ? 'Payment was received for a cancelled order. Refund review is pending.' : 'Pesapal payment verified successfully.', data: updatedOrder });
   } catch (error) {
     console.error('Pesapal payment verification failed:', error.response?.data || error.message);
     return res.status(502).json({ success: false, message: 'Unable to verify Pesapal payment yet. Please retry shortly.' });
@@ -2972,16 +2654,9 @@ router.post('/:id/cancel', protect, async (req, res) => {
     }
 
     if (order.paymentStatus === 'Paid') {
-      const refund = await refundTransaction({
-        reference: order.paymentReference || order.orderNumber,
-        amount: order.total,
-        customerNote: 'Customer cancellation requested within the five-minute cancellation window.',
-      });
-      if (!refund?.status) {
-        return res.status(502).json({ success: false, message: 'Paystack did not accept the refund request. The order has not been cancelled.' });
-      }
+      // No gateway issues an automatic refund here; queue it for manual reconciliation.
       order.paymentStatus = 'Refund Pending';
-      order.refundReference = String(refund.data?.id || refund.data?.reference || '');
+      order.refundReference = order.refundReference || 'MANUAL_REFUND_REVIEW';
     } else if (order.paymentStatus === 'Pending') {
       order.paymentStatus = 'Failed';
     }
@@ -2994,7 +2669,7 @@ router.post('/:id/cancel', protect, async (req, res) => {
     return res.json({
       success: true,
       message: order.paymentStatus === 'Refund Pending'
-        ? 'Order cancelled. Your refund has been requested and will update when Paystack confirms it.'
+        ? 'Order cancelled. Your refund request is pending manual review by Sylva Support.'
         : 'Order cancelled successfully.',
       data: order,
     });
@@ -3069,7 +2744,7 @@ router.patch(
       ) {
         return res.status(409).json({
           success: false,
-          message: 'This order cannot move forward until Paystack payment is verified.',
+          message: 'This order cannot move forward until gateway payment is verified.',
         });
       }
 
@@ -3264,10 +2939,10 @@ router.patch(
         });
       }
 
-      if (paymentStatus === 'Paid' && ['Paystack', 'Card'].includes(order.paymentMethod)) {
+      if (paymentStatus === 'Paid' && order.paymentMethod === 'Pesapal') {
         return res.status(409).json({
           success: false,
-          message: 'Paystack payments can only be marked paid after successful gateway verification.',
+          message: 'Pesapal payments can only be marked paid after successful gateway verification.',
         });
       }
 
