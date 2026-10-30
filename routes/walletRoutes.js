@@ -1958,15 +1958,24 @@ router.post('/topup/pesapal', protect, payoutRateLimit, async (req, res) => {
   }
 });
 
+const acknowledgePesapalWalletIpn = (res, trackingId, merchantReference, notificationType) => res.status(200).json({
+  orderNotificationType: notificationType || 'IPNCHANGE',
+  orderTrackingId: trackingId,
+  orderMerchantReference: merchantReference,
+  status: 200,
+});
+
 router.all('/topup/pesapal/ipn', async (req, res) => {
   try {
     const trackingId = String(req.body?.OrderTrackingId || req.query?.OrderTrackingId || req.body?.orderTrackingId || req.query?.orderTrackingId || '').trim();
-    if (!trackingId) return res.status(400).json({ success: false, message: 'Pesapal tracking ID is required.' });
+    const merchantReference = String(req.body?.OrderMerchantReference || req.query?.OrderMerchantReference || req.body?.orderMerchantReference || req.query?.orderMerchantReference || '').trim();
+    const notificationType = String(req.body?.OrderNotificationType || req.query?.OrderNotificationType || 'IPNCHANGE').trim();
+    if (!trackingId || !merchantReference) return res.status(400).json({ success: false, message: 'Pesapal wallet notification is missing required identifiers.' });
     await confirmPesapalWalletDeposit(trackingId);
-    return res.status(200).json({ received: true });
+    return acknowledgePesapalWalletIpn(res, trackingId, merchantReference, notificationType);
   } catch (error) {
     console.error('Pesapal wallet IPN failed:', error.response?.data || error.message);
-    return res.status(500).json({ success: false, message: 'Pesapal notification processing failed.' });
+    return res.status(500).json({ orderNotificationType: 'IPNCHANGE', status: 500, message: 'Pesapal notification processing failed.' });
   }
 });
 
