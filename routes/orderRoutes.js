@@ -1287,8 +1287,8 @@ router.post('/confirm-delivery', async (req, res) => {
     const collectionType = ['self_collection', 'second_party_collection'].includes(String(req.body?.collectionType || '')) ? String(req.body.collectionType) : 'self_collection';
     const validSignatureImage = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(signatureImage) && signatureImage.length <= 240000;
     const validIdDocumentImage = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(idDocumentImage) && idDocumentImage.length <= 1450000;
-    if (token.length < 40 || token.length > 200 || !signature || signature.length > 120 || !idNumber || idNumber.length > 50 || !validSignatureImage || !validIdDocumentImage || !acknowledged || (authorizedRecipient && !authorizationConfirmed)) {
-      return res.status(400).json({ success: false, message: 'Enter the recipient’s full name and ID number, upload a clear ID/passport image, sign, and confirm receipt. If receiving on behalf of the customer, confirm their authorization.' });
+    if (token.length < 40 || token.length > 200 || !signature || signature.length > 120 || !idNumber || idNumber.length > 50 || !validSignatureImage || (idDocumentImage && !validIdDocumentImage) || !acknowledged || (authorizedRecipient && !authorizationConfirmed)) {
+      return res.status(400).json({ success: false, message: 'Enter the recipient’s full name and ID number, provide a signature, and confirm receipt. An ID/passport image is optional. If receiving on behalf of the customer, confirm their authorization.' });
     }
     const tokenHash = hashDeliveryToken(token);
     const order = await Order.findOne({ deliveryConfirmationTokenHash: tokenHash }).select('+deliveryConfirmationTokenHash');
