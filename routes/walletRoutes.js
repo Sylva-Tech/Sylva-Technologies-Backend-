@@ -1864,7 +1864,7 @@ const confirmPesapalWalletDeposit = async (trackingId) => {
   const amount = Number(status?.amount);
   const currency = String(status?.currency || '').toUpperCase();
   const merchantReference = String(status?.merchant_reference || '').trim();
-  if (Math.abs(amount - Number(tx.amount)) > 0.01 || currency !== 'KES' || (merchantReference && merchantReference !== String(tx.metadata?.merchantReference || ''))) {
+  if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount - Number(tx.amount)) > 0.01 || currency !== 'KES' || merchantReference !== String(tx.metadata?.merchantReference || '')) {
     const now = new Date();
     const filter = isPlatform
       ? { _id: owner._id, transactions: mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.orderTrackingId': trackingId } }) }
