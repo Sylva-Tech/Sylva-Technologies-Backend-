@@ -205,8 +205,8 @@ router.post(
         return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
       }
 
-      const normalizedIdNumber = idNumber.replace(/\\s+/g, '').toUpperCase();
-      const normalizedTaxIdentifier = taxIdentifier.replace(/\\s+/g, '').toUpperCase();
+      const normalizedIdNumber = idNumber.replace(/\s+/g, '').toUpperCase();
+      const normalizedTaxIdentifier = taxIdentifier.replace(/\s+/g, '').toUpperCase();
 
       const identityConditions = [
         { 'sellerProfile.idNumber': normalizedIdNumber },
