@@ -2613,6 +2613,105 @@ router.post('/pesapal/verify', protect, async (req, res) => {
 });
 
 /*
+ * Guest checkout callback: verify the payment using the provider's tracking ID,
+ * but only for orders without an account owner and return a minimal order summary.
+ * This keeps guest checkout working without exposing full order/customer data.
+ */
+router.post('/pesapal/verify-guest', async (req, res) => {
+  try {
+    const orderNumber = String(req.body?.orderNumber || '').trim();
+    const trackingId = String(req.body?.orderTrackingId || req.body?.OrderTrackingId || '').trim();
+    if (!orderNumber || !trackingId) {
+      return res.status(400).json({ success: false, message: 'Order number and Pesapal tracking ID are required.' });
+    }
+
+    const order = await Order.findOne({
+      orderNumber,
+      customer: null,
+      paymentMethod: 'Pesapal',
+      pesapalOrderTrackingId: trackingId,
+    }).select('orderNumber customer paymentMethod pesapalOrderTrackingId paymentStatus status total paidAt cancellationDeadline');
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'No matching guest Pesapal order was found.' });
+    }
+
+    const status = await getPesapalTransactionStatus(trackingId);
+    const description = String(status?.payment_status_description || status?.status || '').toLowerCase();
+    const statusCode = Number(status?.status_code);
+    const amount = Number(status?.amount);
+    const currency = String(status?.currency || '').toUpperCase();
+    const reference = String(status?.merchant_reference || '').trim();
+    const completed = ['completed', 'complete', 'success'].includes(description) || statusCode === 1;
+
+    if (!completed) {
+      return res.status(409).json({
+        success: false,
+        paymentStatus: order.paymentStatus,
+        message: 'Pesapal has not confirmed this payment yet. If you paid, retry verification shortly.',
+      });
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount - Number(order.total)) > 0.01 ||
+        currency !== 'KES' || reference !== order.orderNumber) {
+      console.error('Guest Pesapal order validation mismatch:', order.orderNumber);
+      return res.status(409).json({
+        success: false,
+        message: 'Pesapal payment details do not match this order. Contact support before retrying.',
+      });
+    }
+
+    if (order.status === 'Cancelled') {
+      await Order.updateOne(
+        { _id: order._id, paymentStatus: mongoose.trusted({ $ne: 'Paid' }) },
+        { $set: {
+          paymentStatus: 'Refund Pending',
+          paidAt: order.paidAt || new Date(),
+          refundReference: 'MANUAL_REFUND_REVIEW',
+        } }
+      );
+    } else if (order.paymentStatus !== 'Paid') {
+      const updated = await Order.findOneAndUpdate(
+        { _id: order._id, paymentStatus: mongoose.trusted({ $ne: 'Paid' }), status: mongoose.trusted({ $ne: 'Cancelled' }) },
+        { $set: {
+          paymentStatus: 'Paid',
+          paidAt: new Date(),
+          cancellationDeadline: new Date(Date.now() + 5 * 60 * 1000),
+          status: order.status === 'Pending' ? 'Confirmed' : order.status,
+        } },
+        { returnDocument: 'after' }
+      );
+      if (updated) {
+        await holdSellerProceedsInPlatformWallet(updated);
+        await sendPaidOrderEmails(updated);
+      }
+    }
+
+    const refreshed = await Order.findById(order._id).select('orderNumber paymentStatus status total cancellationDeadline');
+    if (!refreshed || !['Paid', 'Refund Pending'].includes(refreshed.paymentStatus)) {
+      return res.status(409).json({ success: false, message: 'Payment has not been confirmed. Do not pay again while the status is unclear.' });
+    }
+
+    return res.json({
+      success: true,
+      message: refreshed.paymentStatus === 'Refund Pending'
+        ? 'Payment was received for a cancelled order. Refund review is pending.'
+        : 'Pesapal payment verified successfully.',
+      data: {
+        orderNumber: refreshed.orderNumber,
+        paymentStatus: refreshed.paymentStatus,
+        status: refreshed.status,
+        total: refreshed.total,
+        cancellationDeadline: refreshed.cancellationDeadline,
+      },
+    });
+  } catch (error) {
+    console.error('Guest Pesapal payment verification failed:', error.response?.data || error.message);
+    return res.status(502).json({ success: false, message: 'Unable to verify Pesapal payment yet. Please retry shortly.' });
+  }
+});
+
+/*
 |--------------------------------------------------------------------------
 | CUSTOMER CANCELLATION (FIVE-MINUTE WINDOW)
 |--------------------------------------------------------------------------
