@@ -205,6 +205,28 @@ router.post(
         return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
       }
 
+      const normalizedIdNumber = idNumber.replace(/\\s+/g, '').toUpperCase();
+      const normalizedTaxIdentifier = taxIdentifier.replace(/\\s+/g, '').toUpperCase();
+
+      const identityConditions = [
+        { 'sellerProfile.idNumber': normalizedIdNumber },
+        { 'sellerProfile.taxIdentifier': normalizedTaxIdentifier },
+      ];
+      if (country === 'KE') {
+        identityConditions.push({ 'sellerProfile.kraPin': normalizedTaxIdentifier });
+      }
+
+      const existingSellerIdentity = await User.findOne({
+        $or: identityConditions,
+      }).select('_id sellerProfile.storeName sellerStatus');
+
+      if (existingSellerIdentity) {
+        return res.status(409).json({
+          success: false,
+          message: 'These ID or tax identification details are already associated with another seller application/store.',
+        });
+      }
+
       const [frontUpload, backUpload, taxUpload] = await Promise.all([
         uploadBufferToCloudinary(idFront.buffer),
         uploadBufferToCloudinary(idBack.buffer),
@@ -235,7 +257,7 @@ router.post(
           identityVerificationStatus: 'pending',
           identityVerificationProvider: 'manual_review',
           idType,
-          idNumber,
+          idNumber: normalizedIdNumber,
           idFrontDocument: frontUpload.public_id,
           idBackDocument: backUpload.public_id,
           storeName,
@@ -1257,12 +1279,12 @@ router.post(
        */
       await VerificationToken.deleteMany({
         user: user._id,
-        purpose: mongoose.trusted({
-          $in: [
-            'password-reset',
-            'password-reset-code',
-          ],
-        }),
+        purpose: 'password-reset',
+      });
+
+      await VerificationToken.deleteMany({
+        user: user._id,
+        purpose: 'password-reset-code',
       });
 
       return res.status(200).json({
