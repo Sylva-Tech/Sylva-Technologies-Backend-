@@ -2536,7 +2536,7 @@ router.all('/pesapal/ipn', async (req, res) => {
     const currency = String(status?.currency || '').toUpperCase();
     const reference = String(status?.merchant_reference || '').trim();
     if (['completed', 'complete', 'success'].includes(description) || statusCode === 1) {
-      if (Math.abs(amount - Number(order.total)) > 0.01 || currency !== 'KES' || (reference && reference !== order.orderNumber)) {
+      if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount - Number(order.total)) > 0.01 || currency !== 'KES' || reference !== order.orderNumber) {
         console.error('Pesapal order validation mismatch:', order.orderNumber);
         return acknowledgePesapalIpn(res, trackingId, merchantReference, notificationType);
       }
@@ -2581,7 +2581,7 @@ router.post('/pesapal/verify', protect, async (req, res) => {
     const currency = String(status?.currency || '').toUpperCase();
     const reference = String(status?.merchant_reference || '').trim();
     if (['completed', 'complete', 'success'].includes(description) || statusCode === 1) {
-      if (Math.abs(amount - Number(order.total)) > 0.01 || currency !== 'KES' || (reference && reference !== order.orderNumber)) {
+      if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount - Number(order.total)) > 0.01 || currency !== 'KES' || reference !== order.orderNumber) {
         return res.status(409).json({ success: false, message: 'Pesapal payment details do not match this order. Contact support before retrying.' });
       }
       if (order.status === 'Cancelled') {
