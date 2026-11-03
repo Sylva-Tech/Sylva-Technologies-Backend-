@@ -250,6 +250,24 @@ const orderSchema = new mongoose.Schema(
       default: '',
     },
 
+    paymentCurrency: {
+      type: String,
+      enum: ['KES', 'USD'],
+      default: 'KES',
+    },
+
+    paymentAmount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    paymentExchangeRate: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
     paidAt: {
       type: Date,
       default: null,
