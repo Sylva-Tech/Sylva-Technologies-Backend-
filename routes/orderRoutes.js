@@ -756,9 +756,11 @@ const confirmPaidOrder = async (order, transaction) => {
       }
     }
   }
-  if (newlyConfirmed && order.paymentStatus === 'Paid') {
-    await sendPaidOrderEmails(order);
+  if (order.paymentStatus === 'Paid') {
+    // Idempotently ensure seller proceeds are held even if a prior notification or
+    // callback failed after payment was marked paid.
     await holdSellerProceedsInPlatformWallet(order);
+    if (newlyConfirmed) await sendPaidOrderEmails(order);
   }
   return order;
 };
@@ -2772,7 +2774,7 @@ router.post('/:id/cancel', protect, async (req, res) => {
     if (order.paymentStatus === 'Paid') {
       return res.status(409).json({
         success: false,
-        message: 'This paid order requires administrator-assisted PayPal refund review. Contact Sylva support; the order has not been cancelled.',
+        message: 'This paid order requires administrator-assisted refund review. Contact Sylva support; the order has not been cancelled.',
       });
     } else if (order.paymentStatus === 'Pending') {
       order.paymentStatus = 'Failed';
