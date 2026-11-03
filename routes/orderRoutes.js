@@ -260,7 +260,7 @@ const applySellerSettlement = async (order) => {
       seller.usdWallet = usdWallet;
     } else {
       const wallet = seller.wallet || {
-        currency: 'KES', availableBalance: 0, pendingBalance: 0, transactions: [],
+        currency: String(order.paymentCurrency || 'USD').toUpperCase(), availableBalance: 0, pendingBalance: 0, transactions: [],
       };
       wallet.currency = wallet.currency || 'KES';
       wallet.transactions = Array.isArray(wallet.transactions) ? wallet.transactions : [];
@@ -706,12 +706,14 @@ const validateSuccessfulTransaction = (transaction, order) => {
   if (String(transaction.reference || '') !== String(order.paymentReference || '')) {
     throw new Error('PayPal order reference does not match this Sylva order.');
   }
-  const expectedMinorAmount = Math.round(Number(order.total || 0) * 100);
+  const expectedCurrency = String(order.paymentCurrency || 'KES').toUpperCase();
+  const expectedAmount = Number(order.paymentAmount || order.total || 0);
+  const expectedMinorAmount = Math.round(expectedAmount * 100);
   if (Number(transaction.amount) !== expectedMinorAmount) {
-    throw new Error('The verified PayPal amount does not match the order total.');
+    throw new Error('The verified PayPal amount does not match the order payment amount.');
   }
-  if (String(transaction.currency || '').toUpperCase() !== 'KES') {
-    throw new Error('The verified PayPal currency does not match KES.');
+  if (String(transaction.currency || '').toUpperCase() !== expectedCurrency) {
+    throw new Error('The verified PayPal currency does not match the order payment currency.');
   }
 };
 
@@ -2220,6 +2222,14 @@ if (paymentMethod === 'PayPal') {
       process.env.FRONTEND_URL || process.env.CLIENT_URL ||
       (process.env.NODE_ENV === 'production' ? 'https://www.sylvatechnologies.co.ke' : 'http://localhost:5173')
     ).split(',')[0].trim().replace(/\/$/, '');
+    const kesPerUsd = Number(process.env.PAYPAL_KES_PER_USD || process.env.WALLET_KES_PER_USD);
+    if (!Number.isFinite(kesPerUsd) || kesPerUsd <= 0) {
+      const error = new Error('PayPal checkout requires PAYPAL_KES_PER_USD to be configured by the finance administrator.');
+      error.statusCode = 503;
+      throw error;
+    }
+    const paypalAmount = Number((Number(orderTotal) / kesPerUsd).toFixed(2));
+    if (!Number.isFinite(paypalAmount) || paypalAmount <= 0) throw new Error('The converted PayPal payment amount is invalid.');
     const accessToken = await getPayPalAccessToken();
     const paypalResponse = await axios.post(
       getPayPalApiBase() + '/v2/checkout/orders',
@@ -2230,7 +2240,7 @@ if (paymentMethod === 'PayPal') {
           custom_id: String(order._id),
           invoice_id: String(order.orderNumber).slice(0, 127),
           description: 'Sylva Technologies order ' + order.orderNumber,
-          amount: { currency_code: 'KES', value: Number(orderTotal).toFixed(2) },
+          amount: { currency_code: 'USD', value: paypalAmount.toFixed(2) },
         }],
         application_context: {
           brand_name: 'Sylva Technologies',
@@ -2251,6 +2261,9 @@ if (paymentMethod === 'PayPal') {
       throw new Error('PayPal did not return a valid approval link for this order.');
     }
     order.paymentReference = paypalOrder.id;
+    order.paymentCurrency = 'USD';
+    order.paymentAmount = paypalAmount;
+    order.paymentExchangeRate = kesPerUsd;
     await order.save();
     populatedOrder.paymentReference = paypalOrder.id;
     paypalPayment = { orderId: paypalOrder.id, approvalUrl };
@@ -2670,17 +2683,17 @@ router.post('/paypal/capture', protect, async (req, res) => {
     const paypalOrder = captureResponse.data;
     const purchaseUnit = paypalOrder?.purchase_units?.[0];
     const capture = purchaseUnit?.payments?.captures?.[0];
-    const expectedAmount = Number(order.total || 0).toFixed(2);
+    const expectedAmount = Number(order.paymentAmount || 0).toFixed(2);
     const capturedAmount = String(capture?.amount?.value || '');
     const validCapture = paypalOrder?.status === 'COMPLETED'
       && capture?.status === 'COMPLETED'
-      && String(capture?.amount?.currency_code || '').toUpperCase() === 'KES'
+      && String(capture?.amount?.currency_code || '').toUpperCase() === String(order.paymentCurrency || 'USD').toUpperCase()
       && capturedAmount === expectedAmount
       && String(purchaseUnit?.custom_id || purchaseUnit?.reference_id || '') === String(order._id);
     if (!validCapture) {
       return res.status(409).json({
         success: false,
-        message: 'PayPal has not returned a completed capture matching this order and amount. The order has not been marked paid.',
+        message: 'PayPal has not returned a completed capture matching this order, converted amount and currency. The order has not been marked paid.',
       });
     }
     const normalizedCapture = {
