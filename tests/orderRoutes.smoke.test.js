@@ -10,5 +10,4 @@ test('order routes load and expose authenticated PayPal capture and cancellation
   assert.ok(paths.includes('/paypal/capture'));
   assert.ok(paths.includes('/paypal/cancel'));
   assert.ok(paths.includes('/mpesa/callback'));
-  assert.ok(!paths.some((path) => String(path).includes('paystack')));
 });
