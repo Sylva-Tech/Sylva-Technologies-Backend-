@@ -309,7 +309,7 @@ const applySellerSettlement = async (order) => {
 };
 
 
-// Track seller-owned M-Pesa proceeds as held platform funds until the customer confirms delivery.
+// Track seller-owned M-Pesa and PayPal proceeds as held platform funds until the customer confirms delivery.
 // This is an internal ledger hold; the actual M-Pesa collection remains in the configured business Till.
 const getSellerOrderGrossAmounts = async (order) => {
   const productIds = [...new Set((order?.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
@@ -756,6 +756,7 @@ const confirmPaidOrder = async (order, transaction) => {
   }
   if (newlyConfirmed && order.paymentStatus === 'Paid') {
     await sendPaidOrderEmails(order);
+    await holdSellerProceedsInPlatformWallet(order);
   }
   return order;
 };
@@ -2107,7 +2108,7 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
 
         /*
 |--------------------------------------------------------------------------
-| INITIALIZE PAYSTACK PAYMENT
+| INITIALIZE PAYPAL PAYMENT
 |--------------------------------------------------------------------------
 */
 
