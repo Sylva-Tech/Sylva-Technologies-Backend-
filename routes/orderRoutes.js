@@ -342,7 +342,7 @@ const sellerEscrowReference = (order, sellerId) => 'seller-escrow:order:' + Stri
 const sellerEscrowReleaseReference = (order, sellerId) => 'seller-escrow-release:order:' + String(order.orderNumber) + ':' + String(sellerId);
 
 const holdSellerProceedsInPlatformWallet = async (order) => {
-  if (!order || order.paymentMethod !== 'M-Pesa' || order.paymentStatus !== 'Paid') {
+  if (!order || !['M-Pesa', 'PayPal'].includes(order.paymentMethod) || order.paymentStatus !== 'Paid') {
     return { held: 0, expected: 0, skipped: true };
   }
   const sellerAmounts = await getSellerOrderGrossAmounts(order);
@@ -389,7 +389,7 @@ const holdSellerProceedsInPlatformWallet = async (order) => {
               grossAmount: seller.grossAmount,
               commissionRate: Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.04),
               releaseCondition: 'Customer confirms delivery',
-              paymentMethod: 'M-Pesa',
+              paymentMethod: order.paymentMethod,
             },
             createdAt: now,
             updatedAt: now,
@@ -415,7 +415,7 @@ const holdSellerProceedsInPlatformWallet = async (order) => {
 };
 
 const releaseSellerProceedsFromPlatformWallet = async (order) => {
-  if (!order || order.paymentMethod !== 'M-Pesa') return { released: 0, expected: 0, skipped: true };
+  if (!order || !['M-Pesa', 'PayPal'].includes(order.paymentMethod)) return { released: 0, expected: 0, skipped: true };
   const sellerAmounts = await getSellerOrderGrossAmounts(order);
   if (!sellerAmounts.length) return { released: 0, expected: 0, complete: true };
   let platform = await AdminWallet.findOne({ key: 'platform' });
@@ -460,7 +460,7 @@ const releaseSellerProceedsFromPlatformWallet = async (order) => {
             description: 'Release held seller proceeds after confirmed delivery for order ' + order.orderNumber + '.',
             reference: releaseReference,
             relatedUser: seller.sellerId,
-            metadata: { orderId: String(order._id), orderNumber: order.orderNumber, sellerId: seller.sellerId, storeName: seller.storeName, grossAmount: seller.grossAmount, paymentMethod: 'M-Pesa' },
+            metadata: { orderId: String(order._id), orderNumber: order.orderNumber, sellerId: seller.sellerId, storeName: seller.storeName, grossAmount: seller.grossAmount, paymentMethod: order.paymentMethod },
             createdAt: now,
             updatedAt: now,
             processedAt: now,
@@ -2605,6 +2605,35 @@ router.get('/mpesa/status/:orderNumber', protect, async (req, res) => {
 | PayPal redirects here after customer approval. Capture is server-side;
 | never trust browser query parameters as proof of payment.
 */
+router.post('/paypal/cancel', protect, async (req, res) => {
+  try {
+    const paypalOrderId = String(req.body?.orderId || req.body?.token || '').trim();
+    if (!/^[A-Z0-9-]{8,80}$/i.test(paypalOrderId)) {
+      return res.status(400).json({ success: false, message: 'A valid PayPal order reference is required.' });
+    }
+    const order = await Order.findOne({ paymentReference: paypalOrderId, paymentMethod: 'PayPal' });
+    if (!order) return res.status(404).json({ success: false, message: 'PayPal order was not found.' });
+    const isAdmin = req.user.role === 'admin';
+    if (!isAdmin && (!order.customer || String(order.customer) !== String(req.user._id))) {
+      return res.status(403).json({ success: false, message: 'You are not authorized to cancel this order.' });
+    }
+    if (order.paymentStatus === 'Paid') {
+      return res.status(409).json({ success: false, message: 'PayPal payment was already captured. Contact support if you need a refund.' });
+    }
+    if (order.status !== 'Cancelled') {
+      order.status = 'Cancelled';
+      order.paymentStatus = 'Failed';
+      order.cancellationRequestedAt = new Date();
+      await order.save();
+      await restoreOrderStock(order);
+    }
+    return res.json({ success: true, message: 'PayPal checkout was cancelled. No payment was captured.', data: { orderNumber: order.orderNumber, status: order.status, paymentStatus: order.paymentStatus } });
+  } catch (error) {
+    console.error('PayPal checkout cancellation failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to update the cancelled PayPal order.' });
+  }
+});
+
 router.post('/paypal/capture', protect, async (req, res) => {
   try {
     const paypalOrderId = String(req.body?.orderId || req.body?.token || '').trim();
