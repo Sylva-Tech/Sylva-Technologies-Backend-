@@ -42,6 +42,49 @@ const getMpesaHost = () => getMpesaEnvironment() === 'sandbox'
   ? 'https://sandbox.safaricom.co.ke'
   : 'https://api.safaricom.co.ke';
 
+const getPayPalApiBase = () => (
+  String(process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'sandbox').toLowerCase() === 'live'
+    ? 'https://api-m.paypal.com'
+    : 'https://api-m.sandbox.paypal.com'
+);
+
+const getPayPalUsdcRate = () => {
+  const rawRate = Number(process.env.WALLET_KES_PER_USD || process.env.PAYPAL_KES_PER_USD || 0);
+  if (!Number.isFinite(rawRate) || rawRate <= 0) {
+    throw new Error('PayPal checkout requires a valid KES-to-USD conversion rate in WALLET_KES_PER_USD or PAYPAL_KES_PER_USD.');
+  }
+  return rawRate;
+};
+
+const getPayPalUsdAmount = (kesAmount) => {
+  const numericAmount = Number(kesAmount || 0);
+  if (!Number.isFinite(numericAmount) || numericAmount < 0) {
+    throw new Error('Invalid KES amount for PayPal checkout.');
+  }
+  const rate = getPayPalUsdcRate();
+  return roundMoney(numericAmount / rate);
+};
+
+const getPayPalAccessToken = async () => {
+  const clientId = process.env.PAYPAL_CLIENT_ID;
+  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    const error = new Error('PayPal is not configured on the server.');
+    error.statusCode = 503;
+    throw error;
+  }
+  const response = await axios.post(
+    getPayPalApiBase() + '/v1/oauth2/token',
+    'grant_type=client_credentials',
+    {
+      auth: { username: clientId, password: clientSecret },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 15000,
+    }
+  );
+  if (!response.data?.access_token) throw new Error('PayPal did not return an access token.');
+  return response.data.access_token;
+};
 
 const ORDER_STATUSES = [
   'Pending',
@@ -609,10 +652,10 @@ const createOrderFromRequest = async ({
       });
     }
 
-    if (!['Paystack', 'Card', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
+    if (!['Paystack', 'Card', 'M-Pesa', 'Wallet', 'PayPal'].includes(paymentMethod)) {
       return res.status(400).json({
         success: false,
-        message: 'Choose Wallet, M-Pesa, Paystack, or Visa/Mastercard to pay for your order.',
+        message: 'Choose Wallet, M-Pesa, PayPal, Paystack, or Visa/Mastercard to pay for your order.',
       });
     }
 
@@ -1050,6 +1093,7 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
 
 let paystackPayment = null;
 let mpesaPayment = null;
+let paypalPayment = null;
 
 if (paymentMethod === 'M-Pesa') {
   try {
@@ -1233,12 +1277,6 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
         paystackError.message
     );
 
-    /*
-    |--------------------------------------------------------------------------
-    | RESTORE STOCK IF PAYSTACK INITIALIZATION FAILS
-    |--------------------------------------------------------------------------
-    */
-
     try {
       for (const item of preparedItems) {
         await Product.updateOne(
@@ -1267,7 +1305,100 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
   }
 }
 
-    // Order emails are sent only after Paystack verifies payment.
+if (paymentMethod === 'PayPal') {
+  try {
+    const frontendBaseUrl = (
+      process.env.FRONTEND_URL ||
+      process.env.CLIENT_URL ||
+      (process.env.NODE_ENV === 'production'
+        ? 'https://www.sylvatechnologies.co.ke'
+        : 'http://localhost:5173')
+    )
+      .split(',')[0]
+      .trim()
+      .replace(/\/$/, '');
+
+    const paypalRate = Number(process.env.WALLET_KES_PER_USD || process.env.PAYPAL_KES_PER_USD || 0);
+    if (!Number.isFinite(paypalRate) || paypalRate <= 0) {
+      throw new Error('PayPal checkout requires a valid KES-to-USD conversion rate in WALLET_KES_PER_USD or PAYPAL_KES_PER_USD.');
+    }
+
+    const usdAmount = roundMoney(Number(orderTotal || 0) / paypalRate);
+    const accessToken = await getPayPalAccessToken();
+
+    const paypalOrderResponse = await axios.post(
+      getPayPalApiBase() + '/v2/checkout/orders',
+      {
+        intent: 'CAPTURE',
+        purchase_units: [{
+          reference_id: order.orderNumber,
+          custom_id: String(user?._id || order.customer || 'guest'),
+          description: `Sylva Technologies order ${order.orderNumber}`,
+          amount: {
+            currency_code: 'USD',
+            value: usdAmount.toFixed(2),
+          },
+        }],
+        application_context: {
+          brand_name: 'Sylva Technologies',
+          user_action: 'PAY_NOW',
+          return_url: `${frontendBaseUrl}/checkout?paypal=return&order=${encodeURIComponent(order.orderNumber)}`,
+          cancel_url: `${frontendBaseUrl}/checkout?paypal=cancel&order=${encodeURIComponent(order.orderNumber)}`,
+        },
+      },
+      {
+        headers: {
+          Authorization: 'Bearer ' + accessToken,
+          'Content-Type': 'application/json',
+          'PayPal-Request-Id': 'sylva-order-' + String(order._id),
+        },
+        timeout: 20000,
+      }
+    );
+
+    const paypalOrder = paypalOrderResponse.data;
+    if (!paypalOrder?.id) {
+      throw new Error('PayPal did not return a valid order reference.');
+    }
+
+    order.paymentReference = paypalOrder.id;
+    order.paypalOrderId = paypalOrder.id;
+    order.paypalStatus = 'CREATED';
+    order.paypalCurrency = 'USD';
+    order.paypalAmount = usdAmount;
+    await order.save();
+
+    populatedOrder.paymentReference = order.paymentReference;
+    populatedOrder.paypalOrderId = paypalOrder.id;
+
+    paypalPayment = {
+      orderId: paypalOrder.id,
+      currency: 'USD',
+      amount: usdAmount,
+      approvalUrl: paypalOrder.links?.find((link) => link.rel === 'approve')?.href || null,
+    };
+
+    console.info('PayPal payment initialized:', order.orderNumber);
+  } catch (paypalError) {
+    console.error('PayPal initialization error:', paypalError.response?.data || paypalError.message);
+
+    try {
+      for (const item of preparedItems) {
+        await Product.updateOne({ _id: item.product }, { $inc: { stock: item.quantity } });
+      }
+      await Order.findByIdAndDelete(order._id);
+    } catch (rollbackError) {
+      console.error('PayPal rollback error:', rollbackError);
+    }
+
+    return res.status(502).json({
+      success: false,
+      message: 'Unable to initialize PayPal payment. Please try again.',
+    });
+  }
+}
+
+    // Order emails are sent only after payment verification.
 
     /*
     |--------------------------------------------------------------------------
@@ -1281,9 +1412,11 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
     ? 'Order created. Continue to Paystack to pay securely with Visa or Mastercard.'
     : paymentMethod === 'Paystack'
       ? 'Order created. Continue to Paystack to complete your payment.'
-      : 'M-Pesa prompt sent. Enter your PIN on your phone; the order will be confirmed after Safaricom verifies payment.',
+      : paymentMethod === 'PayPal'
+        ? 'Order created. Continue to PayPal to complete your secure checkout.'
+        : 'M-Pesa prompt sent. Enter your PIN on your phone; the order will be confirmed after Safaricom verifies payment.',
   data: populatedOrder,
-  payment: paystackPayment,
+  payment: paystackPayment || paypalPayment,
   mpesaPayment,
 });
 
@@ -1306,6 +1439,120 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
 | CREATE GUEST ORDER
 |--------------------------------------------------------------------------
 */
+
+router.post('/paypal/capture', protect, async (req, res) => {
+  try {
+    const { orderId, orderNumber } = req.body || {};
+    const normalizedOrderId = String(orderId || '').trim();
+    const normalizedOrderNumber = String(orderNumber || '').trim();
+
+    if (!normalizedOrderId && !normalizedOrderNumber) {
+      return res.status(400).json({ success: false, message: 'PayPal order reference is missing.' });
+    }
+
+    const order = await Order.findOne({
+      $and: [
+        { paymentMethod: 'PayPal' },
+        { customer: req.user._id },
+        {
+          $or: [
+            { paymentReference: normalizedOrderId || normalizedOrderNumber },
+            { orderNumber: normalizedOrderNumber || normalizedOrderId },
+          ],
+        },
+      ],
+    });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'This PayPal order could not be matched to your account.' });
+    }
+
+    if (order.paymentStatus === 'Paid') {
+      return res.json({
+        success: true,
+        message: 'This PayPal payment has already been captured and applied to the order.',
+        data: { orderNumber: order.orderNumber, paymentStatus: order.paymentStatus },
+      });
+    }
+
+    const accessToken = await getPayPalAccessToken();
+    const captureResponse = await axios.post(
+      getPayPalApiBase() + '/v2/checkout/orders/' + encodeURIComponent(normalizedOrderId || order.paymentReference) + '/capture',
+      {},
+      {
+        headers: {
+          Authorization: 'Bearer ' + accessToken,
+          'Content-Type': 'application/json',
+          'PayPal-Request-Id': 'sylva-capture-' + String(order._id),
+        },
+        timeout: 20000,
+      }
+    );
+
+    const paypalOrder = captureResponse.data;
+    const purchaseUnit = paypalOrder?.purchase_units?.find((unit) => String(unit.reference_id || '') === String(order.orderNumber) || String(unit.custom_id || '') === String(req.user._id));
+    const capture = purchaseUnit?.payments?.captures?.find((item) => item.status === 'COMPLETED');
+    const captureAmount = Number(capture?.amount?.value || 0);
+    const expectedAmount = getPayPalUsdAmount(order.total);
+
+    if (
+      paypalOrder?.status !== 'COMPLETED' ||
+      !capture ||
+      capture?.amount?.currency_code !== 'USD' ||
+      !Number.isFinite(captureAmount) ||
+      roundMoney(captureAmount) !== roundMoney(expectedAmount)
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: 'PayPal returned a payment result that does not match the order amount or currency. No payment was applied.',
+      });
+    }
+
+    const updatedOrder = await Order.findOneAndUpdate(
+      { _id: order._id, paymentStatus: { $ne: 'Paid' } },
+      {
+        $set: {
+          paymentStatus: 'Paid',
+          paidAt: new Date(),
+          status: 'Confirmed',
+          paymentReference: order.paymentReference || normalizedOrderId,
+          paypalOrderId: order.paypalOrderId || normalizedOrderId,
+          paypalCaptureId: capture.id,
+          paypalStatus: paypalOrder.status,
+          paypalCurrency: 'USD',
+          paypalAmount: roundMoney(captureAmount),
+        },
+      },
+      { new: true }
+    );
+
+    if (!updatedOrder) {
+      return res.status(409).json({ success: false, message: 'This PayPal payment is already being processed or has already been applied.' });
+    }
+
+    const settlementResult = await applySellerSettlement(updatedOrder);
+    if (settlementResult.settled) {
+      console.info('Seller settlements applied for PayPal order:', updatedOrder.orderNumber, settlementResult.count);
+    }
+
+    return res.json({
+      success: true,
+      message: 'PayPal payment captured successfully and the order is now confirmed.',
+      data: {
+        orderNumber: updatedOrder.orderNumber,
+        paymentStatus: updatedOrder.paymentStatus,
+        paypalOrderId: updatedOrder.paypalOrderId,
+        paypalCaptureId: updatedOrder.paypalCaptureId,
+      },
+    });
+  } catch (error) {
+    console.error('PayPal capture error:', error.response?.data || error.message);
+    return res.status(error.statusCode || 502).json({
+      success: false,
+      message: error.statusCode === 503 ? error.message : 'Unable to verify this PayPal payment. The order has not been marked paid.',
+    });
+  }
+});
 
 router.post('/guest', async (req, res) => {
   return createOrderFromRequest({
@@ -2047,5 +2294,11 @@ router.delete(
     }
   }
 );
+
+router.paypalHelpers = {
+  getPayPalApiBase,
+  getPayPalUsdAmount,
+  getPayPalAccessToken,
+};
 
 module.exports = router;

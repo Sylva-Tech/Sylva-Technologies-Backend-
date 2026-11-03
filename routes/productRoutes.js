@@ -117,6 +117,35 @@ const parseList = (value) => {
     .filter(Boolean);
 };
 
+const syncProductReviewStats = (product) => {
+  if (!product) {
+    return product;
+  }
+
+  const reviews = Array.isArray(product.reviews)
+    ? product.reviews
+    : [];
+
+  const totalReviews = reviews.length;
+  const totalRating = reviews.reduce(
+    (sum, review) => sum + Number(review?.rating || 0),
+    0
+  );
+
+  const avg = totalReviews
+    ? Number((totalRating / totalReviews).toFixed(1))
+    : 0;
+
+  product.reviewCount = totalReviews;
+  product.averageRating = avg;
+  product.rating = avg;
+  product.recommendationCount = reviews.filter(
+    (review) => review?.recommend === true
+  ).length;
+
+  return product;
+};
+
 /*
  * Find a category by:
  * - MongoDB ObjectId
@@ -481,6 +510,7 @@ router.get(
         });
       }
 
+      syncProductReviewStats(product);
       res.json(product);
     } catch (error) {
       res.status(500).json({
@@ -488,6 +518,79 @@ router.get(
         message:
           error.message ||
           'Unable to fetch product.',
+      });
+    }
+  }
+);
+
+router.post(
+  '/:id/reviews',
+  protect,
+  async (req, res) => {
+    try {
+      const { rating, title, comment, recommend } = req.body || {};
+      const productId = req.params.id;
+      const safeRating = Number(rating);
+
+      if (!Number.isFinite(safeRating) || safeRating < 1 || safeRating > 5) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please choose a rating between 1 and 5 stars.',
+        });
+      }
+
+      const trimmedTitle = String(title || '').trim();
+      const trimmedComment = String(comment || '').trim();
+
+      if (!trimmedComment) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please add a short review before submitting.',
+        });
+      }
+
+      const product = await Product.findById(productId);
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found.',
+        });
+      }
+
+      const userReview = {
+        user: req.user._id,
+        name: req.user.name || 'Customer',
+        rating: safeRating,
+        title: trimmedTitle.slice(0, 80),
+        comment: trimmedComment.slice(0, 500),
+        recommend: Boolean(recommend),
+        createdAt: new Date(),
+      };
+
+      const existingReviewIndex = product.reviews.findIndex(
+        (review) => String(review.user) === String(req.user._id)
+      );
+
+      if (existingReviewIndex >= 0) {
+        product.reviews[existingReviewIndex] = userReview;
+      } else {
+        product.reviews.push(userReview);
+      }
+
+      syncProductReviewStats(product);
+      await product.save();
+
+      return res.status(200).json({
+        success: true,
+        message: 'Your review has been submitted successfully.',
+        product: product.toObject(),
+      });
+    } catch (error) {
+      console.error('Add product review error:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Unable to submit your review.',
       });
     }
   }

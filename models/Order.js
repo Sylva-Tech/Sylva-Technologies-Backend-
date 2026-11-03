@@ -260,6 +260,35 @@ const orderSchema = new mongoose.Schema(
       default: '',
     },
 
+    paypalOrderId: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    paypalCaptureId: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    paypalStatus: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    paypalCurrency: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    paypalAmount: {
+      type: Number,
+      default: 0,
+    },
+
     paidAt: {
       type: Date,
       default: null,

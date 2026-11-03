@@ -277,6 +277,74 @@ const productSchema = new mongoose.Schema(
       maxlength: 200,
     },
 
+    reviews: {
+      type: [
+        {
+          user: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+            required: true,
+          },
+          name: {
+            type: String,
+            default: '',
+            trim: true,
+          },
+          rating: {
+            type: Number,
+            min: 1,
+            max: 5,
+            default: 5,
+          },
+          title: {
+            type: String,
+            default: '',
+            trim: true,
+          },
+          comment: {
+            type: String,
+            default: '',
+            trim: true,
+          },
+          recommend: {
+            type: Boolean,
+            default: false,
+          },
+          createdAt: {
+            type: Date,
+            default: Date.now,
+          },
+        },
+      ],
+      default: [],
+    },
+
+    rating: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 5,
+    },
+
+    averageRating: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 5,
+    },
+
+    reviewCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    recommendationCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     highlightTags: {
       type: [String],
       default: [],
