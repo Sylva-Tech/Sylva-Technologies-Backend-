@@ -215,8 +215,8 @@ app.use(
     limit: '10mb',
     strict: true,
     verify: (req, res, buffer) => {
-      // Paystack signs the exact request bytes, so preserve them before JSON parsing.
-      if (['/api/orders/paystack/webhook', '/api/support-inbox/inbound/resend', '/api/mailbox/events/resend'].includes(req.originalUrl.split('?')[0])) {
+      // Provider callbacks and signed inbound email events need the exact request bytes.
+      if (['/api/support-inbox/inbound/resend', '/api/mailbox/events/resend'].includes(req.originalUrl.split('?')[0])) {
         req.rawBody = Buffer.from(buffer);
       }
     },
