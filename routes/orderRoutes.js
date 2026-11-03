@@ -310,7 +310,7 @@ const applySellerSettlement = async (order) => {
 
 
 // Track seller-owned M-Pesa and PayPal proceeds as held platform funds until the customer confirms delivery.
-// This is an internal ledger hold; the actual M-Pesa collection remains in the configured business Till.
+// This is an internal ledger hold; the external payment remains in the configured provider merchant account.
 const getSellerOrderGrossAmounts = async (order) => {
   const productIds = [...new Set((order?.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
   if (!productIds.length) return [];
@@ -408,7 +408,7 @@ const holdSellerProceedsInPlatformWallet = async (order) => {
         held += 1;
         continue;
       }
-      throw new Error('Unable to reserve M-Pesa proceeds for seller ' + seller.sellerId + ' on order ' + order.orderNumber + '.');
+      throw new Error('Unable to reserve seller proceeds for seller ' + seller.sellerId + ' on order ' + order.orderNumber + '.');
     }
   }
   return { held, expected: sellerAmounts.length, complete: held === sellerAmounts.length };
