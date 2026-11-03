@@ -219,8 +219,6 @@ const orderSchema = new mongoose.Schema(
     'M-Pesa',
     'PayPal',
     'WhatsApp Order',
-    'Paystack',
-    'Card',
     'Wallet',
   ],
   default: 'Cash on Delivery',
