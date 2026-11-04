@@ -133,7 +133,7 @@ router.put('/rates/:id', protect, adminOnly, async (req, res) => {
     if (!Number.isFinite(fee) || fee < 0 || !Number.isInteger(deliveryMinDays) || deliveryMinDays < 1 || !Number.isInteger(deliveryMaxDays) || deliveryMaxDays < deliveryMinDays || typeof active !== 'boolean') {
       return res.status(400).json({ success: false, message: 'Enter a non-negative fee, valid delivery day range, and active status.' });
     }
-    const rate = await ShippingRate.findByIdAndUpdate(req.params.id, { $set: { fee, deliveryMinDays, deliveryMaxDays, active } }, { new: true, runValidators: true });
+    const rate = await ShippingRate.findByIdAndUpdate(req.params.id, { $set: { fee, deliveryMinDays, deliveryMaxDays, active } }, { returnDocument: 'after', runValidators: true });
     if (!rate) return res.status(404).json({ success: false, message: 'Shipping rate not found.' });
     return res.json({ success: true, rate, message: 'Shipping rate saved.' });
   } catch (error) {
@@ -150,16 +150,71 @@ module.exports.getQuote = async customerDetails => {
   const county = String(customerDetails?.county || '').trim();
   const subCounty = String(customerDetails?.subCounty || '').trim();
   const ward = String(customerDetails?.ward || '').trim();
-  if (country.toLowerCase() !== 'kenya' || !county) throw new Error('Choose Kenya and a county to calculate shipping.');
-  const canonicalCounty = COUNTY_DEFAULTS.find(item => item.toLowerCase() === county.toLowerCase());
-  if (!canonicalCounty) throw new Error('Choose a valid Kenyan county.');
+
+  if (country.toLowerCase() !== 'kenya' || !county) {
+    throw new Error('Choose Kenya and a county to calculate shipping.');
+  }
+
+  const canonicalCounty = COUNTY_DEFAULTS.find(
+    item => item.toLowerCase() === county.toLowerCase()
+  );
+
+  if (!canonicalCounty) {
+    throw new Error('Choose a valid Kenyan county.');
+  }
+
   await ensureDefaultRates();
-  const rate = await ShippingRate.findOne({ country: 'Kenya', county: canonicalCounty, active: true }).lean();
-  if (!rate) throw new Error('Delivery is not available for the selected county. Please contact support.');
-  const normalize = value => String(value || '').trim().toLocaleLowerCase();
-  const overrides = Array.isArray(rate.regionalRates) ? rate.regionalRates : [];
-  const regional = (ward && subCounty ? overrides.find(item => item.active && normalize(item.subCounty) === normalize(subCounty) && normalize(item.ward) === normalize(ward)) : null)
-    || (subCounty ? overrides.find(item => item.active && normalize(item.subCounty) === normalize(subCounty) && !normalize(item.ward)) : null);
+
+  const rate = await ShippingRate.findOne({
+    country: 'Kenya',
+    county: canonicalCounty,
+    active: true,
+  }).lean();
+
+  if (!rate) {
+    throw new Error(
+      'Delivery is not available for the selected county. Please contact support.'
+    );
+  }
+
+  const normalize = value =>
+    String(value || '').trim().toLocaleLowerCase();
+
+  const overrides = Array.isArray(rate.regionalRates)
+    ? rate.regionalRates
+    : [];
+
+  // Prefer an exact ward rate.
+  const wardRate = ward && subCounty
+    ? overrides.find(item =>
+        item.active &&
+        normalize(item.subCounty) === normalize(subCounty) &&
+        normalize(item.ward) === normalize(ward)
+      )
+    : null;
+
+  // Fall back to a sub-county rate when no ward rate exists.
+  const subCountyRate = subCounty
+    ? overrides.find(item =>
+        item.active &&
+        normalize(item.subCounty) === normalize(subCounty) &&
+        !normalize(item.ward)
+      )
+    : null;
+
+  const regional = wardRate || subCountyRate;
   const applicable = regional || rate;
-  return { fee: applicable.fee, deliveryMinDays: applicable.deliveryMinDays, deliveryMaxDays: applicable.deliveryMaxDays, county: rate.county, subCounty: regional?.subCounty || subCounty, ward: regional?.ward || ward, scope: regional ? (regional.ward ? 'ward' : 'subCounty') : 'county', country: rate.country };
+
+  return {
+    fee: applicable.fee,
+    deliveryMinDays: applicable.deliveryMinDays,
+    deliveryMaxDays: applicable.deliveryMaxDays,
+    county: rate.county,
+    subCounty: regional?.subCounty || subCounty,
+    ward: regional?.ward || ward,
+    scope: regional
+      ? (regional.ward ? 'ward' : 'subCounty')
+      : 'county',
+    country: rate.country,
+  };
 };

@@ -442,6 +442,13 @@ const userSchema = new mongoose.Schema(
         ],
       },
 
+      storeLogo: {
+        type: String,
+        default: '',
+        trim: true,
+        maxlength: [500, 'Store logo URL is too long'],
+      },
+
       /* ------------------------------------------
        * SELLER APPLICATION INFORMATION
        * ------------------------------------------ */

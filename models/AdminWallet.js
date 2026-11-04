@@ -5,7 +5,7 @@ const adminWalletTransactionSchema = new mongoose.Schema({
   amount: { type: Number, required: true, min: 0.01 },
   category: {
     type: String,
-    enum: ['customer_transfer_in', 'seller_transfer_in', 'transfer_to_customer', 'transfer_to_seller', 'withdrawal_request', 'withdrawal_paid', 'withdrawal_rejected', 'adjustment', 'mpesa_topup'],
+    enum: ['customer_transfer_in', 'seller_transfer_in', 'transfer_to_customer', 'transfer_to_seller', 'withdrawal_request', 'withdrawal_paid', 'withdrawal_rejected', 'adjustment', 'mpesa_topup', 'seller_commission', 'seller_order_escrow'],
     required: true,
   },
   status: { type: String, enum: ['pending', 'completed', 'paid', 'rejected', 'failed'], default: 'completed' },
@@ -19,12 +19,30 @@ const adminWalletTransactionSchema = new mongoose.Schema({
 }, { _id: true });
 
 const adminWalletSchema = new mongoose.Schema({
-  key: { type: String, default: 'platform', unique: true, required: true },
-  currency: { type: String, default: 'KES' },
-  availableBalance: { type: Number, default: 0, min: 0 },
-  pendingBalance: { type: Number, default: 0, min: 0 },
-  lastUpdatedAt: { type: Date, default: Date.now },
-  transactions: { type: [adminWalletTransactionSchema], default: [] },
+  key: {
+    type: String,
+    default: 'platform',
+    unique: true,
+    required: true,
+  },
+  currency: {
+    type: String,
+    default: 'KES',
+  },
+  availableBalance: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  pendingBalance: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  transactions: {
+    type: [adminWalletTransactionSchema],
+    default: [],
+  },
 }, { timestamps: true });
 
 module.exports = mongoose.models.AdminWallet || mongoose.model('AdminWallet', adminWalletSchema);

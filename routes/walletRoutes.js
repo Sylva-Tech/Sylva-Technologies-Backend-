@@ -3,7 +3,10 @@ const mongoose = require('mongoose');
 const axios = require('axios');
 
 const User = require('../models/User');
+const Order = require('../models/Order');
+const Product = require('../models/Product');
 const AdminWallet = require('../models/AdminWallet');
+const { sendMail } = require('../services/emailService');
 
 const {
   protect,
@@ -1070,7 +1073,7 @@ router.post(
           $set: { 'wallet.lastUpdatedAt': now },
           $push: { 'wallet.transactions': { $each: [transaction], $position: 0 } },
         },
-        { new: true, runValidators: true }
+        { returnDocument: 'after', runValidators: true }
       );
 
       if (!updatedUser) {
@@ -1165,7 +1168,7 @@ router.post('/payout-request-usd', protect, payoutRateLimit, async (req, res) =>
         $set: { 'usdWallet.lastUpdatedAt': now },
         $push: { 'usdWallet.transactions': { $each: [transaction], $position: 0 } },
       },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
     if (!updatedUser) {
       return res.status(409).json({ success: false, message: 'Your USD wallet changed or another withdrawal is pending. Refresh and try again.' });
@@ -1188,28 +1191,19 @@ router.get(
   requireVerified,
   async (req, res) => {
     try {
-      const payoutAccounts = await User.find({
-        $or: [
-          {
-            role: 'seller',
-            'wallet.transactions': {
-              $elemMatch: { category: 'payout_request', status: 'pending' },
+      const payoutAccounts = await User.find(
+        mongoose.trusted({
+          $and: [
+            { role: mongoose.trusted({ $in: ['seller', 'customer'] }) },
+            {
+              $or: [
+                { 'wallet.transactions': { $elemMatch: { category: 'payout_request', status: mongoose.trusted({ $in: ['pending', 'paid', 'rejected'] }) } } },
+                { 'usdWallet.transactions': { $elemMatch: { category: 'payout_request', status: mongoose.trusted({ $in: ['pending', 'paid', 'rejected'] }) } } },
+              ],
             },
-          },
-          {
-            role: 'customer',
-            'wallet.transactions': {
-              $elemMatch: { category: 'payout_request', status: 'pending' },
-            },
-          },
-          {
-            role: 'seller',
-            'usdWallet.transactions': {
-              $elemMatch: { category: 'payout_request', status: 'pending' },
-            },
-          },
-        ],
-      })
+          ],
+        })
+      )
         .select('name email phone role sellerProfile wallet usdWallet')
         .lean();
 
@@ -1234,8 +1228,7 @@ router.get(
           if (
             entry.category !==
               'payout_request' ||
-            entry.status !==
-              'pending'
+            !['pending', 'paid', 'rejected'].includes(String(entry.status || '').toLowerCase())
           ) {
             continue;
           }
@@ -1305,6 +1298,7 @@ router.get(
             createdAt:
               entry.createdAt ||
               null,
+            processedAt: entry.processedAt || null,
           });
         }
       }
@@ -1312,7 +1306,7 @@ router.get(
       // Include pending USD-wallet payouts in the same admin review queue.
       for (const seller of payoutAccounts) {
         for (const entry of (Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [])) {
-          if (entry.category !== 'payout_request' || entry.status !== 'pending') continue;
+          if (entry.category !== 'payout_request' || !['pending', 'paid', 'rejected'].includes(String(entry.status || '').toLowerCase())) continue;
           pendingPayouts.push({
             _id: entry._id,
             account: { role: seller.role, _id: seller._id, name: seller.name || '', email: seller.email || '', phone: seller.phone || '', storeName: seller.sellerProfile?.storeName || '', mpesaPhone: seller.sellerProfile?.mpesaPhone || '' },
@@ -1325,6 +1319,7 @@ router.get(
             destination: entry.metadata?.destination || '',
             reference: entry.reference || '',
             createdAt: entry.createdAt || null,
+            processedAt: entry.processedAt || null,
           });
         }
       }
@@ -1583,7 +1578,6 @@ router.patch(
       }
 
       const currentPendingBalance = roundMoney(wallet.pendingBalance);
-      const currentAvailableBalance = roundMoney(wallet.availableBalance);
       const currencyLabel = isUsdPayout ? 'USD' : 'KES';
 
       /*
@@ -1610,169 +1604,126 @@ router.patch(
         });
       }
 
-      const now =
-        new Date();
+      const now = new Date();
+
+      const walletPath = isUsdPayout ? 'usdWallet' : 'wallet';
+      const transactionsPath = `${walletPath}.transactions`;
+      const pendingBalancePath = `${walletPath}.pendingBalance`;
+      const availableBalancePath = `${walletPath}.availableBalance`;
+      const lastUpdatedPath = `${walletPath}.lastUpdatedAt`;
+
+      const approved = decision === 'approved';
+
+      const updatedDescription = approved
+        ? 'Seller payout approved and marked as paid by admin.'
+        : 'Seller payout request rejected by admin.';
+
+      const updatedMetadata = {
+        ...(tx.metadata || {}),
+        ...(approved ? {} : { rejectionReason: reason }),
+        adminReviewedBy: req.user._id,
+        adminReviewedAt: now.toISOString(),
+        adminDecision: decision,
+        ...(approved ? { payoutProcessedManually: true } : {}),
+      };
 
       /*
-       * APPROVE PAYOUT
+       * Atomically process only a still-pending payout.
        */
-      if (
-        decision ===
-        'approved'
-      ) {
-        tx.status =
-          'paid';
+      const payoutFilter = {
+        _id: seller._id,
+        [transactionsPath]: {
+          $elemMatch: {
+            _id: tx._id,
+            category: 'payout_request',
+            status: 'pending',
+          },
+        },
+        [pendingBalancePath]: {
+          $gte: payoutAmount,
+        },
+      };
 
-        tx.description =
-          'Seller payout approved and marked as paid by admin.';
+      const update = {
+        $set: {
+          [`${transactionsPath}.$[payout].status`]: approved ? 'paid' : 'rejected',
+          [`${transactionsPath}.$[payout].description`]: updatedDescription,
+          [`${transactionsPath}.$[payout].processedAt`]: now,
+          [`${transactionsPath}.$[payout].updatedAt`]: now,
+          [`${transactionsPath}.$[payout].metadata`]: updatedMetadata,
+          [lastUpdatedPath]: now,
+        },
+        $inc: {
+          [pendingBalancePath]: -payoutAmount,
+        },
+      };
 
-        tx.processedAt =
-          now;
-
-        tx.updatedAt =
-          now;
-
-        tx.metadata = {
-          ...(tx.metadata ||
-            {}),
-
-          adminReviewedBy:
-            req.user._id,
-
-          adminReviewedAt:
-            now.toISOString(),
-
-          adminDecision:
-            'approved',
-
-          payoutProcessedManually:
-            true,
-        };
-
-        /*
-         * Release amount from pending.
-         *
-         * The amount was already removed from
-         * availableBalance when the request
-         * was created.
-         */
-        wallet.pendingBalance =
-          roundMoney(
-            currentPendingBalance -
-              payoutAmount
-          );
+      if (!approved) {
+        update.$inc[availableBalancePath] = payoutAmount;
       }
 
-      /*
-       * REJECT PAYOUT
-       */
-      if (
-        decision ===
-        'rejected'
-      ) {
-        tx.status =
-          'rejected';
+      const updatedSeller = await User.findOneAndUpdate(
+        payoutFilter,
+        update,
+        {
+          new: true,
+          runValidators: true,
+          arrayFilters: [
+            {
+              'payout._id': tx._id,
+              'payout.category': 'payout_request',
+              'payout.status': 'pending',
+            },
+          ],
+        }
+      );
 
-        tx.description =
-          'Seller payout request rejected by admin.';
-
-        tx.processedAt =
-          now;
-
-        tx.updatedAt =
-          now;
-
-        tx.metadata = {
-          ...(tx.metadata ||
-            {}),
-
-          rejectionReason:
-            reason,
-
-          adminReviewedBy:
-            req.user._id,
-
-          adminReviewedAt:
-            now.toISOString(),
-
-          adminDecision:
-            'rejected',
-        };
-
-        /*
-         * Release pending amount and return
-         * it to seller's available balance.
-         */
-        wallet.pendingBalance =
-          roundMoney(
-            currentPendingBalance -
-              payoutAmount
-          );
-
-        wallet.availableBalance =
-          roundMoney(
-            currentAvailableBalance +
-              payoutAmount
-          );
+      if (!updatedSeller) {
+        return res.status(409).json({
+          success: false,
+          message:
+            'This payout request has already been processed or the wallet balance changed. Refresh and review the latest wallet records.',
+        });
       }
 
-      wallet.lastUpdatedAt =
-        now;
+      const updatedWallet = isUsdPayout
+        ? ensureUsdWallet(updatedSeller)
+        : ensureWallet(updatedSeller);
 
-      /*
-       * Save the entire ledger change.
-       */
-      await seller.save();
+      const updatedTx = updatedWallet.transactions.id(transactionId);
 
-      /*
-       * Never return unnecessary internal
-       * admin information to the frontend.
-       */
+      if (!updatedTx) {
+        console.error(
+          `Updated payout transaction ${transactionId} could not be reloaded.`
+        );
+
+        return res.status(500).json({
+          success: false,
+          message:
+            'Payout was updated, but its response could not be prepared. Refresh the wallet records.',
+        });
+      }
+
       return res.json({
         success: true,
-
-        message:
-          decision ===
-          'approved'
-            ? 'Withdrawal marked as paid. Confirm the external payout was sent first.'
-            : 'Withdrawal rejected and the amount has been returned to the account wallet.',
-
+        message: approved
+          ? 'Withdrawal marked as paid. Confirm the external payout was sent first.'
+          : 'Withdrawal rejected and the amount has been returned to the account wallet.',
         data: {
           transaction: {
-            _id:
-              tx._id,
-
-            type:
-              tx.type,
-
-            amount:
-              roundMoney(
-                tx.amount
-              ),
-
-            category:
-              tx.category,
-
-            status:
-              tx.status,
-
-            description:
-              tx.description,
-
-            reference:
-              tx.reference,
-
-            createdAt:
-              tx.createdAt,
-
-            processedAt:
-              tx.processedAt,
+            _id: updatedTx._id,
+            type: updatedTx.type,
+            amount: roundMoney(updatedTx.amount),
+            category: updatedTx.category,
+            status: updatedTx.status,
+            description: updatedTx.description,
+            reference: updatedTx.reference,
+            createdAt: updatedTx.createdAt,
+            processedAt: updatedTx.processedAt,
           },
-
-          wallet:
-            serializeWallet(
-              seller
-            ),
+          wallet: isUsdPayout
+            ? serializeUsdWallet(updatedSeller)
+            : serializeWallet(updatedSeller),
         },
       });
     } catch (error) {
@@ -1907,8 +1858,8 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
 
     if (idempotencyKey) {
       const existing = isAdminDeposit
-        ? await AdminWallet.findOne({ key: 'platform', transactions: { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } })
-        : await User.findOne({ _id: user._id, 'wallet.transactions': { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } });
+        ? await AdminWallet.findOne({ key: 'platform', transactions: mongoose.trusted({ $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } }) })
+        : await User.findOne({ _id: user._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } }) });
       const existingTx = isAdminDeposit
         ? existing?.transactions.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey)
         : existing?.wallet?.transactions?.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey);
@@ -2042,55 +1993,25 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
     }
   } catch (error) {
     const providerCode = String(error.response?.data?.errorCode || '');
-    const providerMessage = String(
-      error.response?.data?.errorMessage ||
-      error.response?.data?.ResponseDescription ||
-      error.message ||
-      ''
-    );
-    // Safe diagnostics only: never log the Consumer Secret, passkey, access token,
-    // phone number, or complete credential values.
-    const diagnosticEnvironment = String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase();
-    const diagnosticShortcode = String(process.env.MPESA_SHORTCODE || '').trim();
-    const diagnosticTill = String(process.env.MPESA_TILL_NUMBER || '').trim();
-    const diagnosticTransactionType = String(
-      process.env.MPESA_TRANSACTION_TYPE ||
-      (diagnosticTill ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline')
-    ).trim();
+    const providerMessage = String(error.response?.data?.errorMessage || error.response?.data?.ResponseDescription || error.message || '');
     console.error('M-Pesa deposit initiation failed:', {
       code: providerCode || undefined,
       message: providerMessage,
-      environment: diagnosticEnvironment,
-      apiHost: diagnosticEnvironment === 'sandbox'
-        ? 'https://sandbox.safaricom.co.ke'
-        : diagnosticEnvironment === 'production'
-          ? 'https://api.safaricom.co.ke'
-          : 'invalid-environment',
-      shortcodeConfigured: Boolean(diagnosticShortcode),
-      shortcodeLastTwo: diagnosticShortcode ? diagnosticShortcode.slice(-2) : undefined,
-      tillConfigured: Boolean(diagnosticTill),
-      tillLastTwo: diagnosticTill ? diagnosticTill.slice(-2) : undefined,
-      transactionType: diagnosticTransactionType,
+      environment: String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase(),
+      shortcodeConfigured: Boolean(String(process.env.MPESA_SHORTCODE || '').trim()),
+      tillConfigured: Boolean(String(process.env.MPESA_TILL_NUMBER || '').trim()),
+      transactionType: String(process.env.MPESA_TRANSACTION_TYPE || '').trim() || undefined,
       providerResponse: error.response?.data || undefined,
     });
-
-    let message = 'Unable to start the M-Pesa deposit. Please verify the phone number and try again.';
-    if (/invalid transaction.?type/i.test(providerMessage)) {
-      message = 'M-Pesa configuration error: Safaricom rejected the configured transaction type. Confirm that MPESA_TRANSACTION_TYPE is supported for this Daraja app and that the shortcode, Till/PayBill setup, and credentials all belong to the selected environment. For sandbox testing, use the sandbox shortcode and passkey supplied in the Daraja test app; do not combine them with a live Till. No wallet funds were added.';
-    } else if (/invalid business shortcode/i.test(providerMessage)) {
-      message = 'M-Pesa configuration error: Safaricom rejected the business shortcode for this request. Confirm the shortcode and environment with the Daraja app configuration. No wallet funds were added.';
-    } else if (/invalid access token|unauthorized|invalid consumer key/i.test(providerMessage)) {
-      message = 'M-Pesa configuration error: Daraja credentials are not valid for the selected environment. Please contact support; no wallet funds were added.';
-    } else if (/passkey|password/i.test(providerMessage) && /invalid|incorrect|error/i.test(providerMessage)) {
-      message = 'M-Pesa configuration error: the STK passkey or shortcode is incorrect. Please contact support; no wallet funds were added.';
-    } else if (providerCode === '400.002.02') {
-      message = 'M-Pesa configuration error: Safaricom rejected the STK request (400.002.02). Check the exact provider message and verify the transaction type, shortcode, and environment together. No wallet funds were added.';
-    }
-
-    return res.status(502).json({ success: false, message });
+    return res.status(502).json({
+      success: false,
+      message: 'Unable to start the deposit. Check the transaction status before trying again.',
+      ...(transaction?._id ? { data: { transactionId: String(transaction._id), status: transaction.status || 'pending' } } : {}),
+    });
   }
 });
 
+/* Authenticated deposit status: a seller can only inspect their own deposit. */
 /* PayPal USD deposits: create a server-priced order, then credit only
    after the authenticated owner captures it and PayPal confirms USD amount/status. */
 router.post('/topup/paypal/create-order', protect, payoutRateLimit, async (req, res) => {
@@ -2267,7 +2188,7 @@ router.post('/topup/paypal/capture', protect, payoutRateLimit, async (req, res) 
           'usdWallet.transactions.$.updatedAt': now,
         },
       },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
     if (!updatedUser) {
       const latest = await User.findById(user._id);
@@ -2291,60 +2212,6 @@ router.post('/topup/paypal/capture', protect, payoutRateLimit, async (req, res) 
   }
 });
 
-/* Admin-only deposit lookup by the phone number used for M-Pesa STK payment.
-   Phone number is normalized server-side; no wallet is credited by this lookup. */
-router.get('/admin/topup/lookup', protect, adminOnly, requireVerified, async (req, res) => {
-  try {
-    const phone = normalizeKenyanPhone(req.query?.phone);
-    if (!phone) {
-      return res.status(400).json({ success: false, message: 'Enter a valid Kenyan M-Pesa phone number, e.g. 0712345678 or 254712345678.' });
-    }
-
-    const [platformWallet, matchingUsers] = await Promise.all([
-      AdminWallet.findOne({ key: 'platform' }).select('transactions'),
-      User.find({ 'wallet.transactions': { $elemMatch: { category: 'mpesa_topup', 'metadata.phone': phone } } })
-        .select('name email role wallet.transactions')
-        .limit(100),
-    ]);
-
-    const records = [];
-    for (const tx of platformWallet?.transactions || []) {
-      if (tx.category === 'mpesa_topup' && String(tx.metadata?.phone || '') === phone) {
-        records.push({
-          transactionId: String(tx._id), wallet: 'platform', amount: roundMoney(tx.amount),
-          status: tx.status || 'pending', reference: tx.reference || tx.metadata?.internalReference || '',
-          internalReference: tx.metadata?.internalReference || '', mpesaReceiptNumber: tx.metadata?.mpesaReceiptNumber || '',
-          accountDisplayName: tx.metadata?.accountDisplayName || 'Sylva Technologies',
-          createdAt: tx.createdAt || null, processedAt: tx.processedAt || null, description: tx.description || '',
-        });
-      }
-    }
-
-    for (const account of matchingUsers) {
-      for (const tx of account.wallet?.transactions || []) {
-        if (tx.category === 'mpesa_topup' && String(tx.metadata?.phone || '') === phone) {
-          records.push({
-            transactionId: String(tx._id), wallet: account.role || 'user',
-            accountName: account.name || account.email || 'Account wallet', amount: roundMoney(tx.amount),
-            status: tx.status || 'pending', reference: tx.reference || tx.metadata?.internalReference || '',
-            internalReference: tx.metadata?.internalReference || '', mpesaReceiptNumber: tx.metadata?.mpesaReceiptNumber || '',
-            accountDisplayName: tx.metadata?.accountDisplayName || '',
-            createdAt: tx.createdAt || null, processedAt: tx.processedAt || null, description: tx.description || '',
-          });
-        }
-      }
-    }
-
-    records.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-    return res.json({ success: true, data: { phoneLastFour: phone.slice(-4), count: records.length, transactions: records.slice(0, 50) } });
-  } catch (error) {
-    console.error('Admin M-Pesa deposit lookup failed:', error.message);
-    return res.status(500).json({ success: false, message: 'Unable to retrieve deposit references right now.' });
-  }
-});
-
-/* Read the signed-in user's own deposit status. This endpoint never credits funds;
-   only the Safaricom callback and server-side payment verification can do that. */
 router.get('/topup/status/:transactionId', protect, async (req, res) => {
   try {
     const { transactionId } = req.params;
@@ -2391,8 +2258,8 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
           if (terminalFailure) {
             const now = new Date();
             const ownerFilter = isAdmin
-              ? { _id: owner._id, transactions: { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } }
-              : { _id: owner._id, 'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } };
+              ? { _id: owner._id, transactions: mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } }) }
+              : { _id: owner._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } }) };
             const failedDescription = resultCode === '1032'
               ? 'M-Pesa deposit cancelled by the customer.'
               : resultCode === '1037'
@@ -2410,6 +2277,7 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
               return res.json({ success: true, data: {
                 transactionId: String(refreshedTx._id), status: refreshedTx.status,
                 amount: roundMoney(refreshedTx.amount), reference: refreshedTx.reference || '',
+                receipt: refreshedTx.metadata?.mpesaReceiptNumber || '',
                 description: refreshedTx.description || '', createdAt: refreshedTx.createdAt || null,
                 updatedAt: refreshedTx.updatedAt || null, processedAt: refreshedTx.processedAt || null,
                 reconciliationRequired: refreshedTx.metadata?.reconciliationRequired === true,
@@ -2428,6 +2296,7 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
       status: tx.status,
       amount: roundMoney(tx.amount),
       reference: tx.reference || '',
+      receipt: tx.metadata?.mpesaReceiptNumber || '',
       description: tx.description || '',
       createdAt: tx.createdAt || null,
       updatedAt: tx.updatedAt || null,
@@ -2454,8 +2323,8 @@ router.post('/topup/stk/callback', async (req, res) => {
       'metadata.checkoutRequestID': checkoutRequestID,
     };
     const [platformWallet, account] = await Promise.all([
-      AdminWallet.findOne({ key: 'platform', transactions: { $elemMatch: pendingQuery } }),
-      User.findOne({ 'wallet.transactions': { $elemMatch: pendingQuery } }),
+      AdminWallet.findOne({ key: 'platform', transactions: mongoose.trusted({ $elemMatch: pendingQuery }) }),
+      User.findOne({ 'wallet.transactions': mongoose.trusted({ $elemMatch: pendingQuery }) }),
     ]);
     const isPlatformDeposit = Boolean(platformWallet);
     const owner = isPlatformDeposit ? platformWallet : account;
@@ -2477,8 +2346,8 @@ router.post('/topup/stk/callback', async (req, res) => {
     if (!tx) return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
 
     const ownerFilter = isPlatformDeposit
-      ? { _id: platformWallet._id, 'transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } } }
-      : { _id: account._id, 'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } } };
+      ? { _id: platformWallet._id, 'transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } }) }
+      : { _id: account._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } }) };
 
     if (Number(callback.ResultCode) !== 0) {
       const failureUpdate = isPlatformDeposit
@@ -2564,10 +2433,156 @@ router.post('/topup/stk/callback', async (req, res) => {
         };
     const update = await (isPlatformDeposit ? AdminWallet : User).updateOne(ownerFilter, successUpdate);
     if (!update.modifiedCount) return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
+
+    // Send a receipt only after the verified callback has actually credited the wallet.
+    // Email failure must not cause Safaricom to retry and risk duplicate processing.
+    try {
+      const recipientUserId = isPlatformDeposit
+        ? tx.metadata?.initiatedBy
+        : account._id;
+      const recipient = recipientUserId ? await User.findById(recipientUserId).select('name email role') : null;
+      if (recipient?.email) {
+        const accountName = isPlatformDeposit ? 'Admin platform wallet' : `${recipient.role || 'user'} wallet`;
+        const result = await sendMail({
+          to: recipient.email,
+          subject: `Sylva wallet deposit confirmed - KSh ${paidAmount}`,
+          sender: 'payment',
+          text: `Hello ${recipient.name || 'there'}, your KSh ${paidAmount} wallet deposit has been verified by Safaricom and credited to your ${accountName}. M-Pesa receipt: ${receipt}. Reference: ${tx.reference || tx.metadata?.internalReference || 'N/A'}. Your updated wallet balance is available in your Sylva account.`,
+          html: `<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:24px;color:#172033"><h2 style="color:#16803c">Wallet deposit confirmed</h2><p>Hello ${String(recipient.name || 'there').replace(/[&<>"]/g, '')},</p><p>Your M-Pesa payment has been verified and credited to your Sylva Technologies wallet.</p><p><strong>Amount:</strong> KSh ${paidAmount.toLocaleString('en-KE')}<br/><strong>M-Pesa receipt:</strong> ${receipt}<br/><strong>Reference:</strong> ${String(tx.reference || tx.metadata?.internalReference || 'N/A').replace(/[&<>"]/g, '')}</p><p>Sign in to Sylva Technologies to view your updated wallet balance and transaction history.</p><p>Sylva Technologies<br/>Empowering Your Digital Life</p></div>`,
+        });
+        if (!result?.success) console.error('Wallet deposit confirmation email was not sent:', result?.message || 'Unknown email error');
+      } else {
+        console.warn('Wallet deposit confirmed, but no recipient email was found.', { checkoutRequestID });
+      }
+    } catch (emailError) {
+      console.error('Wallet deposit confirmation email failed:', emailError.message);
+    }
+    console.info('M-Pesa wallet deposit credited after verification.', {
+      checkoutRequestID,
+      walletType: isPlatformDeposit ? 'platform' : 'user',
+      amount: paidAmount,
+      receipt,
+    });
     return res.json({ ResultCode: 0, ResultDesc: 'Deposit confirmed.' });
   } catch (error) {
     console.error('M-Pesa wallet callback error:', error.message);
     return res.status(500).json({ ResultCode: 1, ResultDesc: 'Callback processing failed.' });
+  }
+});
+
+
+/* Admin order-payment ledger: paid sales, estimated unsettled earnings and delivered seller net, per seller. */
+router.get('/admin/order-payments', protect, adminOnly, requireVerified, async (req, res) => {
+  try {
+    const sellers = await User.find({ role: 'seller' }).select('name email sellerStatus sellerProfile.storeName sellerProfile.country wallet.transactions usdWallet.transactions').lean();
+    const sellerById = new Map(sellers.map((seller) => [String(seller._id), {
+      _id: String(seller._id), name: seller.name || '', email: seller.email || '', storeName: seller.sellerProfile?.storeName || '',
+      country: seller.sellerProfile?.country || 'KE', sellerStatus: seller.sellerStatus || 'pending', paidOrders: 0, deliveredOrders: 0,
+      paidItemValueKES: 0, estimatedNetAwaitingSettlementKES: 0, deliveredNetKES: 0, creditedNetKES: 0, creditedNetUSD: 0,
+    }]));
+    const orders = await Order.find(mongoose.trusted({ paymentStatus: 'Paid', status: mongoose.trusted({ $ne: 'Cancelled' }) }))
+      .select('orderNumber status paymentStatus items createdAt')
+      .sort({ createdAt: -1 }).lean();
+
+    // Resolve product ownership in a separate query rather than nested population.
+    // This is resilient to deleted products and avoids nested-populate edge cases.
+    const productIds = [...new Set(orders.flatMap((order) => (order.items || [])
+      .map((item) => item.product ? String(item.product) : '')
+      .filter(Boolean)))];
+    const products = productIds.length
+      ? await Product.find(mongoose.trusted({ _id: mongoose.trusted({ $in: productIds }) }))
+          .select('_id seller').lean()
+      : [];
+    const sellerByProductId = new Map(products.map((product) => [
+      String(product._id),
+      product.seller ? String(product.seller) : '',
+    ]));
+    const transactionsBySeller = new Map(sellers.map((seller) => [String(seller._id), {
+      kes: Array.isArray(seller.wallet?.transactions) ? seller.wallet.transactions : [],
+      usd: Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [],
+    }]));
+    const configuredRate = Number(process.env.SELLER_COMMISSION_RATE ?? 0.04);
+    const commissionRate = Number.isFinite(configuredRate) && configuredRate >= 0 && configuredRate <= 1
+      ? configuredRate : configuredRate > 1 && configuredRate <= 100 ? configuredRate / 100 : 0.04;
+    for (const order of orders) {
+      const reference = 'order:' + String(order.orderNumber || '');
+      const delivered = String(order.status || '').toLowerCase() === 'delivered';
+      const sellerItemsById = new Map();
+      for (const item of order.items || []) {
+        const key = item.product ? sellerByProductId.get(String(item.product)) : '';
+        if (!key) continue;
+        if (!sellerById.has(key)) continue;
+        const list = sellerItemsById.get(key) || []; list.push(item); sellerItemsById.set(key, list);
+      }
+      for (const [sellerId, items] of sellerItemsById) {
+        const row = sellerById.get(sellerId);
+        const gross = roundMoney(items.reduce((sum, item) => sum + Number(item.subtotal || (Number(item.unitPrice || 0) * Number(item.quantity || 1))), 0));
+        const net = roundMoney(gross * (1 - commissionRate));
+        const transactions = transactionsBySeller.get(sellerId) || { kes: [], usd: [] };
+        const creditedKES = transactions.kes.find((tx) => tx?.reference === reference && tx?.category === 'order_settlement');
+        const creditedUSD = transactions.usd.find((tx) => tx?.reference === reference && tx?.category === 'order_settlement');
+        row.paidOrders += 1; row.paidItemValueKES = roundMoney(row.paidItemValueKES + gross);
+        if (delivered) { row.deliveredOrders += 1; row.deliveredNetKES = roundMoney(row.deliveredNetKES + net); }
+        if (creditedKES) row.creditedNetKES = roundMoney(row.creditedNetKES + Number(creditedKES.amount || 0));
+        if (creditedUSD) row.creditedNetUSD = roundMoney(row.creditedNetUSD + Number(creditedUSD.amount || 0));
+        if (!creditedKES && !creditedUSD && !delivered) row.estimatedNetAwaitingSettlementKES = roundMoney(row.estimatedNetAwaitingSettlementKES + net);
+      }
+    }
+    const data = [...sellerById.values()].sort((a, b) => b.paidItemValueKES - a.paidItemValueKES);
+    const totals = data.reduce((acc, seller) => {
+      for (const key of ['paidItemValueKES', 'estimatedNetAwaitingSettlementKES', 'deliveredNetKES', 'creditedNetKES', 'creditedNetUSD']) acc[key] = roundMoney(acc[key] + seller[key]);
+      return acc;
+    }, { paidItemValueKES: 0, estimatedNetAwaitingSettlementKES: 0, deliveredNetKES: 0, creditedNetKES: 0, creditedNetUSD: 0 });
+    return res.json({ success: true, count: data.length, totals, data });
+  } catch (error) {
+    console.error('Admin order payments error:', error.stack || error.message);
+    return res.status(500).json({ success: false, message: 'Unable to load seller order-payment figures.' });
+  }
+});
+
+
+/* Admin-only per-seller balances so finance can see amounts currently payable. */
+router.get('/admin/seller-balances', protect, adminOnly, requireVerified, async (req, res) => {
+  try {
+    const sellers = await User.find({ role: 'seller' })
+      .select('name email phone sellerStatus storeStatus sellerProfile.storeName sellerProfile.country wallet.availableBalance wallet.pendingBalance wallet.transactions usdWallet.availableBalance usdWallet.pendingBalance usdWallet.transactions')
+      .lean();
+
+    const data = sellers.map((seller) => {
+      const kesTransactions = Array.isArray(seller.wallet?.transactions) ? seller.wallet.transactions : [];
+      const usdTransactions = Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [];
+      const pendingKesPayout = kesTransactions.find((tx) => tx.category === 'payout_request' && tx.status === 'pending');
+      const pendingUsdPayout = usdTransactions.find((tx) => tx.category === 'payout_request' && tx.status === 'pending');
+      return {
+        _id: String(seller._id),
+        name: seller.name || '',
+        email: seller.email || '',
+        phone: seller.phone || '',
+        storeName: seller.sellerProfile?.storeName || '',
+        country: seller.sellerProfile?.country || 'KE',
+        sellerStatus: seller.sellerStatus || 'pending',
+        storeStatus: seller.storeStatus || 'inactive',
+        kesAvailable: roundMoney(seller.wallet?.availableBalance || 0),
+        kesPending: roundMoney(seller.wallet?.pendingBalance || 0),
+        usdAvailable: roundMoney(seller.usdWallet?.availableBalance || 0),
+        usdPending: roundMoney(seller.usdWallet?.pendingBalance || 0),
+        pendingKesPayout: pendingKesPayout ? {
+          amount: roundMoney(pendingKesPayout.amount || 0),
+          reference: pendingKesPayout.reference || '',
+          createdAt: pendingKesPayout.createdAt || null,
+        } : null,
+        pendingUsdPayout: pendingUsdPayout ? {
+          amount: roundMoney(pendingUsdPayout.amount || 0),
+          reference: pendingUsdPayout.reference || '',
+          createdAt: pendingUsdPayout.createdAt || null,
+        } : null,
+      };
+    });
+
+    return res.json({ success: true, count: data.length, data });
+  } catch (error) {
+    console.error('Admin seller balance list error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to load seller payable balances.' });
   }
 });
 
@@ -2593,24 +2608,15 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
       } },
     ]);
     const pendingPayouts = await User.countDocuments({
+      role: mongoose.trusted({ $in: ['seller', 'customer'] }),
       $or: [
-        {
-          role: 'seller',
-          'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
-        },
-        {
-          role: 'customer',
-          'wallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
-        },
-        {
-          role: 'seller',
-          'usdWallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
-        },
+        { 'wallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
+        { 'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }) },
       ],
     });
     const pendingUsdPayouts = await User.countDocuments({
       role: 'seller',
-      'usdWallet.transactions': { $elemMatch: { category: 'payout_request', status: 'pending' } },
+      'usdWallet.transactions': mongoose.trusted({ $elemMatch: { category: 'payout_request', status: 'pending' } }),
     });
     const requiredMpesaSettings = [
       'MPESA_CONSUMER_KEY',
@@ -2653,7 +2659,7 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
         missing: missingMpesaSettings,
         environment: String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase(),
         callbackPath: '/api/wallet/topup/stk/callback',
-        expectedCallbackUrl: 'https://sylva-technologies-backend.onrender.com/api/wallet/topup/stk/callback',
+        expectedCallbackUrl: 'https://api.sylvatechnologies.co.ke/api/wallet/topup/stk/callback',
       },
       note: 'Customer and seller wallet balances are separate account-holder liabilities, not Sylva Technologies company funds.',
     } });

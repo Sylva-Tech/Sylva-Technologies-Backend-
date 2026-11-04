@@ -15,8 +15,10 @@ const supportInboxRoutes = require('./routes/supportInboxRoutes');
 const mailboxRoutes = require('./routes/mailboxRoutes');
 const advertisementRoutes = require('./routes/advertisementRoutes');
 const flipAdvertisementRoutes = require('./routes/flipAdvertisementRoutes');
+const movingBarRoutes = require('./routes/movingBarRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const walletRoutes = require('./routes/walletRoutes');
+const sponsorshipRoutes = require('./routes/sponsorshipRoutes');
 const adminWalletRoutes = require('./routes/adminWalletRoutes');
 const sellerManagementRoutes = require('./routes/sellerManagementRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
@@ -399,10 +401,13 @@ app.use('/api/mailbox', mailboxRoutes);
 app.use('/api/advertisements', advertisementRoutes);
 
 app.use('/api/flip-advertisements', flipAdvertisementRoutes);
+app.use('/api/moving-bar', movingBarRoutes);
 
 app.use('/api/admin', adminRoutes);
 
 app.use('/api/wallet', walletRoutes);
+
+app.use('/api/sponsorship', sponsorshipRoutes);
 
 app.use('/api/admin-wallet', adminWalletRoutes);
 

@@ -74,6 +74,36 @@ const getFromEmail = (type = 'verification') => {
 };
 
 // ============================================================
+// CUSTOMER CARE FOOTER — APPLY TO EVERY OUTGOING EMAIL
+// ============================================================
+
+const CUSTOMER_CARE_PHONE = '0700932014';
+
+const appendCustomerCareHtml = (html = '') => {
+  const content = String(html || '');
+  if (content.includes(CUSTOMER_CARE_PHONE)) return content;
+
+  const footer = `
+    <div style="margin:24px auto 0;padding:16px 20px;max-width:640px;border-top:1px solid #e5e7eb;background:#f8fafc;color:#475569;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;text-align:center;">
+      <strong style="color:#166534;">Sylva Technologies Customer Care</strong><br>
+      Need help with this email or your order? Call
+      <a href="tel:0700932014" style="color:#166534;font-weight:bold;text-decoration:none;">0700932014</a>.
+    </div>
+  `;
+
+  if (/<\/body\s*>/i.test(content)) {
+    return content.replace(/<\/body\s*>/i, footer + '</body>');
+  }
+  return content + footer;
+};
+
+const appendCustomerCareText = (text = '') => {
+  const content = String(text || '');
+  if (content.includes(CUSTOMER_CARE_PHONE)) return content;
+  return content + '\n\nSylva Technologies Customer Care: 0700932014';
+};
+
+// ============================================================
 // GENERIC SEND MAIL FUNCTION
 // ============================================================
 
@@ -133,8 +163,8 @@ const sendMail = async ({
             }
           : {}),
         subject,
-        html,
-        text,
+        html: appendCustomerCareHtml(html),
+        text: appendCustomerCareText(text),
       });
 
     if (error) {
@@ -904,7 +934,7 @@ const sendAdminOrderNotificationEmail =
         process.env.SALES_EMAIL ||
         'sales@sylvatechnologies.co.ke',
       subject:
-        `New order received - ${order.orderNumber}`,
+        `${order.paymentStatus === 'Paid' ? 'Payment received - order' : 'New order received'} ${order.orderNumber}`,
       html,
       text:
         `A new order ${order.orderNumber} has been placed by ${customer.name}. Tracking code: ${order.trackingCode || order.orderNumber}. Payment: ${order.paymentMethod}. Delivery: ${order.customerDetails?.deliveryLocation || order.customerDetails?.address || 'N/A'}.`,
@@ -924,22 +954,45 @@ const sendOrderStatusUpdateEmail = async ({
   customerName,
   orderNumber,
   status,
+  deliveryConfirmationLink = '',
 }) => {
-  const html =
-    orderStatusUpdateTemplate({
-      customerName,
-      orderNumber,
-      status,
-    });
-
+  const safeName = String(customerName || 'Customer').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const baseHtml = orderStatusUpdateTemplate({ customerName: safeName, orderNumber, status });
+  const safeOrderNumber = String(orderNumber || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeStatus = String(status || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeLink = String(deliveryConfirmationLink || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Build a complete email document rather than appending a fragment to another
+  // template; this prevents mail clients from displaying an empty message when
+  // the base template is transformed or lacks a closing body tag.
+  const html = deliveryConfirmationLink
+    ? '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sylva delivery confirmation</title></head><body style="margin:0;background:#f3f7f4;font-family:Arial,sans-serif;color:#17211b"><main style="max-width:640px;margin:24px auto;background:#fff;border:1px solid #d7e7dc;border-radius:12px;overflow:hidden"><header style="background:#166534;padding:24px;color:#fff"><h1 style="margin:0;font-size:24px">Sylva Technologies</h1><p style="margin:6px 0 0">Empowering Your Digital Life</p></header><section style="padding:24px"><p>Hello ' + safeName + ',</p><h2 style="color:#166534">Review and confirm your delivery</h2><p>Your order <strong>' + safeOrderNumber + '</strong> is marked <strong>' + safeStatus + '</strong>.</p><p>When you have physically received the product, open your secure delivery note, review the items and delivery details, enter your full name and ID/passport number, draw your signature, and submit the receipt confirmation.</p><p style="text-align:center;margin:28px 0"><a href="' + safeLink + '" style="display:inline-block;background:#166534;color:#fff;text-decoration:none;padding:14px 22px;border-radius:8px;font-weight:bold">Open Secure Delivery Form</a></p><p>If the button does not open, copy and paste this secure link into your browser:</p><p style="overflow-wrap:anywhere"><a href="' + safeLink + '" style="color:#166534">' + safeLink + '</a></p><p style="font-size:13px;color:#52645a">Do not confirm receipt until you physically have the order. If you did not receive it or the items are missing, damaged or incorrect, contact support@sylvatechnologies.co.ke or call 0700 932 014.</p></section><footer style="padding:16px 24px;background:#f7faf8;border-top:1px solid #e5eee8;font-size:12px;color:#64746a">Sylva Technologies · Customer Care: 0700 932 014<br>© 2026 Sylva Technologies. All rights reserved.</footer></main></body></html>'
+    : baseHtml;
+  const text = 'Hello ' + String(customerName || 'Customer') + ', your Sylva Technologies order ' + orderNumber + ' status is now ' + status + '.' +
+    (deliveryConfirmationLink ? '\n\nWhen you physically receive the product, open this secure delivery form: ' + deliveryConfirmationLink + '\nDo not confirm before receiving the product.' : '');
   return sendMail({
     to,
-    subject:
-      `Order status update - ${orderNumber}`,
+    subject: 'Order status update - ' + orderNumber,
     html,
-    text:
-      `Hello ${customerName}, your Sylva Technologies order ${orderNumber} status is now ${status}.`,
+    text,
     sender: 'orders',
+  });
+};
+
+// ============================================================
+// SALES / OPERATIONS NOTIFICATION
+// ============================================================
+
+/**
+ * Send a business event notification to the Sylva sales inbox.
+ * This is separate from customer receipts and account-security email.
+ */
+const sendSalesNotificationEmail = async ({ subject, html, text }) => {
+  return sendMail({
+    to: 'sales@sylvatechnologies.co.ke',
+    subject,
+    html,
+    text,
+    sender: 'sales',
   });
 };
 
@@ -949,6 +1002,7 @@ const sendOrderStatusUpdateEmail = async ({
 
 module.exports = {
   sendMail,
+  sendSalesNotificationEmail,
 
   // Account verification
   sendVerificationEmail,

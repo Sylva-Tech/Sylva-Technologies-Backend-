@@ -248,7 +248,7 @@ router.post('/drafts', protect, adminOnly, async (req, res) => {
       draft = await MailboxMessage.findOneAndUpdate(
         { _id: req.body.id, direction: 'outbound', folder: 'drafts' },
         { $set: values },
-        { new: true, runValidators: true }
+        { returnDocument: 'after', runValidators: true }
       ).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion');
       if (!draft) return res.status(404).json({ success: false, message: 'Draft not found.' });
     } else {
@@ -484,7 +484,7 @@ router.patch('/:id/folder', protect, adminOnly, async (req, res) => {
   try {
     const folder = String(req.body?.folder || '');
     if (!['inbox', 'sent', 'drafts', 'archive', 'trash'].includes(folder)) return res.status(400).json({ success: false, message: 'Invalid mailbox folder.' });
-    const message = await MailboxMessage.findByIdAndUpdate(req.params.id, { $set: { folder } }, { new: true, runValidators: true });
+    const message = await MailboxMessage.findByIdAndUpdate(req.params.id, { $set: { folder } }, { returnDocument: 'after', runValidators: true });
     if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
     return res.json({ success: true, message });
   } catch (e) {
