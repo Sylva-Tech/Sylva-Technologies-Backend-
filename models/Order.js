@@ -219,8 +219,6 @@ const orderSchema = new mongoose.Schema(
     'M-Pesa',
     'PayPal',
     'WhatsApp Order',
-    'Paystack',
-    'Card',
     'Wallet',
   ],
   default: 'Cash on Delivery',
@@ -250,6 +248,24 @@ const orderSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: '',
+    },
+
+    paymentCurrency: {
+      type: String,
+      enum: ['KES', 'USD'],
+      default: 'KES',
+    },
+
+    paymentAmount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    paymentExchangeRate: {
+      type: Number,
+      min: 0,
+      default: 0,
     },
 
     paidAt: {

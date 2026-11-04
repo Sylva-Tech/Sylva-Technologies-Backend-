@@ -10,12 +10,6 @@ const AdminWallet = require('../models/AdminWallet');
 const { getQuote: getShippingQuote } = require('./shippingRoutes');
 
 const {
-  initializeTransaction,
-  verifyTransaction,
-  refundTransaction,
-} = require('../services/paystackService');
-
-const {
 
   protect,
   adminOnly,
@@ -45,6 +39,33 @@ const getMpesaEnvironment = () => {
 const getMpesaHost = () => getMpesaEnvironment() === 'sandbox'
   ? 'https://sandbox.safaricom.co.ke'
   : 'https://api.safaricom.co.ke';
+
+const getPayPalApiBase = () => (
+  String(process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'sandbox').trim().toLowerCase() === 'live'
+    ? 'https://api-m.paypal.com'
+    : 'https://api-m.sandbox.paypal.com'
+);
+
+const getPayPalAccessToken = async () => {
+  const clientId = String(process.env.PAYPAL_CLIENT_ID || '').trim();
+  const clientSecret = String(process.env.PAYPAL_CLIENT_SECRET || '').trim();
+  if (!clientId || !clientSecret) {
+    const error = new Error('PayPal checkout is not configured. Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET.');
+    error.statusCode = 503;
+    throw error;
+  }
+  const response = await axios.post(
+    getPayPalApiBase() + '/v1/oauth2/token',
+    'grant_type=client_credentials',
+    {
+      auth: { username: clientId, password: clientSecret },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 15000,
+    }
+  );
+  if (!response.data?.access_token) throw new Error('PayPal did not return an access token.');
+  return response.data.access_token;
+};
 
 
 const ORDER_STATUSES = [
@@ -239,7 +260,7 @@ const applySellerSettlement = async (order) => {
       seller.usdWallet = usdWallet;
     } else {
       const wallet = seller.wallet || {
-        currency: 'KES', availableBalance: 0, pendingBalance: 0, transactions: [],
+        currency: String(order.paymentCurrency || 'USD').toUpperCase(), availableBalance: 0, pendingBalance: 0, transactions: [],
       };
       wallet.currency = wallet.currency || 'KES';
       wallet.transactions = Array.isArray(wallet.transactions) ? wallet.transactions : [];
@@ -288,8 +309,8 @@ const applySellerSettlement = async (order) => {
 };
 
 
-// Track seller-owned M-Pesa proceeds as held platform funds until the customer confirms delivery.
-// This is an internal ledger hold; the actual M-Pesa collection remains in the configured business Till.
+// Track seller-owned M-Pesa and PayPal proceeds as held platform funds until the customer confirms delivery.
+// This is an internal ledger hold; the external payment remains in the configured provider merchant account.
 const getSellerOrderGrossAmounts = async (order) => {
   const productIds = [...new Set((order?.items || []).map((item) => item?.product ? String(item.product._id || item.product) : '').filter(Boolean))];
   if (!productIds.length) return [];
@@ -321,7 +342,7 @@ const sellerEscrowReference = (order, sellerId) => 'seller-escrow:order:' + Stri
 const sellerEscrowReleaseReference = (order, sellerId) => 'seller-escrow-release:order:' + String(order.orderNumber) + ':' + String(sellerId);
 
 const holdSellerProceedsInPlatformWallet = async (order) => {
-  if (!order || order.paymentMethod !== 'M-Pesa' || order.paymentStatus !== 'Paid') {
+  if (!order || !['M-Pesa', 'PayPal'].includes(order.paymentMethod) || order.paymentStatus !== 'Paid') {
     return { held: 0, expected: 0, skipped: true };
   }
   const sellerAmounts = await getSellerOrderGrossAmounts(order);
@@ -368,7 +389,7 @@ const holdSellerProceedsInPlatformWallet = async (order) => {
               grossAmount: seller.grossAmount,
               commissionRate: Number(process.env.PLATFORM_COMMISSION_RATE ?? 0.04),
               releaseCondition: 'Customer confirms delivery',
-              paymentMethod: 'M-Pesa',
+              paymentMethod: order.paymentMethod,
             },
             createdAt: now,
             updatedAt: now,
@@ -387,14 +408,14 @@ const holdSellerProceedsInPlatformWallet = async (order) => {
         held += 1;
         continue;
       }
-      throw new Error('Unable to reserve M-Pesa proceeds for seller ' + seller.sellerId + ' on order ' + order.orderNumber + '.');
+      throw new Error('Unable to reserve seller proceeds for seller ' + seller.sellerId + ' on order ' + order.orderNumber + '.');
     }
   }
   return { held, expected: sellerAmounts.length, complete: held === sellerAmounts.length };
 };
 
 const releaseSellerProceedsFromPlatformWallet = async (order) => {
-  if (!order || order.paymentMethod !== 'M-Pesa') return { released: 0, expected: 0, skipped: true };
+  if (!order || !['M-Pesa', 'PayPal'].includes(order.paymentMethod)) return { released: 0, expected: 0, skipped: true };
   const sellerAmounts = await getSellerOrderGrossAmounts(order);
   if (!sellerAmounts.length) return { released: 0, expected: 0, complete: true };
   let platform = await AdminWallet.findOne({ key: 'platform' });
@@ -439,7 +460,7 @@ const releaseSellerProceedsFromPlatformWallet = async (order) => {
             description: 'Release held seller proceeds after confirmed delivery for order ' + order.orderNumber + '.',
             reference: releaseReference,
             relatedUser: seller.sellerId,
-            metadata: { orderId: String(order._id), orderNumber: order.orderNumber, sellerId: seller.sellerId, storeName: seller.storeName, grossAmount: seller.grossAmount, paymentMethod: 'M-Pesa' },
+            metadata: { orderId: String(order._id), orderNumber: order.orderNumber, sellerId: seller.sellerId, storeName: seller.storeName, grossAmount: seller.grossAmount, paymentMethod: order.paymentMethod },
             createdAt: now,
             updatedAt: now,
             processedAt: now,
@@ -680,44 +701,33 @@ const sendSellerOrderEmails = async (order, event = 'new_order', previousStatus 
 
 const validateSuccessfulTransaction = (transaction, order) => {
   if (!transaction || transaction.status !== 'success') {
-    throw new Error('Paystack has not confirmed a successful payment.');
+    throw new Error('PayPal has not confirmed a successful payment.');
   }
-
-  if (String(transaction.reference || '') !== String(order.paymentReference || order.orderNumber)) {
-    throw new Error('Payment reference does not match this order.');
+  if (String(transaction.reference || '') !== String(order.paymentReference || '')) {
+    throw new Error('PayPal order reference does not match this Sylva order.');
   }
-
-  const expectedMinorAmount = Math.round(Number(order.total || 0) * 100);
+  const expectedCurrency = String(order.paymentCurrency || 'KES').toUpperCase();
+  const expectedAmount = Number(order.paymentAmount || order.total || 0);
+  const expectedMinorAmount = Math.round(expectedAmount * 100);
   if (Number(transaction.amount) !== expectedMinorAmount) {
-    throw new Error('The verified payment amount does not match the order total.');
+    throw new Error('The verified PayPal amount does not match the order payment amount.');
   }
-
-  if (String(transaction.currency || '').toUpperCase() !== 'KES') {
-    throw new Error('The verified payment currency does not match KES.');
+  if (String(transaction.currency || '').toUpperCase() !== expectedCurrency) {
+    throw new Error('The verified PayPal currency does not match the order payment currency.');
   }
 };
 
 const confirmPaidOrder = async (order, transaction) => {
   validateSuccessfulTransaction(transaction, order);
 
-  // A late Paystack success after cancellation must be refunded, not settled to a seller.
-  if (order.status === 'Cancelled' && ['Refund Pending', 'Refund Processing', 'Refund Failed', 'Refunded'].includes(order.paymentStatus)) {
-    return order;
-  }
-
+  // A captured PayPal payment for an already-cancelled order must never be
+  // silently settled. Flag it for administrator-assisted refund/reconciliation.
   if (order.status === 'Cancelled') {
-    const refund = await refundTransaction({
-      reference: order.paymentReference || order.orderNumber,
-      amount: order.total,
-      customerNote: 'Payment completed after the order was cancelled.',
-    });
-    if (!refund?.status) {
-      throw new Error('Payment arrived after cancellation, but Paystack did not accept the automatic refund. Please contact support.');
+    if (!['Refund Pending', 'Refund Processing', 'Refund Failed', 'Refunded'].includes(order.paymentStatus)) {
+      order.paymentStatus = 'Refund Pending';
+      order.refundReference = 'MANUAL-PAYPAL-REFUND:' + String(order.paymentReference || order.orderNumber);
+      await order.save();
     }
-    order.paymentStatus = 'Refund Pending';
-    order.paidAt = order.paidAt || new Date();
-    order.refundReference = String(refund.data?.id || refund.data?.reference || '');
-    await order.save();
     return order;
   }
 
@@ -736,27 +746,22 @@ const confirmPaidOrder = async (order, transaction) => {
       },
       { returnDocument: 'after' }
     );
-
     if (updated) {
       newlyConfirmed = true;
       order = updated;
     } else {
       order = await Order.findById(order._id);
-      if (
-        order &&
-        order.status === 'Cancelled' &&
-        !['Refund Pending', 'Refund Processing', 'Refund Failed', 'Refunded'].includes(order.paymentStatus)
-      ) {
+      if (order && order.status === 'Cancelled') {
         return confirmPaidOrder(order, transaction);
       }
     }
   }
-
-  // Seller funds remain unsettled until fulfillment reaches Delivered.
-  if (newlyConfirmed && order.paymentStatus === 'Paid') {
-    await sendPaidOrderEmails(order);
+  if (order.paymentStatus === 'Paid') {
+    // Idempotently ensure seller proceeds are held even if a prior notification or
+    // callback failed after payment was marked paid.
+    await holdSellerProceedsInPlatformWallet(order);
+    if (newlyConfirmed) await sendPaidOrderEmails(order);
   }
-
   return order;
 };
 
@@ -1669,10 +1674,10 @@ const createOrderFromRequest = async ({
       });
     }
 
-    if (!['Paystack', 'Card', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
+    if (!['PayPal', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
       return res.status(400).json({
         success: false,
-        message: 'Choose Wallet, M-Pesa, Paystack, or Visa/Mastercard to pay for your order.',
+        message: 'Choose PayPal, M-Pesa, or Sylva Wallet to pay for your order.',
       });
     }
 
@@ -2107,11 +2112,11 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
 
         /*
 |--------------------------------------------------------------------------
-| INITIALIZE PAYSTACK PAYMENT
+| INITIALIZE PAYPAL PAYMENT
 |--------------------------------------------------------------------------
 */
 
-let paystackPayment = null;
+let paypalPayment = null;
 let mpesaPayment = null;
 
 if (paymentMethod === 'M-Pesa') {
@@ -2213,120 +2218,70 @@ if (paymentMethod === 'M-Pesa') {
   }
 }
 
-if (['Paystack', 'Card'].includes(paymentMethod)) {
+if (paymentMethod === 'PayPal') {
   try {
-    const paystackReference = order.orderNumber;
-
-    const frontendBaseUrl = (
-      process.env.FRONTEND_URL ||
-      process.env.CLIENT_URL ||
-      (process.env.NODE_ENV === 'production'
-        ? 'https://www.sylvatechnologies.co.ke'
-        : 'http://localhost:5173')
-    )
-      .split(',')[0]
-      .trim()
-      .replace(/\/$/, '');
-
-    const callbackUrl =
-      `${frontendBaseUrl}/payment/callback?reference=${encodeURIComponent(
-        paystackReference
-      )}`;
-
-    const paystackResponse =
-      await initializeTransaction({
-        email: customerEmail,
-        amount: orderTotal,
-        reference: paystackReference,
-        callbackUrl,
-        channels: paymentMethod === 'Card' ? ['card'] : undefined,
-        metadata: {
-          paymentMethod,
-          orderId: order._id.toString(),
-          orderNumber: order.orderNumber,
-          trackingCode:
-            order.trackingCode ||
-            order.orderNumber,
-          customerName:
-            customerDetails.fullName,
-          customerPhone:
-            customerDetails.phone,
-        },
-      });
-
-    if (
-      !paystackResponse ||
-      !paystackResponse.status ||
-      !paystackResponse.data?.authorization_url
-    ) {
-      throw new Error(
-        paystackResponse?.message ||
-          'Paystack did not return a payment authorization URL.'
-      );
+    const frontendBaseUrl = String(
+      process.env.FRONTEND_URL || process.env.CLIENT_URL ||
+      (process.env.NODE_ENV === 'production' ? 'https://www.sylvatechnologies.co.ke' : 'http://localhost:5173')
+    ).split(',')[0].trim().replace(/\/$/, '');
+    const kesPerUsd = Number(process.env.PAYPAL_KES_PER_USD || process.env.WALLET_KES_PER_USD);
+    if (!Number.isFinite(kesPerUsd) || kesPerUsd <= 0) {
+      const error = new Error('PayPal checkout requires PAYPAL_KES_PER_USD to be configured by the finance administrator.');
+      error.statusCode = 503;
+      throw error;
     }
-
-    order.paymentReference =
-      paystackResponse.data.reference ||
-      paystackReference;
-
+    const paypalAmount = Number((Number(orderTotal) / kesPerUsd).toFixed(2));
+    if (!Number.isFinite(paypalAmount) || paypalAmount <= 0) throw new Error('The converted PayPal payment amount is invalid.');
+    const accessToken = await getPayPalAccessToken();
+    const paypalResponse = await axios.post(
+      getPayPalApiBase() + '/v2/checkout/orders',
+      {
+        intent: 'CAPTURE',
+        purchase_units: [{
+          reference_id: String(order._id),
+          custom_id: String(order._id),
+          invoice_id: String(order.orderNumber).slice(0, 127),
+          description: 'Sylva Technologies order ' + order.orderNumber,
+          amount: { currency_code: 'USD', value: paypalAmount.toFixed(2) },
+        }],
+        application_context: {
+          brand_name: 'Sylva Technologies',
+          user_action: 'PAY_NOW',
+          shipping_preference: 'NO_SHIPPING',
+          return_url: frontendBaseUrl + '/payment/callback',
+          cancel_url: frontendBaseUrl + '/payment/callback?cancelled=1',
+        },
+      },
+      {
+        headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+        timeout: 20000,
+      }
+    );
+    const paypalOrder = paypalResponse.data;
+    const approvalUrl = (paypalOrder.links || []).find((link) => link.rel === 'approve')?.href;
+    if (!paypalOrder?.id || !approvalUrl || paypalOrder.status !== 'CREATED') {
+      throw new Error('PayPal did not return a valid approval link for this order.');
+    }
+    order.paymentReference = paypalOrder.id;
+    order.paymentCurrency = 'USD';
+    order.paymentAmount = paypalAmount;
+    order.paymentExchangeRate = kesPerUsd;
     await order.save();
-
-    populatedOrder.paymentReference =
-      order.paymentReference;
-
-    paystackPayment = {
-      authorization_url:
-        paystackResponse.data.authorization_url,
-
-      access_code:
-        paystackResponse.data.access_code,
-
-      reference:
-        paystackResponse.data.reference ||
-        paystackReference,
-    };
-
-    console.info(
-      'Paystack payment initialized:',
-      order.orderNumber
-    );
-  } catch (paystackError) {
-    console.error(
-      'Paystack initialization error:',
-      paystackError.response?.data ||
-        paystackError.message
-    );
-
-    /*
-    |--------------------------------------------------------------------------
-    | RESTORE STOCK IF PAYSTACK INITIALIZATION FAILS
-    |--------------------------------------------------------------------------
-    */
-
+    populatedOrder.paymentReference = paypalOrder.id;
+    paypalPayment = { orderId: paypalOrder.id, approvalUrl };
+  } catch (paypalError) {
+    console.error('PayPal order initialization failed:', paypalError.response?.data || paypalError.message);
     try {
       for (const item of preparedItems) {
-        await Product.updateOne(
-          { _id: item.product },
-          {
-            $inc: {
-              stock: item.quantity,
-            },
-          }
-        );
+        await Product.updateOne({ _id: item.product }, { $inc: { stock: item.quantity } });
       }
-
       await Order.findByIdAndDelete(order._id);
     } catch (rollbackError) {
-      console.error(
-        'Paystack rollback error:',
-        rollbackError
-      );
+      console.error('PayPal order rollback error:', rollbackError.message);
     }
-
     return res.status(502).json({
       success: false,
-      message:
-        'Unable to initialize Paystack payment. Please try again.',
+      message: paypalError.statusCode === 503 ? paypalError.message : 'Unable to initialize PayPal checkout. No payment was taken.',
     });
   }
 }
@@ -2380,7 +2335,7 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
     await sendSellerOrderEmails(populatedOrder);
 
     // Wallet orders are already paid inside the order transaction. Send the paid
-    // receipt and payment alert here; Paystack and M-Pesa notify from verification callbacks.
+    // receipt and payment alert here; PayPal capture and M-Pesa notify after provider verification.
     if (paymentMethod === 'Wallet' && populatedOrder.paymentStatus === 'Paid') {
       await sendPaidOrderEmails(populatedOrder);
     }
@@ -2393,13 +2348,13 @@ if (['Paystack', 'Card'].includes(paymentMethod)) {
 
  return res.status(201).json({
   success: true,
-  message: paymentMethod === 'Card'
-    ? 'Order created. Continue to Paystack to pay securely with Visa or Mastercard.'
-    : paymentMethod === 'Paystack'
-      ? 'Order created. Continue to Paystack to complete your payment.'
+  message: paymentMethod === 'PayPal'
+    ? 'Order created. Continue to PayPal to approve your payment.'
+    : paymentMethod === 'Wallet'
+      ? 'Order paid successfully from your Sylva Wallet.'
       : 'M-Pesa prompt sent. Enter your PIN on your phone; the order will be confirmed after Safaricom verifies payment.',
   data: populatedOrder,
-  payment: paystackPayment,
+  payment: paypalPayment,
   mpesaPayment,
 });
 
@@ -2661,112 +2616,100 @@ router.get('/mpesa/status/:orderNumber', protect, async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-| PAYSTACK WEBHOOK
+| PAYPAL ORDER CAPTURE / VERIFICATION
 |--------------------------------------------------------------------------
-| Configure Paystack to POST events to:
-| https://sylva-technologies-backend.onrender.com/api/orders/paystack/webhook
+| PayPal redirects here after customer approval. Capture is server-side;
+| never trust browser query parameters as proof of payment.
 */
-
-router.post('/paystack/webhook', async (req, res) => {
+router.post('/paypal/cancel', protect, async (req, res) => {
   try {
-    const secret = process.env.PAYSTACK_SECRET_KEY;
-    const signature = req.headers['x-paystack-signature'];
-    if (!secret || !signature || !req.rawBody) {
-      return res.status(401).json({ success: false, message: 'Invalid webhook signature.' });
+    const paypalOrderId = String(req.body?.orderId || req.body?.token || '').trim();
+    if (!/^[A-Z0-9-]{8,80}$/i.test(paypalOrderId)) {
+      return res.status(400).json({ success: false, message: 'A valid PayPal order reference is required.' });
     }
-
-    const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex');
-    const suppliedBuffer = Buffer.from(String(signature));
-    const expectedBuffer = Buffer.from(expected);
-    if (suppliedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(suppliedBuffer, expectedBuffer)) {
-      return res.status(401).json({ success: false, message: 'Invalid webhook signature.' });
+    const order = await Order.findOne({ paymentReference: paypalOrderId, paymentMethod: 'PayPal' });
+    if (!order) return res.status(404).json({ success: false, message: 'PayPal order was not found.' });
+    const isAdmin = req.user.role === 'admin';
+    if (!isAdmin && (!order.customer || String(order.customer) !== String(req.user._id))) {
+      return res.status(403).json({ success: false, message: 'You are not authorized to cancel this order.' });
     }
-
-    const event = req.body?.event;
-    const data = req.body?.data || {};
-
-    if (event === 'charge.success' && data.reference) {
-      const order = await Order.findOne({
-        $or: [{ paymentReference: String(data.reference) }, { orderNumber: String(data.reference) }],
-      });
-      if (order && ['Paystack', 'Card'].includes(order.paymentMethod)) {
-        const verification = await verifyTransaction(data.reference);
-        if (verification?.status && verification.data) {
-          await confirmPaidOrder(order, verification.data);
-        }
-      }
-    } else if (
-      ['refund.pending', 'refund.processing', 'refund.processed', 'refund.failed'].includes(event)
-    ) {
-      const transactionReference = data.transaction_reference || data.transaction?.reference;
-      if (transactionReference) {
-        const refundStatus = {
-          'refund.pending': 'Refund Pending',
-          'refund.processing': 'Refund Processing',
-          'refund.processed': 'Refunded',
-          'refund.failed': 'Refund Failed',
-        }[event];
-        await Order.updateOne(
-          {
-            paymentReference: String(transactionReference),
-            paymentStatus: { $in: ['Refund Pending', 'Refund Processing', 'Refund Failed'] },
-          },
-          { $set: { paymentStatus: refundStatus } }
-        );
-      }
+    if (order.paymentStatus === 'Paid') {
+      return res.status(409).json({ success: false, message: 'PayPal payment was already captured. Contact support if you need a refund.' });
     }
-
-    return res.status(200).json({ received: true });
+    if (order.status !== 'Cancelled') {
+      order.status = 'Cancelled';
+      order.paymentStatus = 'Failed';
+      order.cancellationRequestedAt = new Date();
+      await order.save();
+      await restoreOrderStock(order);
+    }
+    return res.json({ success: true, message: 'PayPal checkout was cancelled. No payment was captured.', data: { orderNumber: order.orderNumber, status: order.status, paymentStatus: order.paymentStatus } });
   } catch (error) {
-    console.error('Paystack webhook processing failed:', error.message);
-    return res.status(500).json({ success: false, message: 'Webhook processing failed.' });
+    console.error('PayPal checkout cancellation failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to update the cancelled PayPal order.' });
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| VERIFY PAYMENT AFTER PAYSTACK REDIRECT
-|--------------------------------------------------------------------------
-*/
-
-router.post('/paystack/verify', protect, async (req, res) => {
+router.post('/paypal/capture', protect, async (req, res) => {
   try {
-    const reference = String(req.body?.reference || '').trim();
-    if (!reference) {
-      return res.status(400).json({ success: false, message: 'Payment reference is required.' });
+    const paypalOrderId = String(req.body?.orderId || req.body?.token || '').trim();
+    if (!/^[A-Z0-9-]{8,80}$/i.test(paypalOrderId)) {
+      return res.status(400).json({ success: false, message: 'A valid PayPal order reference is required.' });
     }
-
-    const order = await Order.findOne({
-      $or: [{ paymentReference: reference }, { orderNumber: reference }],
-    });
-
-    if (!order || !['Paystack', 'Card'].includes(order.paymentMethod)) {
-      return res.status(404).json({ success: false, message: 'No Paystack order was found for this reference.' });
-    }
-
+    const order = await Order.findOne({ paymentReference: paypalOrderId, paymentMethod: 'PayPal' });
+    if (!order) return res.status(404).json({ success: false, message: 'No PayPal checkout order was found for this reference.' });
     const isAdmin = req.user.role === 'admin';
     if (!isAdmin && (!order.customer || String(order.customer) !== String(req.user._id))) {
       return res.status(403).json({ success: false, message: 'You are not authorized to verify this order.' });
     }
-
-    const verification = await verifyTransaction(reference);
-    if (!verification?.status || !verification.data) {
-      return res.status(502).json({ success: false, message: 'Paystack could not verify this payment yet.' });
+    if (order.paymentStatus === 'Paid') {
+      return res.json({ success: true, message: 'PayPal payment was already verified.', data: order });
+    }
+    if (order.status === 'Cancelled') {
+      return res.status(409).json({ success: false, message: 'This order was cancelled. Contact Sylva support before attempting payment.' });
     }
 
-    if (verification.data.status !== 'success') {
+    const accessToken = await getPayPalAccessToken();
+    const captureResponse = await axios.post(
+      getPayPalApiBase() + '/v2/checkout/orders/' + encodeURIComponent(paypalOrderId) + '/capture',
+      {},
+      {
+        headers: {
+          Authorization: 'Bearer ' + accessToken,
+          'Content-Type': 'application/json',
+          'PayPal-Request-Id': 'sylva-order-capture-' + String(order._id),
+        },
+        timeout: 20000,
+      }
+    );
+    const paypalOrder = captureResponse.data;
+    const purchaseUnit = paypalOrder?.purchase_units?.[0];
+    const capture = purchaseUnit?.payments?.captures?.[0];
+    const expectedAmount = Number(order.paymentAmount || 0).toFixed(2);
+    const capturedAmount = String(capture?.amount?.value || '');
+    const validCapture = paypalOrder?.status === 'COMPLETED'
+      && capture?.status === 'COMPLETED'
+      && String(capture?.amount?.currency_code || '').toUpperCase() === String(order.paymentCurrency || 'USD').toUpperCase()
+      && capturedAmount === expectedAmount
+      && String(purchaseUnit?.custom_id || purchaseUnit?.reference_id || '') === String(order._id);
+    if (!validCapture) {
       return res.status(409).json({
         success: false,
-        paymentStatus: verification.data.status || 'pending',
-        message: 'Payment has not completed. If you have paid, refresh shortly while Paystack confirms it.',
-        data: { orderNumber: order.orderNumber, paymentStatus: order.paymentStatus, status: order.status },
+        message: 'PayPal has not returned a completed capture matching this order, converted amount and currency. The order has not been marked paid.',
       });
     }
-
-    const updatedOrder = await confirmPaidOrder(order, verification.data);
+    const normalizedCapture = {
+      status: 'success',
+      reference: paypalOrderId,
+      amount: Math.round(Number(capturedAmount) * 100),
+      currency: 'KES',
+    };
+    const updatedOrder = await confirmPaidOrder(order, normalizedCapture);
     return res.json({
       success: true,
-      message: 'Payment verified successfully.',
+      message: updatedOrder.paymentStatus === 'Paid'
+        ? 'PayPal payment verified successfully.'
+        : 'PayPal captured payment requires administrator refund reconciliation because the order was cancelled.',
       data: {
         _id: updatedOrder._id,
         orderNumber: updatedOrder.orderNumber,
@@ -2779,8 +2722,11 @@ router.post('/paystack/verify', protect, async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Paystack verification failed:', error.message);
-    return res.status(400).json({ success: false, message: error.message || 'Unable to verify payment.' });
+    console.error('PayPal order capture failed:', error.response?.data || error.message);
+    return res.status(error.statusCode || 400).json({
+      success: false,
+      message: error.statusCode === 503 ? error.message : 'Unable to verify/capture PayPal payment. Check order history before retrying.',
+    });
   }
 });
 
@@ -2826,16 +2772,10 @@ router.post('/:id/cancel', protect, async (req, res) => {
     }
 
     if (order.paymentStatus === 'Paid') {
-      const refund = await refundTransaction({
-        reference: order.paymentReference || order.orderNumber,
-        amount: order.total,
-        customerNote: 'Customer cancellation requested within the five-minute cancellation window.',
+      return res.status(409).json({
+        success: false,
+        message: 'This paid order requires administrator-assisted refund review. Contact Sylva support; the order has not been cancelled.',
       });
-      if (!refund?.status) {
-        return res.status(502).json({ success: false, message: 'Paystack did not accept the refund request. The order has not been cancelled.' });
-      }
-      order.paymentStatus = 'Refund Pending';
-      order.refundReference = String(refund.data?.id || refund.data?.reference || '');
     } else if (order.paymentStatus === 'Pending') {
       order.paymentStatus = 'Failed';
     }
@@ -2848,7 +2788,7 @@ router.post('/:id/cancel', protect, async (req, res) => {
     return res.json({
       success: true,
       message: order.paymentStatus === 'Refund Pending'
-        ? 'Order cancelled. Your refund has been requested and will update when Paystack confirms it.'
+        ? 'Order cancelled successfully. No PayPal payment was captured.'
         : 'Order cancelled successfully.',
       data: order,
     });
@@ -2923,7 +2863,7 @@ router.patch(
       ) {
         return res.status(409).json({
           success: false,
-          message: 'This order cannot move forward until Paystack payment is verified.',
+          message: 'This order cannot move forward until payment is verified.',
         });
       }
 
@@ -3118,10 +3058,10 @@ router.patch(
         });
       }
 
-      if (paymentStatus === 'Paid' && ['Paystack', 'Card'].includes(order.paymentMethod)) {
+      if (paymentStatus === 'Paid' && order.paymentMethod === 'PayPal') {
         return res.status(409).json({
           success: false,
-          message: 'Paystack payments can only be marked paid after successful gateway verification.',
+          message: 'PayPal payments can only be marked paid after successful server-side capture verification.',
         });
       }
 
