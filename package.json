@@ -9,20 +9,20 @@
     "test": "node --test"
   },
   "dependencies": {
-    "axios": "^1.20.0",
+    "axios": "^1.21.0",
     "bcryptjs": "^3.0.2",
     "cloudinary": "^2.8.0",
     "cors": "^2.8.5",
-    "dotenv": "^17.2.3",
+    "dotenv": "^18.0.9",
     "express": "^5.1.0",
-    "express-rate-limit": "^8.2.1",
-    "googleapis": "^183.0.0",
+    "express-rate-limit": "^8.7.2",
+    "googleapis": "^188.0.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^9.0.0",
     "multer": "^2.0.2",
-    "resend": "^6.31.0",
-    "mailparser": "^3.7.4"
+    "resend": "^6.35.0",
+    "mailparser": "^3.14.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
