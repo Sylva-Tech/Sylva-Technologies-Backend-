@@ -9,6 +9,7 @@ const {
   getCommissionRateBps,
   normalizePostings,
 } = require('../services/walletLedgerService');
+const { paypalHelpers } = require('../routes/orderRoutes');
 
 const accountA = '507f1f77bcf86cd799439011';
 const accountB = '507f1f77bcf86cd799439012';
@@ -62,4 +63,45 @@ test('requires ledger postings to balance debits and credits', () => {
     { walletAccount: accountA, direction: 'debit', amountMinor: 5000, bucket: 'available' },
     { walletAccount: accountB, direction: 'credit', amountMinor: 4999, bucket: 'escrow' },
   ]), /Unbalanced/);
+});
+
+test('paypal helpers use sandbox by default and validate the conversion rate', () => {
+  const previousMode = process.env.PAYPAL_MODE;
+  const previousRate = process.env.WALLET_KES_PER_USD;
+
+  process.env.PAYPAL_MODE = 'sandbox';
+  process.env.WALLET_KES_PER_USD = '120';
+
+  try {
+    assert.equal(paypalHelpers.getPayPalApiBase(), 'https://api-m.sandbox.paypal.com');
+    assert.equal(paypalHelpers.getPayPalUsdAmount(2400), 20);
+    assert.throws(() => paypalHelpers.getPayPalUsdAmount(-1), /Invalid KES amount/);
+  } finally {
+    if (previousMode === undefined) delete process.env.PAYPAL_MODE;
+    else process.env.PAYPAL_MODE = previousMode;
+
+    if (previousRate === undefined) delete process.env.WALLET_KES_PER_USD;
+    else process.env.WALLET_KES_PER_USD = previousRate;
+  }
+});
+
+test('paypal access token helper fails fast when sandbox credentials are missing', async () => {
+  const previousClientId = process.env.PAYPAL_CLIENT_ID;
+  const previousSecret = process.env.PAYPAL_CLIENT_SECRET;
+
+  delete process.env.PAYPAL_CLIENT_ID;
+  delete process.env.PAYPAL_CLIENT_SECRET;
+
+  try {
+    await assert.rejects(
+      () => paypalHelpers.getPayPalAccessToken(),
+      /PayPal is not configured on the server/
+    );
+  } finally {
+    if (previousClientId === undefined) delete process.env.PAYPAL_CLIENT_ID;
+    else process.env.PAYPAL_CLIENT_ID = previousClientId;
+
+    if (previousSecret === undefined) delete process.env.PAYPAL_CLIENT_SECRET;
+    else process.env.PAYPAL_CLIENT_SECRET = previousSecret;
+  }
 });
