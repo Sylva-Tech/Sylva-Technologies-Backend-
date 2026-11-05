@@ -24,3 +24,12 @@ pnpm-debug.log*
 # Local editor/system files
 .DS_Store
 .idea/
+
+# Preserve historical backup snapshots and conflict review artifacts outside Git tracking
+backend-backup-before-push/
+backend-before-github-sync-20261102-172207/
+backend-conflict-backup-20261102-165458/
+backend-merge-backup/
+Sylva-conflict-review/
+all-merge-conflicts.txt
+CheckoutPage-paypal-review.patch
