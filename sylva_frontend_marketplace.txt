@@ -1,0 +1,223 @@
+
+============================================================
+FILE: Frontend\src\App.jsx
+============================================================
+
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Header from './components/Header';
+import Footer from './components/Footer';
+import ProtectedRoute from './components/ProtectedRoute';
+import { AuthProvider } from './context/AuthContext';
+import HomePage from './pages/HomePage';
+import ShopPage from './pages/ShopPage';
+import CartPage from './pages/CartPage';
+import ProductDetailPage from './pages/ProductDetailPage';
+import AuthPage from './pages/AuthPage';
+import AdminLoginPage from './pages/AdminLoginPage';
+import AdminDashboardPage from './pages/AdminDashboardPage';
+import AdminProductsPage from './pages/AdminProductsPage';
+import AdminProductFormPage from './pages/AdminProductFormPage';
+import AdminImportPage from './pages/AdminImportPage';
+import AdminAdsPage from './pages/AdminAdsPage';
+import AdminOrdersPage from './pages/AdminOrdersPage';
+import ProfilePage from './pages/ProfilePage';
+import CheckoutPage from './pages/CheckoutPage';
+import InformationPage from './pages/InformationPage';
+import ContactPage from './pages/ContactPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import VerifyEmailPage from './pages/VerifyEmailPage';
+import { CartProvider } from './context/CartContext';
+import ChatWidget from './components/ChatWidget';
+import SellPage from './pages/SellPage';
+import SellerRegisterPage from './pages/SellerRegisterPage';
+import SellerLoginPage from './pages/SellerLoginPage';
+import SellerDashboardPage from './pages/SellerDashboardPage';
+import './App.css';
+
+function App() {
+  return (
+    <AuthProvider>
+      <CartProvider>
+        <Router>
+          <div className="app-shell">
+            <Header />
+
+            <main className="page-content">
+              <Routes>
+                {/* Public pages */}
+                <Route path="/" element={<HomePage />} />
+                <Route path="/shop" element={<ShopPage />} />
+                <Route path="/categories" element={<ShopPage />} />
+                <Route path="/deals" element={<ShopPage />} />
+
+                <Route
+                  path="/about"
+                  element={<InformationPage type="about" />}
+                />
+
+                <Route
+                  path="/privacy"
+                  element={<InformationPage type="privacy" />}
+                />
+
+                <Route
+                  path="/terms"
+                  element={<InformationPage type="terms" />}
+                />
+
+                <Route path="/contact" element={<ContactPage />} />
+
+                <Route
+                  path="/product/:slug"
+                  element={<ProductDetailPage />}
+                />
+
+                {/* Seller marketplace */}
+                <Route path="/sell" element={<SellPage />} />
+
+               <Route
+  path="/seller/login"
+  element={<SellerLoginPage />}
+/>
+
+                <Route
+                  path="/seller/register"
+                  element={<SellerRegisterPage />}
+                />
+                <Route
+  path="/seller/dashboard"
+  element={
+    <ProtectedRoute sellerOnly>
+      <SellerDashboardPage />
+    </ProtectedRoute>
+  }
+/>
+
+                {/* Cart */}
+                <Route path="/cart" element={<CartPage />} />
+
+                {/* Customer checkout */}
+                <Route
+                  path="/checkout"
+                  element={
+                    <ProtectedRoute>
+                      <CheckoutPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                {/* Customer authentication */}
+                <Route
+                  path="/login"
+                  element={<AuthPage mode="login" />}
+                />
+
+                <Route
+                  path="/register"
+                  element={<AuthPage mode="register" />}
+                />
+
+                <Route
+                  path="/forgot-password"
+                  element={<ForgotPasswordPage />}
+                />
+
+                <Route
+                  path="/verify-email"
+                  element={<VerifyEmailPage />}
+                />
+
+                {/* Customer profile */}
+                <Route
+                  path="/profile"
+                  element={
+                    <ProtectedRoute>
+                      <ProfilePage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                {/* Admin */}
+                <Route
+                  path="/admin/login"
+                  element={<AdminLoginPage />}
+                />
+
+                <Route
+                  path="/admin"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminDashboardPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/products"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminProductsPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/products/new"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminProductFormPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/products/import"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminImportPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/products/:id/edit"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminProductFormPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/ads"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminAdsPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/admin/orders"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AdminOrdersPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                {/* Fallback */}
+                <Route path="*" element={<HomePage />} />
+              </Routes>
+            </main>
+
+            <Footer />
+            <ChatWidget />
+          </div>
+        </Router>
+      </CartProvider>
+    </AuthProvider>
+  );
+}
+
+export default App;

@@ -1,0 +1,607 @@
+
+/* =========================================================
+   SYLVA TECHNOLOGIES
+   SELLER LOGIN PAGE
+========================================================= */
+
+.seller-login-page {
+  min-height: 100vh;
+  background: #f3f6f4;
+  padding: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.seller-login-shell {
+  width: 100%;
+  max-width: 1180px;
+  min-height: 700px;
+  background: #ffffff;
+  border-radius: 24px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 0.95fr 1.05fr;
+  box-shadow: 0 20px 60px rgba(16, 40, 28, 0.12);
+  border: 1px solid #e2e9e5;
+}
+
+/* =========================================================
+   LEFT BRAND PANEL
+========================================================= */
+
+.seller-login-brand {
+  background: linear-gradient(
+    145deg,
+    #063d2a 0%,
+    #075438 55%,
+    #0a6947 100%
+  );
+  color: #ffffff;
+  padding: 44px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+.seller-login-brand::before {
+  content: "";
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+  right: -150px;
+  top: -100px;
+}
+
+.seller-login-brand::after {
+  content: "";
+  position: absolute;
+  width: 220px;
+  height: 220px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 50%;
+  left: -120px;
+  bottom: 70px;
+}
+
+.seller-login-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  color: #ffffff;
+  text-decoration: none;
+  width: fit-content;
+  position: relative;
+  z-index: 2;
+}
+
+.seller-login-logo-mark {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #075438;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+}
+
+.seller-login-logo-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+
+.seller-login-logo-text strong {
+  font-size: 19px;
+  letter-spacing: 1.4px;
+}
+
+.seller-login-logo-text small {
+  margin-top: 5px;
+  font-size: 8px;
+  letter-spacing: 2.5px;
+  opacity: 0.75;
+}
+
+.seller-login-brand-content {
+  max-width: 480px;
+  margin-top: auto;
+  margin-bottom: auto;
+  position: relative;
+  z-index: 2;
+}
+
+.seller-login-eyebrow {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  opacity: 0.72;
+  margin-bottom: 18px;
+}
+
+.seller-login-brand-content h1 {
+  margin: 0;
+  font-size: clamp(36px, 4vw, 56px);
+  line-height: 1.05;
+  letter-spacing: -1.8px;
+  font-weight: 800;
+}
+
+.seller-login-brand-content h1 span {
+  display: block;
+  color: #a9e8c8;
+}
+
+.seller-login-brand-content > p {
+  margin: 24px 0 30px;
+  max-width: 440px;
+  font-size: 15px;
+  line-height: 1.75;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.seller-login-benefits {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.seller-login-benefit {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.seller-login-benefit > div {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+  color: #b9f1d1;
+}
+
+.seller-login-benefit span {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.seller-login-brand-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  z-index: 2;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+}
+
+/* =========================================================
+   RIGHT CONTENT
+========================================================= */
+
+.seller-login-content {
+  background: #ffffff;
+  padding: 44px 54px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.seller-login-card {
+  width: 100%;
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+.seller-login-mobile-logo {
+  display: none;
+}
+
+/* =========================================================
+   HEADING
+========================================================= */
+
+.seller-login-heading {
+  margin-bottom: 28px;
+}
+
+.seller-login-heading > span {
+  display: block;
+  color: #087044;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.7px;
+  margin-bottom: 10px;
+}
+
+.seller-login-heading h2 {
+  margin: 0;
+  color: #17231d;
+  font-size: 34px;
+  line-height: 1.15;
+  letter-spacing: -1px;
+}
+
+.seller-login-heading p {
+  margin: 10px 0 0;
+  color: #68756e;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* =========================================================
+   SUCCESS / ERROR
+========================================================= */
+
+.seller-login-success,
+.seller-login-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 14px;
+  border-radius: 11px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.seller-login-success {
+  color: #075b39;
+  background: #ecf9f2;
+  border: 1px solid #ccebd9;
+}
+
+.seller-login-success svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.seller-login-error {
+  color: #9b3027;
+  background: #fff3f1;
+  border: 1px solid #f2d2ce;
+}
+
+/* =========================================================
+   FORM
+========================================================= */
+
+.seller-login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.seller-login-field {
+  margin-bottom: 10px;
+}
+
+.seller-login-field label {
+  display: block;
+  color: #29362f;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.seller-login-input {
+  height: 52px;
+  border: 1px solid #d7e0db;
+  border-radius: 11px;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.seller-login-input svg {
+  color: #78857e;
+  flex-shrink: 0;
+}
+
+.seller-login-input:focus-within {
+  border-color: #087044;
+  box-shadow: 0 0 0 3px rgba(8, 112, 68, 0.08);
+}
+
+.seller-login-input input {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #1d2822;
+  font-size: 14px;
+  min-width: 0;
+}
+
+.seller-login-input input::placeholder {
+  color: #a2aaa6;
+}
+
+.seller-login-password-toggle {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  background: transparent;
+  color: #77837d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 7px;
+  flex-shrink: 0;
+}
+
+.seller-login-password-toggle:hover {
+  background: #f1f5f2;
+  color: #075438;
+}
+
+/* =========================================================
+   OPTIONS
+========================================================= */
+
+.seller-login-options {
+  display: flex;
+  justify-content: flex-end;
+  margin: 2px 0 12px;
+}
+
+.seller-login-options a {
+  color: #087044;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.seller-login-options a:hover {
+  text-decoration: underline;
+}
+
+/* =========================================================
+   BUTTON
+========================================================= */
+
+.seller-login-submit {
+  width: 100%;
+  height: 52px;
+  border: 0;
+  border-radius: 11px;
+  background: #087044;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+  margin-top: 4px;
+}
+
+.seller-login-submit:hover:not(:disabled) {
+  background: #075b39;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(8, 112, 68, 0.18);
+}
+
+.seller-login-submit:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* =========================================================
+   DIVIDER
+========================================================= */
+
+.seller-login-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 28px 0 17px;
+  color: #8a948e;
+  font-size: 12px;
+}
+
+.seller-login-divider::before,
+.seller-login-divider::after {
+  content: "";
+  height: 1px;
+  background: #e4e9e6;
+  flex: 1;
+}
+
+/* =========================================================
+   REGISTER
+========================================================= */
+
+.seller-login-register {
+  width: 100%;
+  min-height: 50px;
+  border: 1px solid #b9d8c8;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #075438;
+  background: #f7fbf8;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 800;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.seller-login-register:hover {
+  background: #edf8f1;
+  border-color: #087044;
+}
+
+/* =========================================================
+   BACK LINK
+========================================================= */
+
+.seller-login-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 20px;
+  color: #66736c;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.seller-login-back:hover {
+  color: #075438;
+}
+
+/* =========================================================
+   SECURITY FOOTER
+========================================================= */
+
+.seller-login-security {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  color: #89948e;
+  font-size: 11px;
+  margin-top: 26px;
+}
+
+/* =========================================================
+   TABLET
+========================================================= */
+
+@media (max-width: 900px) {
+  .seller-login-page {
+    padding: 20px;
+  }
+
+  .seller-login-shell {
+    grid-template-columns: 0.85fr 1.15fr;
+    min-height: 650px;
+  }
+
+  .seller-login-brand {
+    padding: 32px;
+  }
+
+  .seller-login-content {
+    padding: 36px;
+  }
+
+  .seller-login-brand-content h1 {
+    font-size: 39px;
+  }
+}
+
+/* =========================================================
+   MOBILE
+========================================================= */
+
+@media (max-width: 720px) {
+  .seller-login-page {
+    min-height: 100vh;
+    padding: 0;
+    background: #f5f8f6;
+    align-items: stretch;
+  }
+
+  .seller-login-shell {
+    min-height: 100vh;
+    display: block;
+    border-radius: 0;
+    box-shadow: none;
+    border: 0;
+  }
+
+  .seller-login-brand {
+    display: none;
+  }
+
+  .seller-login-content {
+    min-height: 100vh;
+    padding: 26px 20px;
+    justify-content: flex-start;
+  }
+
+  .seller-login-mobile-logo {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 42px;
+  }
+
+  .seller-login-mobile-logo .seller-login-logo {
+    color: #17231d;
+  }
+
+  .seller-login-mobile-logo .seller-login-logo-mark {
+    background: #087044;
+    color: #ffffff;
+  }
+
+  .seller-login-card {
+    max-width: 520px;
+  }
+
+  .seller-login-heading h2 {
+    font-size: 30px;
+  }
+
+  .seller-login-security {
+    margin-top: 30px;
+    padding-bottom: 12px;
+  }
+}
+
+/* =========================================================
+   SMALL MOBILE
+========================================================= */
+
+@media (max-width: 420px) {
+  .seller-login-content {
+    padding: 22px 16px;
+  }
+
+  .seller-login-mobile-logo {
+    margin-bottom: 34px;
+  }
+
+  .seller-login-heading {
+    margin-bottom: 23px;
+  }
+
+  .seller-login-heading h2 {
+    font-size: 27px;
+  }
+
+  .seller-login-heading p {
+    font-size: 13px;
+  }
+
+  .seller-login-input,
+  .seller-login-submit {
+    height: 50px;
+  }
+}

@@ -1,0 +1,487 @@
+.seller-product-form-page {
+  min-height: 100vh;
+  background: #f5f7f8;
+  padding: 32px 20px 60px;
+}
+
+.seller-product-form-container {
+  width: min(1100px, 100%);
+  margin: 0 auto;
+}
+
+.seller-product-form-header {
+  margin-bottom: 24px;
+}
+
+.seller-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #167a4a;
+  text-decoration: none;
+  font-weight: 600;
+  margin-bottom: 22px;
+}
+
+.seller-back-link:hover {
+  text-decoration: underline;
+}
+
+.seller-product-form-header h1 {
+  margin: 0 0 8px;
+  color: #14221a;
+  font-size: 32px;
+  line-height: 1.2;
+}
+
+.seller-product-form-header p {
+  margin: 0;
+  color: #65736b;
+  font-size: 15px;
+}
+
+.seller-form-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.seller-form-alert-error {
+  background: #fff1f1;
+  color: #a61b1b;
+  border: 1px solid #f3c2c2;
+}
+
+.seller-form-alert-success {
+  background: #edf9f1;
+  color: #126b3d;
+  border: 1px solid #bde5cb;
+}
+
+.seller-product-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.seller-form-section {
+  background: #ffffff;
+  border: 1px solid #e2e8e4;
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+
+.seller-section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.seller-section-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #eaf7ef;
+  color: #167a4a;
+}
+
+.seller-section-heading h2 {
+  margin: 2px 0 5px;
+  font-size: 19px;
+  color: #18251e;
+}
+
+.seller-section-heading p {
+  margin: 0;
+  color: #748078;
+  font-size: 13px;
+}
+
+.seller-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.seller-form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.seller-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.seller-field-full {
+  grid-column: 1 / -1;
+}
+
+.seller-field > span {
+  font-size: 13px;
+  font-weight: 700;
+  color: #27352d;
+}
+
+.seller-field > span b {
+  color: #c62828;
+  margin-left: 3px;
+}
+
+.seller-field input,
+.seller-field select,
+.seller-field textarea,
+.seller-specification-row input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #ccd7d0;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #1d2922;
+  font: inherit;
+  font-size: 14px;
+  padding: 12px 13px;
+  outline: none;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.seller-field input,
+.seller-field select {
+  min-height: 45px;
+}
+
+.seller-field textarea {
+  resize: vertical;
+  min-height: 100px;
+  line-height: 1.55;
+}
+
+.seller-field input:focus,
+.seller-field select:focus,
+.seller-field textarea:focus,
+.seller-specification-row input:focus {
+  border-color: #16814d;
+  box-shadow: 0 0 0 3px rgba(22, 129, 77, 0.1);
+}
+
+.seller-field input::placeholder,
+.seller-field textarea::placeholder,
+.seller-specification-row input::placeholder {
+  color: #9aa59e;
+}
+
+.seller-field small {
+  color: #78837c;
+  font-size: 12px;
+}
+
+.seller-checkbox-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+  padding: 3px 0;
+}
+
+.seller-checkbox-field input {
+  width: 17px;
+  height: 17px;
+  accent-color: #16814d;
+}
+
+.seller-checkbox-field span {
+  font-size: 14px;
+  color: #344139;
+  font-weight: 600;
+}
+
+.seller-image-upload {
+  width: 100%;
+}
+
+.seller-image-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.seller-image-add,
+.seller-image-preview {
+  min-height: 190px;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.seller-image-add {
+  border: 2px dashed #b8c9be;
+  background: #f8fbf9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: #39835c;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.seller-image-add:hover {
+  background: #eff8f2;
+  border-color: #16814d;
+}
+
+.seller-image-add strong {
+  font-size: 14px;
+}
+
+.seller-image-add span {
+  font-size: 12px;
+  color: #77857c;
+}
+
+.seller-image-add input {
+  display: none;
+}
+
+.seller-image-preview {
+  position: relative;
+  background: #eef2ef;
+  border: 1px solid #d9e1dc;
+}
+
+.seller-image-preview img {
+  display: block;
+  width: 100%;
+  height: 190px;
+  object-fit: cover;
+}
+
+.seller-remove-image {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.7);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.seller-remove-image:hover {
+  background: #c62828;
+}
+
+.seller-main-image-label {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  background: #167a4a;
+  color: #ffffff;
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.seller-form-help {
+  margin: 10px 0 0;
+  color: #77837b;
+  font-size: 12px;
+}
+
+.seller-specifications {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.seller-specification-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 42px;
+  gap: 10px;
+}
+
+.seller-delete-spec {
+  border: 1px solid #e3c5c5;
+  background: #fff7f7;
+  color: #a32626;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.seller-delete-spec:hover {
+  background: #ffeaea;
+}
+
+.seller-add-spec {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #b7d7c3;
+  background: #f2faf5;
+  color: #167a4a;
+  border-radius: 8px;
+  padding: 10px 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.seller-add-spec:hover {
+  background: #e8f6ed;
+}
+
+.seller-submission-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 17px;
+  border-radius: 12px;
+  border: 1px solid #c8dfd0;
+  background: #f0f9f3;
+  color: #17613b;
+}
+
+.seller-submission-notice strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.seller-submission-notice p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #4e6658;
+}
+
+.seller-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.seller-cancel-button,
+.seller-submit-button {
+  min-height: 46px;
+  padding: 0 20px;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.seller-cancel-button {
+  border: 1px solid #ccd5cf;
+  background: #ffffff;
+  color: #405047;
+}
+
+.seller-cancel-button:hover {
+  background: #f4f6f5;
+}
+
+.seller-submit-button {
+  border: 1px solid #147347;
+  background: #167a4a;
+  color: #ffffff;
+}
+
+.seller-submit-button:hover {
+  background: #105e39;
+}
+
+.seller-cancel-button:disabled,
+.seller-submit-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+@media (max-width: 800px) {
+  .seller-image-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .seller-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .seller-field-full {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .seller-product-form-page {
+    padding: 20px 12px 40px;
+  }
+
+  .seller-form-section {
+    padding: 18px;
+  }
+
+  .seller-product-form-header h1 {
+    font-size: 26px;
+  }
+
+  .seller-image-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 9px;
+  }
+
+  .seller-image-add,
+  .seller-image-preview,
+  .seller-image-preview img {
+    min-height: 145px;
+    height: 145px;
+  }
+
+  .seller-specification-row {
+    grid-template-columns: 1fr;
+  }
+
+  .seller-delete-spec {
+    min-height: 40px;
+  }
+
+  .seller-form-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .seller-cancel-button,
+  .seller-submit-button {
+    width: 100%;
+  }
+}
