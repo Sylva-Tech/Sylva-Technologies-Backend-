@@ -55,6 +55,18 @@ const productSchema = new mongoose.Schema(
       trim: true,
     },
 
+    /*
+     * Track product ownership for safe spreadsheet reconciliation.
+     * Existing records remain unmarked until a successful sheet sync
+     * identifies them; seller/manual products are never pruned by sync.
+     */
+    source: {
+      type: String,
+      enum: ['manual', 'google_sheet', 'seller'],
+      default: 'manual',
+      index: true,
+    },
+
     brand: {
       type: String,
       required: [
@@ -236,6 +248,14 @@ const productSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // Optional seller-provided spreadsheet reference, shown only in the seller workspace.
+    sourceSpreadsheetUrl: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 1000,
+    },
+
     /*
      * Technical specifications.
      */
@@ -250,6 +270,21 @@ const productSchema = new mongoose.Schema(
     featured: {
       type: Boolean,
       default: false,
+    },
+
+    // Seller-sponsored homepage placement is time-limited and only activated
+    // after a verified wallet debit or successful Safaricom STK confirmation.
+    featuredExpiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    sponsorshipStatus: {
+      type: String,
+      enum: ['none', 'pending', 'active', 'expired', 'failed'],
+      default: 'none',
+      index: true,
     },
 
     isNew: {

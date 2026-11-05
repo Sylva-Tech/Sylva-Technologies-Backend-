@@ -7,6 +7,7 @@ const mongoose = require('mongoose');
 const authRoutes = require('./routes/authRoutes');
 const productRoutes = require('./routes/productRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
+const brandRoutes = require('./routes/brandRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const userRoutes = require('./routes/userRoutes');
 const contactRoutes = require('./routes/contactRoutes');
@@ -14,11 +15,19 @@ const supportInboxRoutes = require('./routes/supportInboxRoutes');
 const mailboxRoutes = require('./routes/mailboxRoutes');
 const advertisementRoutes = require('./routes/advertisementRoutes');
 const flipAdvertisementRoutes = require('./routes/flipAdvertisementRoutes');
+const movingBarRoutes = require('./routes/movingBarRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const walletRoutes = require('./routes/walletRoutes');
+const sponsorshipRoutes = require('./routes/sponsorshipRoutes');
 const adminWalletRoutes = require('./routes/adminWalletRoutes');
 const sellerManagementRoutes = require('./routes/sellerManagementRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const shippingRoutes = require('./routes/shippingRoutes');
+const {
+  cloudflareOriginGuard,
+  financialRateLimit,
+  noStoreFinancialResponses,
+} = require('./middleware/financialSecurity');
 
 const app = express();
 
@@ -173,6 +182,23 @@ app.use(cors(corsOptions));
 
 /*
 |--------------------------------------------------------------------------
+| FINANCIAL API DEFENCE IN DEPTH
+|--------------------------------------------------------------------------
+|
+| Run these controls before body parsing and route handlers. Configure
+| Cloudflare edge WAF/rate rules as the first layer. CLOUDFLARE_ORIGIN_SECRET
+| remains optional until the proxied API hostname and provider callbacks are ready.
+|--------------------------------------------------------------------------
+*/
+app.use(
+  ['/api/wallet', '/api/admin-wallet', '/api/orders'],
+  noStoreFinancialResponses,
+  cloudflareOriginGuard,
+  financialRateLimit
+);
+
+/*
+|--------------------------------------------------------------------------
 | BODY PARSING
 |--------------------------------------------------------------------------
 |
@@ -189,8 +215,8 @@ app.use(
     limit: '10mb',
     strict: true,
     verify: (req, res, buffer) => {
-      // Paystack signs the exact request bytes, so preserve them before JSON parsing.
-      if (['/api/orders/paystack/webhook', '/api/support-inbox/inbound/resend', '/api/mailbox/events/resend'].includes(req.originalUrl.split('?')[0])) {
+      // Provider callbacks and signed inbound email events need the exact request bytes.
+      if (['/api/support-inbox/inbound/resend', '/api/mailbox/events/resend'].includes(req.originalUrl.split('?')[0])) {
         req.rawBody = Buffer.from(buffer);
       }
     },
@@ -357,8 +383,10 @@ app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 
 app.use('/api/categories', categoryRoutes);
+app.use('/api/brands', brandRoutes);
 
 app.use('/api/orders', orderRoutes);
+app.use('/api/shipping', shippingRoutes);
 
 app.use('/api/users', userRoutes);
 
@@ -371,10 +399,13 @@ app.use('/api/mailbox', mailboxRoutes);
 app.use('/api/advertisements', advertisementRoutes);
 
 app.use('/api/flip-advertisements', flipAdvertisementRoutes);
+app.use('/api/moving-bar', movingBarRoutes);
 
 app.use('/api/admin', adminRoutes);
 
 app.use('/api/wallet', walletRoutes);
+
+app.use('/api/sponsorship', sponsorshipRoutes);
 
 app.use('/api/admin-wallet', adminWalletRoutes);
 

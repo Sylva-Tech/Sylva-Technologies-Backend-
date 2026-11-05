@@ -36,10 +36,10 @@ const protect = async (req, res, next) => {
 
     const user = await User.findById(decoded.id).select('-password');
 
-    if (!user) {
+    if (!user || user.accountDeleted) {
       return res.status(401).json({
         success: false,
-        message: 'User account could not be found.',
+        message: 'This account is no longer active. Please contact support if you believe this is an error.',
       });
     }
 

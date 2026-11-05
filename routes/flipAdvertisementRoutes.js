@@ -1,4 +1,5 @@
 const express = require('express');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
 const FlipAdvertisement = require('../models/FlipAdvertisement');
 
 const router = express.Router();
@@ -89,7 +90,7 @@ router.get('/', async (req, res) => {
 | GET ALL FLIP ADVERTISEMENTS  (admin list - includes inactive/expired)
 |--------------------------------------------------------------------------
 */
-router.get('/all', async (req, res) => {
+router.get('/all', protect, adminOnly, async (req, res) => {
   try {
     const items = await FlipAdvertisement.find()
       .sort({ priority: -1, createdAt: -1 })
@@ -115,7 +116,7 @@ router.get('/all', async (req, res) => {
 | CREATE
 |--------------------------------------------------------------------------
 */
-router.post('/', async (req, res) => {
+router.post('/', protect, adminOnly, async (req, res) => {
   try {
     const data = pickFields(req.body);
 
@@ -149,7 +150,7 @@ router.post('/', async (req, res) => {
 | UPDATE
 |--------------------------------------------------------------------------
 */
-router.put('/:id', async (req, res) => {
+router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
     const item = await FlipAdvertisement.findById(req.params.id);
 
@@ -193,7 +194,7 @@ router.put('/:id', async (req, res) => {
 | DELETE
 |--------------------------------------------------------------------------
 */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
     const item = await FlipAdvertisement.findById(req.params.id);
 

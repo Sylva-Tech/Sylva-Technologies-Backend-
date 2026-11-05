@@ -1,8 +1,12 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const axios = require('axios');
 
 const User = require('../models/User');
+const Order = require('../models/Order');
+const Product = require('../models/Product');
 const AdminWallet = require('../models/AdminWallet');
+const { sendMail } = require('../services/emailService');
 
 const {
   protect,
@@ -11,6 +15,21 @@ const {
 } = require('../middleware/authMiddleware');
 
 const router = express.Router();
+
+// Fail closed: a missing or misspelled environment must never select Production.
+// Sandbox is the safe default until Safaricom approves Go Live.
+const getMpesaEnvironment = () => {
+  const environment = String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase();
+  if (!['sandbox', 'production'].includes(environment)) {
+    throw new Error('Invalid M-Pesa environment. Set MPESA_ENV to sandbox or production.');
+  }
+  return environment;
+};
+
+const getMpesaHost = () => getMpesaEnvironment() === 'sandbox'
+  ? 'https://sandbox.safaricom.co.ke'
+  : 'https://api.safaricom.co.ke';
+
 
 /*
 |--------------------------------------------------------------------------
@@ -1054,7 +1073,11 @@ router.post(
           $set: { 'wallet.lastUpdatedAt': now },
           $push: { 'wallet.transactions': { $each: [transaction], $position: 0 } },
         },
+<<<<<<< HEAD
         { new: true, runValidators: true }
+=======
+        { returnDocument: 'after', runValidators: true }
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
       );
 
       if (!updatedUser) {
@@ -1149,7 +1172,11 @@ router.post('/payout-request-usd', protect, payoutRateLimit, async (req, res) =>
         $set: { 'usdWallet.lastUpdatedAt': now },
         $push: { 'usdWallet.transactions': { $each: [transaction], $position: 0 } },
       },
+<<<<<<< HEAD
       { new: true, runValidators: true }
+=======
+      { returnDocument: 'after', runValidators: true }
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     );
     if (!updatedUser) {
       return res.status(409).json({ success: false, message: 'Your USD wallet changed or another withdrawal is pending. Refresh and try again.' });
@@ -1172,6 +1199,7 @@ router.get(
   requireVerified,
   async (req, res) => {
     try {
+<<<<<<< HEAD
       const payoutAccounts = await User.find({
         role: mongoose.trusted({ $in: ['seller', 'customer'] }),
         $or: [
@@ -1181,6 +1209,23 @@ router.get(
       })
           .select('name email phone role sellerProfile wallet usdWallet')
           .lean();
+=======
+      const payoutAccounts = await User.find(
+        mongoose.trusted({
+          $and: [
+            { role: mongoose.trusted({ $in: ['seller', 'customer'] }) },
+            {
+              $or: [
+                { 'wallet.transactions': { $elemMatch: { category: 'payout_request', status: mongoose.trusted({ $in: ['pending', 'paid', 'rejected'] }) } } },
+                { 'usdWallet.transactions': { $elemMatch: { category: 'payout_request', status: mongoose.trusted({ $in: ['pending', 'paid', 'rejected'] }) } } },
+              ],
+            },
+          ],
+        })
+      )
+        .select('name email phone role sellerProfile wallet usdWallet')
+        .lean();
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
 
       const pendingPayouts =
         [];
@@ -1203,8 +1248,7 @@ router.get(
           if (
             entry.category !==
               'payout_request' ||
-            entry.status !==
-              'pending'
+            !['pending', 'paid', 'rejected'].includes(String(entry.status || '').toLowerCase())
           ) {
             continue;
           }
@@ -1274,6 +1318,28 @@ router.get(
             createdAt:
               entry.createdAt ||
               null,
+            processedAt: entry.processedAt || null,
+          });
+        }
+      }
+
+      // Include pending USD-wallet payouts in the same admin review queue.
+      for (const seller of payoutAccounts) {
+        for (const entry of (Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [])) {
+          if (entry.category !== 'payout_request' || !['pending', 'paid', 'rejected'].includes(String(entry.status || '').toLowerCase())) continue;
+          pendingPayouts.push({
+            _id: entry._id,
+            account: { role: seller.role, _id: seller._id, name: seller.name || '', email: seller.email || '', phone: seller.phone || '', storeName: seller.sellerProfile?.storeName || '', mpesaPhone: seller.sellerProfile?.mpesaPhone || '' },
+            seller: { _id: seller._id, name: seller.name || '', email: seller.email || '', phone: seller.phone || '', storeName: seller.sellerProfile?.storeName || '', mpesaPhone: seller.sellerProfile?.mpesaPhone || '' },
+            type: entry.type || 'debit',
+            amount: roundMoney(entry.amount || 0),
+            currency: 'USD',
+            status: entry.status,
+            payoutMethod: entry.metadata?.payoutMethod || 'paypal',
+            destination: entry.metadata?.destination || '',
+            reference: entry.reference || '',
+            createdAt: entry.createdAt || null,
+            processedAt: entry.processedAt || null,
           });
         }
       }
@@ -1762,7 +1828,7 @@ router.patch(
 
 
 /* SELLER M-PESA STK TOP-UP. Configure Daraja secrets in the backend environment. */
-const axios = require('axios');
+
 const normalizeStkPhone = (value) => {
   const phone = normalizeKenyanPhone(value);
   return phone && /^254(?:7|1)\d{8}$/.test(phone) ? phone : '';
@@ -1800,7 +1866,7 @@ const getMpesaAccessToken = async () => {
   const key = process.env.MPESA_CONSUMER_KEY;
   const secret = process.env.MPESA_CONSUMER_SECRET;
   if (!key || !secret) throw new Error('M-Pesa credentials are not configured.');
-  const host = process.env.MPESA_ENV === 'sandbox' ? 'https://sandbox.safaricom.co.ke' : 'https://api.safaricom.co.ke';
+  const host = getMpesaHost();
   const auth = Buffer.from(key + ':' + secret).toString('base64');
   const response = await axios.get(host + '/oauth/v1/generate?grant_type=client_credentials', {
     headers: { Authorization: 'Basic ' + auth }, timeout: 15000,
@@ -1825,9 +1891,27 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
     const phone = normalizeStkPhone(req.body?.phone || user.sellerProfile?.mpesaPhone || user.phone);
     if (!phone) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan M-Pesa phone number.' });
 
-    const shortcode = process.env.MPESA_SHORTCODE;
+    const shortcode = String(process.env.MPESA_SHORTCODE || '').trim();
     const passkey = process.env.MPESA_PASSKEY;
     const callbackUrl = process.env.MPESA_CALLBACK_URL;
+    const tillNumber = String(process.env.MPESA_TILL_NUMBER || '').trim();
+    const transactionType = String(
+      process.env.MPESA_TRANSACTION_TYPE ||
+      (tillNumber ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline')
+    ).trim();
+    if (!['CustomerPayBillOnline', 'CustomerBuyGoodsOnline'].includes(transactionType)) {
+      return res.status(503).json({
+        success: false,
+        message: 'M-Pesa configuration error: MPESA_TRANSACTION_TYPE must be CustomerPayBillOnline or CustomerBuyGoodsOnline.',
+      });
+    }
+    if (transactionType === 'CustomerBuyGoodsOnline' && !/^\d{5,10}$/.test(tillNumber)) {
+      return res.status(503).json({
+        success: false,
+        message: 'M-Pesa Till configuration is incomplete. Set MPESA_TILL_NUMBER to the approved Buy Goods Till number.',
+      });
+    }
+    const partyB = transactionType === 'CustomerBuyGoodsOnline' ? tillNumber : shortcode;
     const requiredMpesaSettings = [
       'MPESA_CONSUMER_KEY',
       'MPESA_CONSUMER_SECRET',
@@ -1846,7 +1930,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
         data: {
           missingConfiguration: missingMpesaSettings,
           requiredCallbackPath: '/api/wallet/topup/stk/callback',
-          environment: process.env.MPESA_ENV === 'sandbox' ? 'sandbox' : 'production',
+          environment: String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase(),
         },
       });
     }
@@ -1858,8 +1942,13 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
 
     if (idempotencyKey) {
       const existing = isAdminDeposit
+<<<<<<< HEAD
         ? await AdminWallet.findOne({ key: 'platform', transactions: { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } })
         : await User.findOne({ _id: user._id, 'wallet.transactions': { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } });
+=======
+        ? await AdminWallet.findOne({ key: 'platform', transactions: mongoose.trusted({ $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } }) })
+        : await User.findOne({ _id: user._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } }) });
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
       const existingTx = isAdminDeposit
         ? existing?.transactions.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey)
         : existing?.wallet?.transactions?.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey);
@@ -1913,8 +2002,8 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       stkRequestStarted = true;
       const response = await axios.post(credentials.host + '/mpesa/stkpush/v1/processrequest', {
         BusinessShortCode: shortcode, Password: password, Timestamp: timestamp,
-        TransactionType: 'CustomerPayBillOnline', Amount: amount, PartyA: phone,
-        PartyB: shortcode, PhoneNumber: phone, CallBackURL: callbackUrl,
+        TransactionType: transactionType, Amount: amount, PartyA: phone,
+        PartyB: partyB, PhoneNumber: phone, CallBackURL: callbackUrl,
         AccountReference: accountLabel, TransactionDesc: 'Deposit',
       }, { headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' }, timeout: 20000 });
 
@@ -1992,7 +2081,21 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       throw providerError;
     }
   } catch (error) {
+<<<<<<< HEAD
     console.error('M-Pesa deposit initiation failed:', error.response?.data || error.message);
+=======
+    const providerCode = String(error.response?.data?.errorCode || '');
+    const providerMessage = String(error.response?.data?.errorMessage || error.response?.data?.ResponseDescription || error.message || '');
+    console.error('M-Pesa deposit initiation failed:', {
+      code: providerCode || undefined,
+      message: providerMessage,
+      environment: String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase(),
+      shortcodeConfigured: Boolean(String(process.env.MPESA_SHORTCODE || '').trim()),
+      tillConfigured: Boolean(String(process.env.MPESA_TILL_NUMBER || '').trim()),
+      transactionType: String(process.env.MPESA_TRANSACTION_TYPE || '').trim() || undefined,
+      providerResponse: error.response?.data || undefined,
+    });
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     return res.status(502).json({
       success: false,
       message: 'Unable to start the deposit. Check the transaction status before trying again.',
@@ -2178,7 +2281,11 @@ router.post('/topup/paypal/capture', protect, payoutRateLimit, async (req, res) 
           'usdWallet.transactions.$.updatedAt': now,
         },
       },
+<<<<<<< HEAD
       { new: true, runValidators: true }
+=======
+      { returnDocument: 'after', runValidators: true }
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     );
     if (!updatedUser) {
       const latest = await User.findById(user._id);
@@ -2248,8 +2355,13 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
           if (terminalFailure) {
             const now = new Date();
             const ownerFilter = isAdmin
+<<<<<<< HEAD
               ? { _id: owner._id, transactions: { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } }
               : { _id: owner._id, 'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } };
+=======
+              ? { _id: owner._id, transactions: mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } }) }
+              : { _id: owner._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } }) };
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
             const failedDescription = resultCode === '1032'
               ? 'M-Pesa deposit cancelled by the customer.'
               : resultCode === '1037'
@@ -2267,6 +2379,10 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
               return res.json({ success: true, data: {
                 transactionId: String(refreshedTx._id), status: refreshedTx.status,
                 amount: roundMoney(refreshedTx.amount), reference: refreshedTx.reference || '',
+<<<<<<< HEAD
+=======
+                receipt: refreshedTx.metadata?.mpesaReceiptNumber || '',
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
                 description: refreshedTx.description || '', createdAt: refreshedTx.createdAt || null,
                 updatedAt: refreshedTx.updatedAt || null, processedAt: refreshedTx.processedAt || null,
                 reconciliationRequired: refreshedTx.metadata?.reconciliationRequired === true,
@@ -2285,6 +2401,10 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
       status: tx.status,
       amount: roundMoney(tx.amount),
       reference: tx.reference || '',
+<<<<<<< HEAD
+=======
+      receipt: tx.metadata?.mpesaReceiptNumber || '',
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
       description: tx.description || '',
       createdAt: tx.createdAt || null,
       updatedAt: tx.updatedAt || null,
@@ -2311,8 +2431,8 @@ router.post('/topup/stk/callback', async (req, res) => {
       'metadata.checkoutRequestID': checkoutRequestID,
     };
     const [platformWallet, account] = await Promise.all([
-      AdminWallet.findOne({ key: 'platform', transactions: { $elemMatch: pendingQuery } }),
-      User.findOne({ 'wallet.transactions': { $elemMatch: pendingQuery } }),
+      AdminWallet.findOne({ key: 'platform', transactions: mongoose.trusted({ $elemMatch: pendingQuery }) }),
+      User.findOne({ 'wallet.transactions': mongoose.trusted({ $elemMatch: pendingQuery }) }),
     ]);
     const isPlatformDeposit = Boolean(platformWallet);
     const owner = isPlatformDeposit ? platformWallet : account;
@@ -2334,8 +2454,8 @@ router.post('/topup/stk/callback', async (req, res) => {
     if (!tx) return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
 
     const ownerFilter = isPlatformDeposit
-      ? { _id: platformWallet._id, 'transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } } }
-      : { _id: account._id, 'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } } };
+      ? { _id: platformWallet._id, 'transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } }) }
+      : { _id: account._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': checkoutRequestID } }) };
 
     if (Number(callback.ResultCode) !== 0) {
       const failureUpdate = isPlatformDeposit
@@ -2421,10 +2541,156 @@ router.post('/topup/stk/callback', async (req, res) => {
         };
     const update = await (isPlatformDeposit ? AdminWallet : User).updateOne(ownerFilter, successUpdate);
     if (!update.modifiedCount) return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
+
+    // Send a receipt only after the verified callback has actually credited the wallet.
+    // Email failure must not cause Safaricom to retry and risk duplicate processing.
+    try {
+      const recipientUserId = isPlatformDeposit
+        ? tx.metadata?.initiatedBy
+        : account._id;
+      const recipient = recipientUserId ? await User.findById(recipientUserId).select('name email role') : null;
+      if (recipient?.email) {
+        const accountName = isPlatformDeposit ? 'Admin platform wallet' : `${recipient.role || 'user'} wallet`;
+        const result = await sendMail({
+          to: recipient.email,
+          subject: `Sylva wallet deposit confirmed - KSh ${paidAmount}`,
+          sender: 'payment',
+          text: `Hello ${recipient.name || 'there'}, your KSh ${paidAmount} wallet deposit has been verified by Safaricom and credited to your ${accountName}. M-Pesa receipt: ${receipt}. Reference: ${tx.reference || tx.metadata?.internalReference || 'N/A'}. Your updated wallet balance is available in your Sylva account.`,
+          html: `<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:24px;color:#172033"><h2 style="color:#16803c">Wallet deposit confirmed</h2><p>Hello ${String(recipient.name || 'there').replace(/[&<>"]/g, '')},</p><p>Your M-Pesa payment has been verified and credited to your Sylva Technologies wallet.</p><p><strong>Amount:</strong> KSh ${paidAmount.toLocaleString('en-KE')}<br/><strong>M-Pesa receipt:</strong> ${receipt}<br/><strong>Reference:</strong> ${String(tx.reference || tx.metadata?.internalReference || 'N/A').replace(/[&<>"]/g, '')}</p><p>Sign in to Sylva Technologies to view your updated wallet balance and transaction history.</p><p>Sylva Technologies<br/>Empowering Your Digital Life</p></div>`,
+        });
+        if (!result?.success) console.error('Wallet deposit confirmation email was not sent:', result?.message || 'Unknown email error');
+      } else {
+        console.warn('Wallet deposit confirmed, but no recipient email was found.', { checkoutRequestID });
+      }
+    } catch (emailError) {
+      console.error('Wallet deposit confirmation email failed:', emailError.message);
+    }
+    console.info('M-Pesa wallet deposit credited after verification.', {
+      checkoutRequestID,
+      walletType: isPlatformDeposit ? 'platform' : 'user',
+      amount: paidAmount,
+      receipt,
+    });
     return res.json({ ResultCode: 0, ResultDesc: 'Deposit confirmed.' });
   } catch (error) {
     console.error('M-Pesa wallet callback error:', error.message);
     return res.status(500).json({ ResultCode: 1, ResultDesc: 'Callback processing failed.' });
+  }
+});
+
+
+/* Admin order-payment ledger: paid sales, estimated unsettled earnings and delivered seller net, per seller. */
+router.get('/admin/order-payments', protect, adminOnly, requireVerified, async (req, res) => {
+  try {
+    const sellers = await User.find({ role: 'seller' }).select('name email sellerStatus sellerProfile.storeName sellerProfile.country wallet.transactions usdWallet.transactions').lean();
+    const sellerById = new Map(sellers.map((seller) => [String(seller._id), {
+      _id: String(seller._id), name: seller.name || '', email: seller.email || '', storeName: seller.sellerProfile?.storeName || '',
+      country: seller.sellerProfile?.country || 'KE', sellerStatus: seller.sellerStatus || 'pending', paidOrders: 0, deliveredOrders: 0,
+      paidItemValueKES: 0, estimatedNetAwaitingSettlementKES: 0, deliveredNetKES: 0, creditedNetKES: 0, creditedNetUSD: 0,
+    }]));
+    const orders = await Order.find(mongoose.trusted({ paymentStatus: 'Paid', status: mongoose.trusted({ $ne: 'Cancelled' }) }))
+      .select('orderNumber status paymentStatus items createdAt')
+      .sort({ createdAt: -1 }).lean();
+
+    // Resolve product ownership in a separate query rather than nested population.
+    // This is resilient to deleted products and avoids nested-populate edge cases.
+    const productIds = [...new Set(orders.flatMap((order) => (order.items || [])
+      .map((item) => item.product ? String(item.product) : '')
+      .filter(Boolean)))];
+    const products = productIds.length
+      ? await Product.find(mongoose.trusted({ _id: mongoose.trusted({ $in: productIds }) }))
+          .select('_id seller').lean()
+      : [];
+    const sellerByProductId = new Map(products.map((product) => [
+      String(product._id),
+      product.seller ? String(product.seller) : '',
+    ]));
+    const transactionsBySeller = new Map(sellers.map((seller) => [String(seller._id), {
+      kes: Array.isArray(seller.wallet?.transactions) ? seller.wallet.transactions : [],
+      usd: Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [],
+    }]));
+    const configuredRate = Number(process.env.SELLER_COMMISSION_RATE ?? 0.04);
+    const commissionRate = Number.isFinite(configuredRate) && configuredRate >= 0 && configuredRate <= 1
+      ? configuredRate : configuredRate > 1 && configuredRate <= 100 ? configuredRate / 100 : 0.04;
+    for (const order of orders) {
+      const reference = 'order:' + String(order.orderNumber || '');
+      const delivered = String(order.status || '').toLowerCase() === 'delivered';
+      const sellerItemsById = new Map();
+      for (const item of order.items || []) {
+        const key = item.product ? sellerByProductId.get(String(item.product)) : '';
+        if (!key) continue;
+        if (!sellerById.has(key)) continue;
+        const list = sellerItemsById.get(key) || []; list.push(item); sellerItemsById.set(key, list);
+      }
+      for (const [sellerId, items] of sellerItemsById) {
+        const row = sellerById.get(sellerId);
+        const gross = roundMoney(items.reduce((sum, item) => sum + Number(item.subtotal || (Number(item.unitPrice || 0) * Number(item.quantity || 1))), 0));
+        const net = roundMoney(gross * (1 - commissionRate));
+        const transactions = transactionsBySeller.get(sellerId) || { kes: [], usd: [] };
+        const creditedKES = transactions.kes.find((tx) => tx?.reference === reference && tx?.category === 'order_settlement');
+        const creditedUSD = transactions.usd.find((tx) => tx?.reference === reference && tx?.category === 'order_settlement');
+        row.paidOrders += 1; row.paidItemValueKES = roundMoney(row.paidItemValueKES + gross);
+        if (delivered) { row.deliveredOrders += 1; row.deliveredNetKES = roundMoney(row.deliveredNetKES + net); }
+        if (creditedKES) row.creditedNetKES = roundMoney(row.creditedNetKES + Number(creditedKES.amount || 0));
+        if (creditedUSD) row.creditedNetUSD = roundMoney(row.creditedNetUSD + Number(creditedUSD.amount || 0));
+        if (!creditedKES && !creditedUSD && !delivered) row.estimatedNetAwaitingSettlementKES = roundMoney(row.estimatedNetAwaitingSettlementKES + net);
+      }
+    }
+    const data = [...sellerById.values()].sort((a, b) => b.paidItemValueKES - a.paidItemValueKES);
+    const totals = data.reduce((acc, seller) => {
+      for (const key of ['paidItemValueKES', 'estimatedNetAwaitingSettlementKES', 'deliveredNetKES', 'creditedNetKES', 'creditedNetUSD']) acc[key] = roundMoney(acc[key] + seller[key]);
+      return acc;
+    }, { paidItemValueKES: 0, estimatedNetAwaitingSettlementKES: 0, deliveredNetKES: 0, creditedNetKES: 0, creditedNetUSD: 0 });
+    return res.json({ success: true, count: data.length, totals, data });
+  } catch (error) {
+    console.error('Admin order payments error:', error.stack || error.message);
+    return res.status(500).json({ success: false, message: 'Unable to load seller order-payment figures.' });
+  }
+});
+
+
+/* Admin-only per-seller balances so finance can see amounts currently payable. */
+router.get('/admin/seller-balances', protect, adminOnly, requireVerified, async (req, res) => {
+  try {
+    const sellers = await User.find({ role: 'seller' })
+      .select('name email phone sellerStatus storeStatus sellerProfile.storeName sellerProfile.country wallet.availableBalance wallet.pendingBalance wallet.transactions usdWallet.availableBalance usdWallet.pendingBalance usdWallet.transactions')
+      .lean();
+
+    const data = sellers.map((seller) => {
+      const kesTransactions = Array.isArray(seller.wallet?.transactions) ? seller.wallet.transactions : [];
+      const usdTransactions = Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [];
+      const pendingKesPayout = kesTransactions.find((tx) => tx.category === 'payout_request' && tx.status === 'pending');
+      const pendingUsdPayout = usdTransactions.find((tx) => tx.category === 'payout_request' && tx.status === 'pending');
+      return {
+        _id: String(seller._id),
+        name: seller.name || '',
+        email: seller.email || '',
+        phone: seller.phone || '',
+        storeName: seller.sellerProfile?.storeName || '',
+        country: seller.sellerProfile?.country || 'KE',
+        sellerStatus: seller.sellerStatus || 'pending',
+        storeStatus: seller.storeStatus || 'inactive',
+        kesAvailable: roundMoney(seller.wallet?.availableBalance || 0),
+        kesPending: roundMoney(seller.wallet?.pendingBalance || 0),
+        usdAvailable: roundMoney(seller.usdWallet?.availableBalance || 0),
+        usdPending: roundMoney(seller.usdWallet?.pendingBalance || 0),
+        pendingKesPayout: pendingKesPayout ? {
+          amount: roundMoney(pendingKesPayout.amount || 0),
+          reference: pendingKesPayout.reference || '',
+          createdAt: pendingKesPayout.createdAt || null,
+        } : null,
+        pendingUsdPayout: pendingUsdPayout ? {
+          amount: roundMoney(pendingUsdPayout.amount || 0),
+          reference: pendingUsdPayout.reference || '',
+          createdAt: pendingUsdPayout.createdAt || null,
+        } : null,
+      };
+    });
+
+    return res.json({ success: true, count: data.length, data });
+  } catch (error) {
+    console.error('Admin seller balance list error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to load seller payable balances.' });
   }
 });
 
@@ -2499,7 +2765,7 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
       mpesaConfiguration: {
         configured: missingMpesaSettings.length === 0,
         missing: missingMpesaSettings,
-        environment: process.env.MPESA_ENV === 'sandbox' ? 'sandbox' : 'production',
+        environment: String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase(),
         callbackPath: '/api/wallet/topup/stk/callback',
         expectedCallbackUrl: 'https://sylva-technologies-backend.onrender.com/api/wallet/topup/stk/callback',
       },

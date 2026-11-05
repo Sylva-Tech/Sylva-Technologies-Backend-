@@ -32,6 +32,49 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Customer identity number collected during registration.
+    // Kept separate from sellerProfile.idNumber.
+    idNumber: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: [50, 'ID number cannot exceed 50 characters'],
+      select: true,
+    },
+
+    bio: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: [500, 'Bio cannot exceed 500 characters'],
+    },
+
+    profilePicture: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 1000,
+    },
+
+    profilePicturePublicId: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 300,
+      select: false,
+    },
+
+    accountDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
+
     password: {
       type: String,
       required: [true, 'Password is required'],
@@ -56,6 +99,24 @@ const userSchema = new mongoose.Schema(
       ref: 'User',
       default: null,
     },
+
+    savedAddresses: [
+      {
+        label: { type: String, trim: true, maxlength: 40, default: 'Home' },
+        fullName: { type: String, trim: true, maxlength: 100, required: true },
+        phone: { type: String, trim: true, maxlength: 30, required: true },
+        email: { type: String, trim: true, lowercase: true, maxlength: 150, default: '' },
+        country: { type: String, trim: true, maxlength: 80, default: 'Kenya' },
+        county: { type: String, trim: true, maxlength: 100, required: true },
+        subCounty: { type: String, trim: true, maxlength: 100, required: true },
+        ward: { type: String, trim: true, maxlength: 100, required: true },
+        deliveryLocation: { type: String, trim: true, maxlength: 250, required: true },
+        address: { type: String, trim: true, maxlength: 300, required: true },
+        isDefault: { type: Boolean, default: false },
+        createdAt: { type: Date, default: Date.now },
+        updatedAt: { type: Date, default: Date.now },
+      },
+    ],
 
     address: {
       type: String,
@@ -379,6 +440,13 @@ const userSchema = new mongoose.Schema(
           250,
           'Store location cannot exceed 250 characters',
         ],
+      },
+
+      storeLogo: {
+        type: String,
+        default: '',
+        trim: true,
+        maxlength: [500, 'Store logo URL is too long'],
       },
 
       /* ------------------------------------------
