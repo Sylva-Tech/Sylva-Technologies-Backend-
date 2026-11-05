@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 
 const User = require('../models/User');
 const Order = require('../models/Order');
@@ -18,50 +19,302 @@ const cloudinary = require('../config/cloudinary');
 
 const router = express.Router();
 
+/*
+|--------------------------------------------------------------------------
+| MARK CUSTOMER ACCOUNT AS REVIEWED BY ADMIN
+|--------------------------------------------------------------------------
+*/
+router.patch('/:id/admin-review', protect, adminOnly, async (req, res) => {
+  try {
+    const user = await User.findOneAndUpdate(
+      { _id: req.params.id, role: 'customer' },
+      { $set: { adminReviewedAt: new Date(), adminReviewedBy: req.user._id } },
+      { returnDocument: 'after' }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Customer account not found.' });
+    }
+
+    return res.json({ success: true, message: 'Customer marked as reviewed.', data: user });
+  } catch (error) {
+    console.error('Mark customer reviewed error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to mark this customer as reviewed.' });
+  }
+});
+
+// CUSTOMER SAVED DELIVERY ADDRESSES
+// Every operation is scoped to the authenticated account.
+router.get('/me/addresses', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('savedAddresses');
+    if (!user || user.accountDeleted) return res.status(404).json({ success: false, message: 'Account not found.' });
+    const addresses = [...(user.savedAddresses || [])].sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+    return res.json({ success: true, data: addresses });
+  } catch (error) {
+    console.error('List saved addresses error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load saved addresses.' });
+  }
+});
+
+router.post('/me/addresses', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user || user.accountDeleted) return res.status(404).json({ success: false, message: 'Account not found.' });
+
+    const body = req.body || {};
+    const required = ['fullName', 'phone', 'county', 'subCounty', 'ward', 'deliveryLocation', 'address'];
+    for (const field of required) {
+      if (!String(body[field] || '').trim()) {
+        return res.status(400).json({ success: false, message: 'Please provide ' + field + ' to save this delivery address.' });
+      }
+    }
+    const value = {
+      label: String(body.label || 'Home').trim().slice(0, 40) || 'Home',
+      fullName: String(body.fullName).trim(),
+      phone: String(body.phone).trim(),
+      email: String(body.email || '').trim().toLowerCase(),
+      country: String(body.country || 'Kenya').trim(),
+      county: String(body.county).trim(),
+      subCounty: String(body.subCounty).trim(),
+      ward: String(body.ward).trim(),
+      deliveryLocation: String(body.deliveryLocation).trim(),
+      address: String(body.address).trim(),
+      updatedAt: new Date(),
+    };
+    const makeDefault = body.isDefault === true || body.isDefault === 'true' || !(user.savedAddresses || []).some(item => item.isDefault);
+
+    if (body.addressId) {
+      const existing = user.savedAddresses.id(body.addressId);
+      if (!existing) return res.status(404).json({ success: false, message: 'Saved address not found.' });
+      Object.assign(existing, value);
+      if (makeDefault) existing.isDefault = true;
+      else if (body.isDefault === false || body.isDefault === 'false') existing.isDefault = false;
+    } else {
+      user.savedAddresses.push({ ...value, isDefault: makeDefault, createdAt: new Date() });
+    }
+
+    const defaultAddress = makeDefault
+      ? (body.addressId ? user.savedAddresses.id(body.addressId) : user.savedAddresses[user.savedAddresses.length - 1])
+      : null;
+    if (defaultAddress) user.savedAddresses.forEach(item => { item.isDefault = String(item._id) === String(defaultAddress._id); });
+    if (!user.savedAddresses.some(item => item.isDefault) && user.savedAddresses.length) user.savedAddresses[0].isDefault = true;
+
+    await user.save();
+    const savedAddressId = String(body.addressId || user.savedAddresses[user.savedAddresses.length - 1]?._id || '');
+    const addresses = [...user.savedAddresses].sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+    return res.status(body.addressId ? 200 : 201).json({ success: true, message: body.addressId ? 'Saved address updated.' : 'Delivery address saved.', savedAddressId, data: addresses });
+  } catch (error) {
+    console.error('Save delivery address error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Unable to save this delivery address.' });
+  }
+});
+
+router.patch('/me/addresses/:addressId/default', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user || user.accountDeleted) return res.status(404).json({ success: false, message: 'Account not found.' });
+    const selected = user.savedAddresses.id(req.params.addressId);
+    if (!selected) return res.status(404).json({ success: false, message: 'Saved address not found.' });
+    user.savedAddresses.forEach(item => { item.isDefault = String(item._id) === String(selected._id); });
+    await user.save();
+    return res.json({ success: true, message: 'Default delivery address updated.', data: user.savedAddresses });
+  } catch (error) {
+    console.error('Set default delivery address error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to set the default address.' });
+  }
+});
+
+router.delete('/me/addresses/:addressId', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user || user.accountDeleted) return res.status(404).json({ success: false, message: 'Account not found.' });
+    const selected = user.savedAddresses.id(req.params.addressId);
+    if (!selected) return res.status(404).json({ success: false, message: 'Saved address not found.' });
+    const wasDefault = selected.isDefault;
+    selected.deleteOne();
+    if (wasDefault && user.savedAddresses.length) user.savedAddresses[0].isDefault = true;
+    await user.save();
+    return res.json({ success: true, message: 'Saved address removed.', data: user.savedAddresses });
+  } catch (error) {
+    console.error('Delete saved address error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to remove this saved address.' });
+  }
+});
+
+router.put(
+  '/me/profile',
+  protect,
+  sellerUpload.single('profilePicture'),
+  async (req, res) => {
+    try {
+      const user = await User.findById(req.user._id).select('+profilePicturePublicId');
+      if (!user || user.accountDeleted) {
+        return res.status(404).json({ success: false, message: 'Account not found.' });
+      }
+
+      const name = req.body?.name;
+      const email = req.body?.email;
+      const phone = req.body?.phone;
+      const idNumber = req.body?.idNumber;
+      const bio = req.body?.bio;
+      const currentPassword = String(req.body?.currentPassword || '');
+      const newPassword = String(req.body?.newPassword || '');
+
+      if (name !== undefined) {
+        const value = String(name).trim();
+        if (value.length < 2 || value.length > 100) {
+          return res.status(400).json({ success: false, message: 'Name must be between 2 and 100 characters.' });
+        }
+        user.name = value;
+      }
+
+      if (email !== undefined) {
+        const value = String(email).trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) || value.length > 150) {
+          return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
+        }
+        if (value !== user.email) {
+          const existing = await User.findOne({ email: value }).select('_id');
+          if (existing && String(existing._id) !== String(user._id)) {
+            return res.status(409).json({ success: false, message: 'That email address is already in use.' });
+          }
+          user.email = value;
+          user.isVerified = false;
+        }
+      }
+
+      if (phone !== undefined) {
+        const value = String(phone).trim();
+        if (value.length > 30) return res.status(400).json({ success: false, message: 'Phone number is too long.' });
+        user.phone = value;
+      }
+
+      if (idNumber !== undefined) {
+        const value = String(idNumber).trim();
+        const existingIdNumber = String(user.idNumber || '').trim();
+
+        // Government ID numbers are write-once: allow an account missing an ID
+        // to add it, but never allow the saved value to be changed afterwards.
+        if (existingIdNumber && value !== existingIdNumber) {
+          return res.status(409).json({
+            success: false,
+            message: 'Your ID number is already saved and cannot be changed.',
+          });
+        }
+
+        if (!existingIdNumber) {
+          if (value.length < 5 || value.length > 50) {
+            return res.status(400).json({ success: false, message: 'ID number must be between 5 and 50 characters.' });
+          }
+          const duplicate = await User.findOne({ idNumber: value }).select('_id');
+          if (duplicate && String(duplicate._id) !== String(user._id)) {
+            return res.status(409).json({ success: false, message: 'An account with this ID number already exists.' });
+          }
+          user.idNumber = value;
+        }
+      }
+
+      if (bio !== undefined) {
+        const value = String(bio).trim();
+        if (value.length > 500) return res.status(400).json({ success: false, message: 'Bio cannot exceed 500 characters.' });
+        user.bio = value;
+      }
+
+      if (newPassword) {
+        if (!currentPassword || !(await user.matchPassword(currentPassword))) {
+          return res.status(400).json({ success: false, message: 'Enter your current password to change it.' });
+        }
+        if (newPassword.length < 8) {
+          return res.status(400).json({ success: false, message: 'New password must be at least 8 characters.' });
+        }
+        if (newPassword === currentPassword) {
+          return res.status(400).json({ success: false, message: 'Choose a password different from your current password.' });
+        }
+        user.password = newPassword;
+      }
+
+      if (req.file) {
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(req.file.mimetype)) {
+          return res.status(400).json({ success: false, message: 'Profile pictures must be JPG, PNG or WEBP images.' });
+        }
+        const uploaded = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: 'sylva/profile-pictures', resource_type: 'image', type: 'upload', transformation: [{ width: 600, height: 600, crop: 'fill', gravity: 'face', quality: 'auto', fetch_format: 'auto' }] },
+            (error, result) => error ? reject(error) : resolve(result)
+          );
+          stream.end(req.file.buffer);
+        });
+        user.profilePicture = uploaded.secure_url;
+        user.profilePicturePublicId = uploaded.public_id;
+      }
+
+      await user.save();
+      const safeUser = user.toObject();
+      delete safeUser.password;
+      delete safeUser.profilePicturePublicId;
+
+      return res.json({ success: true, message: 'Profile updated successfully.', data: { user: safeUser } });
+    } catch (error) {
+      console.error('Update own profile error:', error);
+      return res.status(500).json({ success: false, message: error.message || 'Unable to update your profile.' });
+    }
+  }
+);
+
 router.delete('/me', protect, async (req, res) => {
   try {
-    if (!req.user || !req.user._id) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required.',
-      });
+    const currentPassword = String(req.body?.currentPassword || '');
+    const user = await User.findById(req.user._id);
+    if (!user || user.accountDeleted) {
+      return res.status(404).json({ success: false, message: 'Account not found.' });
+    }
+    if (!currentPassword || !(await user.matchPassword(currentPassword))) {
+      return res.status(401).json({ success: false, message: 'Your current password is required to confirm account deletion.' });
     }
 
-    if (req.user.role === 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Admin accounts cannot be deleted from this endpoint.',
-      });
+    if (user.role === 'admin') {
+      const adminAccounts = await User.find({ role: 'admin' }).select('accountDeleted');
+      const activeAdmins = adminAccounts.filter(account => !account.accountDeleted).length;
+      if (activeAdmins <= 1) {
+        return res.status(409).json({ success: false, message: 'This is the only active administrator. Create and verify another administrator before deleting this account.' });
+      }
     }
 
-    const deletedUser = await User.findById(req.user._id);
-
-    if (!deletedUser) {
-      return res.status(404).json({
-        success: false,
-        message: 'User account not found.',
-      });
+    const available = Number(user.wallet?.availableBalance || 0);
+    const pending = Number(user.wallet?.pendingBalance || 0);
+    if (available > 0 || pending > 0) {
+      return res.status(409).json({ success: false, message: 'Please withdraw your available wallet funds and resolve pending transactions before deleting your account.' });
     }
+    const pendingWalletAction = (user.wallet?.transactions || []).some(tx =>
+      tx.status === 'pending' && ['payout_request', 'mpesa_topup'].includes(tx.category)
+    );
+    if (pendingWalletAction) {
+      return res.status(409).json({ success: false, message: 'Please wait for pending wallet deposits or withdrawals to be resolved before deleting your account.' });
+    }
+
+    // Preserve order and financial history; disable access and anonymize sign-in details.
+    user.accountDeleted = true;
+    user.deletedAt = new Date();
+    user.name = 'Deleted Sylva account';
+    user.email = 'deleted-' + String(user._id) + '@deleted.sylva.invalid';
+    user.phone = '';
+    user.bio = '';
+    user.profilePicture = '';
+    user.profilePicturePublicId = '';
+    user.isVerified = false;
+    user.password = crypto.randomBytes(48).toString('hex');
+    await user.save();
 
     await Promise.all([
-      User.findByIdAndDelete(req.user._id),
-      Order.deleteMany({ customer: req.user._id }),
-      Order.deleteMany({ customerEmail: req.user.email }),
-      Notification.deleteMany({ user: req.user._id }),
-      VerificationToken.deleteMany({ user: req.user._id }),
+      Notification.deleteMany({ user: user._id }),
+      VerificationToken.deleteMany({ user: user._id }),
     ]);
 
-    return res.json({
-      success: true,
-      message: 'Your account and all associated records have been deleted successfully.',
-    });
+    return res.json({ success: true, message: 'Your account has been deactivated and your sign-in details anonymized. Historical order and financial records are retained for recordkeeping.' });
   } catch (error) {
     console.error('Delete current user error:', error);
-
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Unable to delete your account.',
-    });
+    return res.status(500).json({ success: false, message: 'Unable to delete your account right now.' });
   }
 });
 
@@ -133,6 +386,12 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
+      // One-time compatibility backfill: existing accounts predate inbox review tracking.
+      await User.collection.updateMany(
+        { adminReviewedAt: { $exists: false } },
+        { $set: { adminReviewedAt: new Date() } }
+      );
+
       const users = await User.find()
         .select('-password')
         .sort({
@@ -457,12 +716,31 @@ router.put(
 
       if (
         !idNumber ||
-        idNumber.trim().length < 3
+        idNumber.trim().length < 3 ||
+        !kraPin ||
+        !/^[A-Za-z]\d{9}[A-Za-z]$/.test(String(kraPin).trim())
       ) {
         return res.status(400).json({
           success: false,
           message:
-            'Please provide your identification number.',
+            'Please provide a valid identification number and KRA PIN number.',
+        });
+      }
+
+      const normalizedIdNumber = String(idNumber || '').replace(/\s+/g, '').toUpperCase();
+      const normalizedKraPin = String(kraPin || '').replace(/\s+/g, '').toUpperCase();
+      const duplicateSellerIdentity = await User.findOne({
+        _id: { $ne: user._id },
+        $or: [
+          { 'sellerProfile.idNumber': normalizedIdNumber },
+          { 'sellerProfile.kraPin': normalizedKraPin },
+        ],
+      }).select('_id');
+
+      if (duplicateSellerIdentity) {
+        return res.status(409).json({
+          success: false,
+          message: 'These ID or KRA details are already associated with another seller application/store. You may resubmit documents on this same account, but the same identity cannot be used to open another store.',
         });
       }
 
@@ -571,7 +849,7 @@ router.put(
         idType;
 
       user.sellerProfile.idNumber =
-        idNumber.trim();
+        normalizedIdNumber;
 
       /*
        * Preserve the existing date of birth
@@ -626,7 +904,7 @@ router.put(
   typeof kraPin === 'string'
 ) {
   user.sellerProfile.kraPin =
-    kraPin.trim();
+    normalizedKraPin;
 }
 
       /*

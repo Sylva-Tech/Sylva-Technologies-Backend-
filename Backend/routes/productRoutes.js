@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 
 const Product = require('../models/Product');
 const Category = require('../models/Category');
+const Brand = require('../models/Brand');
+const User = require('../models/User');
 
 const {
   protect,
@@ -12,6 +14,7 @@ const {
 
 const sellerUpload = require('../middleware/sellerUpload');
 const uploadProductImage = require('../utils/uploadProductImage');
+const { sendSalesNotificationEmail } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -23,6 +26,13 @@ const MAX_PRODUCT_IMAGES = 4;
 /*
  * Build a clean URL-friendly slug.
  */
+const escapeEmailHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
 const buildSlug = (value) =>
   String(value || '')
     .toLowerCase()
@@ -40,6 +50,21 @@ const toNumber = (value, fallback = 0) => {
   return Number.isFinite(number)
     ? number
     : fallback;
+};
+
+/*
+ * Normalize booleans from JSON and admin form payloads.
+ * Boolean("false") is true in JavaScript, so avoid Boolean(value).
+ */
+const parseBoolean = (value, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+
+  return fallback;
 };
 
 /*
@@ -160,6 +185,35 @@ const uploadProductImages = async (files = []) => {
    ========================================================= */
 
 /*
+ * GET /api/products/filters
+ * Public filter options for the live catalogue. Includes categories and brands
+ * already used by approved products, even when older product brands predate the brand catalogue.
+ */
+router.get('/filters', async (req, res) => {
+  try {
+    const [categories, activeBrands, productBrands] = await Promise.all([
+      Category.find({ isActive: true }).select('_id name slug parentCategory').sort({ name: 1 }).lean(),
+      Brand.find({ isActive: true }).select('_id name slug').sort({ name: 1 }).lean(),
+      Product.distinct('brand', { isActive: mongoose.trusted({ $ne: false }), approvalStatus: 'approved' }),
+    ]);
+    const brandMap = new Map();
+    for (const item of activeBrands) {
+      if (item?.name) brandMap.set(item.name.trim().toLowerCase(), { ...item, name: item.name.trim() });
+    }
+    for (const value of productBrands) {
+      const name = String(value || '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (!brandMap.has(key)) brandMap.set(key, { _id: 'product-brand-' + key.replace(/[^a-z0-9]+/g, '-'), name, slug: buildSlug(name), fromExistingProduct: true });
+    }
+    return res.json({ categories, brands: [...brandMap.values()].sort((a, b) => a.name.localeCompare(b.name)) });
+  } catch (error) {
+    console.error('Unable to load product filters:', error);
+    return res.status(500).json({ message: 'Unable to load catalogue filters.' });
+  }
+});
+
+/*
  * GET /api/products
  *
  * Public product catalogue.
@@ -171,9 +225,11 @@ router.get('/', async (req, res) => {
       brand,
       search,
       featured,
+      isNew,
       flashSale,
       offer,
       inStock,
+      condition,
       sort,
       page = 1,
       limit = 12,
@@ -189,13 +245,29 @@ router.get('/', async (req, res) => {
       Math.max(1, Number(limit) || 12)
     );
 
+    // Run promotion expiry maintenance only for featured catalogue requests,
+    // not every ordinary product search. This avoids an unnecessary DB write
+    // on the most common mobile browsing path.
+    if (featured === 'true') {
+      await Product.updateMany(
+        {
+          seller: mongoose.trusted({ $ne: null }),
+          featured: true,
+          featuredExpiresAt: mongoose.trusted({ $lte: new Date() }),
+        },
+        { $set: { featured: false, isNew: false, sponsorshipStatus: 'expired' } },
+      );
+    }
+
     /*
      * Public catalogue only shows:
      * - active products
      * - approved products
      */
     const filter = {
-      isActive: true,
+      // Treat legacy approved records with no isActive field as active.
+      // Explicitly inactive, pending, and rejected products remain hidden.
+      isActive: mongoose.trusted({ $ne: false }),
       approvalStatus: 'approved',
     };
 
@@ -215,8 +287,12 @@ router.get('/', async (req, res) => {
         });
       }
 
-      filter.category =
-        categoryRecord._id;
+      // Selecting a top-level category includes products in its subcategories.
+      const childCategories = await Category.find({ parentCategory: categoryRecord._id, isActive: true }).select('_id').lean();
+      const categoryIds = [categoryRecord._id, ...childCategories.map(item => item._id)];
+      filter.category = categoryIds.length > 1
+        ? mongoose.trusted({ $in: categoryIds })
+        : categoryRecord._id;
     }
 
     /*
@@ -231,6 +307,23 @@ router.get('/', async (req, res) => {
      */
     if (featured === 'true') {
       filter.featured = true;
+      // Platform-managed featured items may have no expiry. Seller-sponsored
+      // items must have a future paid-through date.
+      filter.$and = [
+        ...(filter.$and || []),
+        { $or: [
+          { seller: null },
+          { seller: mongoose.trusted({ $exists: false }) },
+          { featuredExpiresAt: mongoose.trusted({ $gt: new Date() }) },
+        ] },
+      ];
+    }
+
+    /*
+     * New arrival products.
+     */
+    if (isNew === 'true') {
+      filter.isNew = true;
     }
 
     /*
@@ -245,6 +338,13 @@ router.get('/', async (req, res) => {
      */
     if (offer === 'true') {
       filter.offer = true;
+    }
+
+    /*
+     * Product condition (new, refurbished or used).
+     */
+    if (['New', 'Refurbished', 'Used'].includes(condition)) {
+      filter.condition = condition;
     }
 
     /*
@@ -319,91 +419,53 @@ router.get('/', async (req, res) => {
     }
 
     /*
-     * Fetch all matching products first.
+     * Use database pagination for the normal catalogue. Previously the route
+     * loaded every matching product into Node, populated every seller/category,
+     * then sliced the result; this becomes slow as the catalogue grows and is
+     * particularly costly on mobile connections.
      */
-    let products =
-      await Product.find(filter)
-        .populate(
-          'category',
-          'name slug'
-        )
-        .populate(
-          'seller',
-          'name email sellerProfile.storeName'
-        )
-        .sort(sortOption);
+    const needsDateWindowFiltering = flashSale === 'true' || offer === 'true';
+    if (!needsDateWindowFiltering) {
+      const [pageProducts, totalProducts] = await Promise.all([
+        Product.find(filter)
+          .populate('category', 'name slug')
+          .populate('seller', 'name email sellerProfile.storeName')
+          .sort(sortOption)
+          .skip((safePage - 1) * safeLimit)
+          .limit(safeLimit)
+          .lean(),
+        Product.countDocuments(filter),
+      ]);
 
-    /*
-     * For offer/flash-sale requests,
-     * ensure the current date is inside
-     * the optional offer date range.
-     */
-    if (
-      flashSale === 'true' ||
-      offer === 'true'
-    ) {
-      const now = new Date();
-
-      products = products.filter(
-        (product) => {
-          const start =
-            product.offerStartDate
-              ? new Date(
-                  product.offerStartDate
-                )
-              : null;
-
-          const end =
-            product.offerEndDate
-              ? new Date(
-                  product.offerEndDate
-                )
-              : null;
-
-          const hasStarted =
-            !start ||
-            start.getTime() <=
-              now.getTime();
-
-          const hasNotEnded =
-            !end ||
-            end.getTime() >
-              now.getTime();
-
-          return (
-            hasStarted &&
-            hasNotEnded
-          );
-        }
-      );
+      return res.json({
+        products: pageProducts,
+        page: safePage,
+        totalPages: Math.ceil(totalProducts / safeLimit),
+        totalProducts,
+      });
     }
 
-    const totalProducts =
-      products.length;
+    // Offers and flash sales retain their existing date-window checks.
+    let products = await Product.find(filter)
+      .populate('category', 'name slug')
+      .populate('seller', 'name email sellerProfile.storeName')
+      .sort(sortOption);
 
-    const totalPages =
-      Math.ceil(
-        totalProducts / safeLimit
-      );
+    const now = new Date();
+    products = products.filter((product) => {
+      const start = product.offerStartDate ? new Date(product.offerStartDate) : null;
+      const end = product.offerEndDate ? new Date(product.offerEndDate) : null;
+      return (!start || start.getTime() <= now.getTime()) &&
+        (!end || end.getTime() > now.getTime());
+    });
 
-    const startIndex =
-      (safePage - 1) * safeLimit;
-
-    const paginatedProducts =
-      products.slice(
-        startIndex,
-        startIndex + safeLimit
-      );
-
+    const totalProducts = products.length;
+    const totalPages = Math.ceil(totalProducts / safeLimit);
+    const startIndex = (safePage - 1) * safeLimit;
     return res.json({
-      products:
-        paginatedProducts,
-
-      page:
-        safePage,
-
+      products: products.slice(startIndex, startIndex + safeLimit),
+      page: safePage,
       totalPages,
-
       totalProducts,
     });
   } catch (error) {
@@ -432,6 +494,9 @@ router.get(
       const product =
         await Product.findOne({
           slug: req.params.slug,
+          // Keep legacy approved products (missing isActive) consistent with the catalogue.
+          isActive: mongoose.trusted({ $ne: false }),
+          approvalStatus: 'approved',
         })
           .populate('category')
           .populate(
@@ -461,6 +526,144 @@ router.get(
 /* =========================================================
    SELLER PRODUCT ROUTES
    ========================================================= */
+
+/*
+ * GET /api/products/store/:sellerId
+ * Public storefront: only active, approved listings from an approved seller.
+ */
+router.get('/store/:sellerId/products', async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.sellerId)) {
+      return res.status(400).json({ success: false, message: 'Invalid store ID.' });
+    }
+    const seller = await User.findOne({
+      _id: req.params.sellerId,
+      sellerStatus: 'approved',
+      accountStatus: mongoose.trusted({ $nin: ['suspended', 'banned'] }),
+    }).select('name email createdAt sellerProfile.storeName sellerProfile.storeProfile sellerProfile.storeLocation sellerProfile.storeLogo');
+    if (!seller) {
+      return res.status(404).json({ success: false, message: 'Store not found or unavailable.' });
+    }
+    const products = await Product.find({
+      seller: seller._id,
+      isActive: mongoose.trusted({ $ne: false }),
+      approvalStatus: 'approved',
+    }).populate('category', 'name slug').sort({ featured: -1, createdAt: -1 });
+    return res.json({
+      success: true,
+      seller: {
+        _id: seller._id,
+        name: seller.name,
+        email: seller.email,
+        createdAt: seller.createdAt,
+        storeName: seller.sellerProfile?.storeName || 'Seller Store',
+        storeProfile: seller.sellerProfile?.storeProfile || '',
+        storeLocation: seller.sellerProfile?.storeLocation || '',
+        storeLogo: seller.sellerProfile?.storeLogo || '',
+      },
+      data: products,
+    });
+  } catch (error) {
+    console.error('Public seller store catalogue error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load this store.' });
+  }
+});
+
+/*
+ * SELLER STORE PROFILE
+ * Store details are always scoped to the authenticated seller.
+ */
+router.get('/seller/store', protect, approvedSellerOnly, async (req, res) => {
+  try {
+    const seller = await User.findById(req.user._id).select('sellerProfile');
+    if (!seller || !seller.sellerProfile) {
+      return res.status(404).json({ success: false, message: 'Seller profile not found.' });
+    }
+    const profile = seller.sellerProfile;
+    return res.json({
+      success: true,
+      data: {
+        storeName: profile.storeName || '',
+        storeProfile: profile.storeProfile || '',
+        storeLocation: profile.storeLocation || '',
+        storeLogo: profile.storeLogo || '',
+      },
+    });
+  } catch (error) {
+    console.error('Load seller store profile error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load store information.' });
+  }
+});
+
+router.put('/seller/store', protect, approvedSellerOnly, async (req, res) => {
+  try {
+    const storeName = String(req.body?.storeName || '').trim();
+    const storeProfile = String(req.body?.storeProfile || '').trim();
+    const storeLocation = String(req.body?.storeLocation || '').trim();
+    const storeLogo = String(req.body?.storeLogo || '').trim();
+
+    if (storeName.length < 2 || storeName.length > 150) {
+      return res.status(400).json({ success: false, message: 'Store name must be between 2 and 150 characters.' });
+    }
+    if (storeProfile.length > 1000) {
+      return res.status(400).json({ success: false, message: 'Store description cannot exceed 1000 characters.' });
+    }
+    if (storeLocation.length > 250) {
+      return res.status(400).json({ success: false, message: 'Store location cannot exceed 250 characters.' });
+    }
+    if (storeLogo && (!/^https?:\/\//i.test(storeLogo) || storeLogo.length > 500)) {
+      return res.status(400).json({ success: false, message: 'Store logo must be a valid HTTPS or HTTP image URL.' });
+    }
+
+    const seller = await User.findById(req.user._id);
+    if (!seller || !seller.sellerProfile) {
+      return res.status(404).json({ success: false, message: 'Seller profile not found.' });
+    }
+
+    seller.sellerProfile.storeName = storeName;
+    seller.sellerProfile.storeProfile = storeProfile;
+    seller.sellerProfile.storeLocation = storeLocation;
+    seller.sellerProfile.storeLogo = storeLogo;
+    await seller.save();
+
+    return res.json({
+      success: true,
+      message: 'Store information saved successfully.',
+      data: {
+        storeName,
+        storeProfile,
+        storeLocation,
+        storeLogo,
+      },
+    });
+  } catch (error) {
+    console.error('Update seller store profile error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Unable to save store information.' });
+  }
+});
+
+/*
+ * GET /api/products/seller/product/:id
+ * Read one product belonging to the authenticated seller, including products
+ * that are pending or rejected and therefore are not publicly visible.
+ */
+router.get('/seller/product/:id', protect, approvedSellerOnly, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+    }
+    const product = await Product.findOne({ _id: req.params.id, seller: req.user._id })
+      .populate('category')
+      .populate('seller', 'name email sellerProfile.storeName');
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found in your store.' });
+    }
+    return res.json({ success: true, product });
+  } catch (error) {
+    console.error('Load seller product error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load this product.' });
+  }
+});
 
 /*
  * GET /api/products/seller/me
@@ -582,6 +785,191 @@ router.get(
 );
 
 /*
+ * GET /api/products/seller/sheet-csv
+ * Safely proxy a public Google Sheets CSV export to avoid browser CORS issues.
+ * Only Google Sheets spreadsheet URLs are accepted; arbitrary URLs are rejected.
+ */
+router.get('/seller/sheet-csv', protect, approvedSellerOnly, async (req, res) => {
+  try {
+    const input = String(req.query.url || '').trim();
+    if (!input || input.length > 1500) {
+      return res.status(400).json({ success: false, message: 'Provide a valid Google Sheets URL.' });
+    }
+    const sheetUrl = new URL(input);
+    if (sheetUrl.hostname !== 'docs.google.com' || !sheetUrl.pathname.includes('/spreadsheets/d/')) {
+      return res.status(400).json({ success: false, message: 'Only Google Sheets spreadsheet links are supported.' });
+    }
+    const match = sheetUrl.pathname.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+    if (!match) {
+      return res.status(400).json({ success: false, message: 'That Google Sheets link is not valid.' });
+    }
+    const gid = sheetUrl.searchParams.get('gid') || '0';
+    if (!/^\d+$/.test(gid)) {
+      return res.status(400).json({ success: false, message: 'The Google Sheets tab ID is invalid.' });
+    }
+    const exportUrl = 'https://docs.google.com/spreadsheets/d/' + match[1] + '/export?format=csv&gid=' + gid;
+    const response = await fetch(exportUrl, { headers: { Accept: 'text/csv,text/plain;q=0.9,*/*;q=0.1' } });
+    if (!response.ok) {
+      return res.status(400).json({ success: false, message: 'Could not download the sheet. Share it as “Anyone with the link can view” or publish it to the web.' });
+    }
+    const csv = await response.text();
+    if (/<html[\s>]/i.test(csv.slice(0, 500))) {
+      return res.status(400).json({ success: false, message: 'Google returned a web page instead of CSV. Make the sheet viewable by anyone with the link.' });
+    }
+    res.set('Cache-Control', 'no-store');
+    return res.type('text/csv; charset=utf-8').send(csv);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return res.status(400).json({ success: false, message: 'Enter a valid Google Sheets URL.' });
+    }
+    console.error('Seller Google Sheets CSV load error:', error);
+    return res.status(502).json({ success: false, message: 'Unable to load this Google Sheet. Download it as CSV and upload it instead.' });
+  }
+});
+
+/*
+ * POST /api/products/seller/import
+ * Bulk seller catalogue import from CSV / Google Sheets.
+ * Listings are always pending admin approval and scoped to the authenticated seller.
+ */
+router.post('/seller/import', protect, approvedSellerOnly, async (req, res) => {
+  try {
+    const rows = req.body?.products;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'Provide at least one product to import.' });
+    }
+    if (rows.length > 100) {
+      return res.status(400).json({ success: false, message: 'Import a maximum of 100 products per batch.' });
+    }
+
+    const importedProducts = [];
+    const errors = [];
+    const sellerId = String(req.user._id);
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index] || {};
+      const rowNumber = Number(row.rowNumber) || index + 2;
+      try {
+        const name = String(row.name || '').trim();
+        const brand = String(row.brand || '').trim();
+        const category = String(row.category || '').trim();
+        const price = Number(row.price);
+        const oldPrice = row.oldPrice === '' || row.oldPrice == null ? 0 : Number(row.oldPrice);
+        const stock = row.stock === '' || row.stock == null ? 0 : Number(row.stock);
+        const deliveryFee = row.deliveryFee === '' || row.deliveryFee == null ? 0 : Number(row.deliveryFee);
+
+        if (!name || !brand || !category || !String(row.description || row.shortDescription || '').trim()) {
+          throw new Error('Name, brand, category and description are required.');
+        }
+        if (!Number.isFinite(price) || price < 0 || !Number.isFinite(oldPrice) || oldPrice < 0 ||
+            !Number.isFinite(stock) || stock < 0 || !Number.isFinite(deliveryFee) || deliveryFee < 0) {
+          throw new Error('Price, old price, stock and delivery fee must be valid non-negative numbers.');
+        }
+
+        const slug = buildSlug(name);
+        if (!slug) throw new Error('Product name must contain valid characters.');
+        const normalizedSku = String(row.sku || row.code || ('SL-' + sellerId.slice(-6) + '-' + Date.now().toString(36) + '-' + rowNumber))
+          .trim().toUpperCase();
+        if (!normalizedSku) throw new Error('SKU / code is required.');
+
+        const duplicate = await Product.findOne({
+          $or: [{ slug }, { sku: normalizedSku }, { code: normalizedSku }],
+        }).select('_id name sku');
+        if (duplicate) throw new Error('A product with this name/slug or SKU already exists. Change the product name or SKU.');
+
+        const categoryRecord = await findCategory(category);
+        if (!categoryRecord) throw new Error('Category "' + category + '" was not found. Use an existing Sylva category.');
+
+        const images = Array.isArray(row.images)
+          ? row.images.map((image) => String(image || '').trim()).filter((image) => /^https?:\/\/\S+$/i.test(image)).slice(0, MAX_PRODUCT_IMAGES)
+          : [];
+        const sourceSpreadsheetUrl = String(row.sourceSpreadsheetUrl || '').trim();
+        if (sourceSpreadsheetUrl && (!(sourceSpreadsheetUrl.startsWith('https://') || sourceSpreadsheetUrl.startsWith('http://')) || sourceSpreadsheetUrl.length > 1000)) {
+          throw new Error('Spreadsheet link must be a valid HTTP or HTTPS URL no longer than 1000 characters.');
+        }
+
+        const product = await Product.create({
+          name,
+          slug,
+          code: normalizedSku,
+          sku: normalizedSku,
+          brand,
+          category: categoryRecord._id,
+          subcategory: String(row.subcategory || '').trim(),
+          description: String(row.description || row.shortDescription || '').trim(),
+          shortDescription: String(row.shortDescription || '').trim(),
+          seller: req.user._id,
+          price,
+          oldPrice,
+          discount: calculateDiscount(oldPrice, price),
+          images,
+          stock,
+          condition: String(row.condition || 'New').trim(),
+          warranty: String(row.warranty || '').trim(),
+          warrantyDuration: String(row.warrantyDuration || '').trim(),
+          warrantyTerms: String(row.warrantyTerms || '').trim(),
+          deliveryDuration: String(row.deliveryDuration || '').trim(),
+          deliveryFee,
+          deliveryTerms: String(row.deliveryTerms || '').trim(),
+          deliveryLocations: String(row.deliveryLocations || '').trim(),
+          returnPeriod: String(row.returnPeriod || '').trim(),
+          returnPolicy: String(row.returnPolicy || '').trim(),
+          returnConditions: String(row.returnConditions || '').trim(),
+          whatsIncluded: String(row.whatsIncluded || '').trim(),
+          keyFeatures: Array.isArray(row.keyFeatures) ? row.keyFeatures.map((item) => String(item).trim()).filter(Boolean) : parseList(row.keyFeatures),
+          sellerNotes: '',
+          sourceSpreadsheetUrl,
+          specifications: parseSpecifications(row.specifications),
+          isNew: parseBoolean(row.isNew, false),
+          isActive: false,
+          approvalStatus: 'pending',
+          rejectionReason: '',
+          approvedAt: null,
+          approvedBy: null,
+          featured: false,
+          flashSale: false,
+          offer: false,
+          offerMessage: '',
+          offerStartDate: null,
+          offerEndDate: null,
+        });
+        importedProducts.push({ rowNumber, id: product._id, name: product.name, sku: product.sku });
+      } catch (error) {
+        errors.push({ rowNumber, message: error.message || 'Could not import this product.' });
+      }
+    }
+
+    if (importedProducts.length > 0) {
+      const safeSellerName = escapeEmailHtml(req.user.name || 'Sylva seller');
+      const safeSellerEmail = escapeEmailHtml(req.user.email || 'Not provided');
+      const productRows = importedProducts.map((item) =>
+        '<li>' + escapeEmailHtml(item.name) + ' — SKU: ' + escapeEmailHtml(item.sku) + '</li>'
+      ).join('');
+      const notification = await sendSalesNotificationEmail({
+        subject: importedProducts.length + ' seller product(s) submitted for approval',
+        html: '<div style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:auto;padding:24px">' +
+          '<h2 style="color:#166534">Seller product import submitted</h2><p>' + safeSellerName + ' (' + safeSellerEmail + ') submitted ' +
+          importedProducts.length + ' product(s) for admin review.</p><ul>' + productRows + '</ul>' +
+          '<p>Review pending products in the Sylva Technologies admin dashboard.</p></div>',
+        text: 'Seller product import submitted by ' + (req.user.name || 'Sylva seller') + ' (' + (req.user.email || 'Not provided') + '). Products: ' +
+          importedProducts.map((item) => item.name + ' [SKU: ' + item.sku + ']').join('; ') +
+          '. These products are pending admin approval.',
+      });
+      if (!notification?.success) console.error('[Sales email] seller product import notification failed:', notification?.message || 'Unknown email error');
+    }
+
+    return res.status(200).json({
+      success: errors.length === 0,
+      message: importedProducts.length + ' product(s) submitted for admin approval.',
+      data: { imported: importedProducts.length, products: importedProducts, errors },
+    });
+  } catch (error) {
+    console.error('Seller bulk product import error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to import seller products right now.' });
+  }
+});
+
+/*
  * POST /api/products/seller
  */
 router.post(
@@ -594,6 +982,17 @@ router.post(
   ),
   async (req, res) => {
     try {
+      console.info('[Seller product upload] request received', {
+        contentType: req.headers['content-type'] || '',
+        filesReceived: Array.isArray(req.files) ? req.files.length : 0,
+        files: (req.files || []).map((file) => ({
+          fieldname: file.fieldname,
+          mimetype: file.mimetype,
+          size: file.size,
+        })),
+        bodyFields: Object.keys(req.body || {}),
+      });
+
       const {
         name,
         brand,
@@ -619,6 +1018,7 @@ router.post(
         whatsIncluded,
         keyFeatures,
         sellerNotes,
+        sourceSpreadsheetUrl,
         specifications,
         isNew,
       } = req.body;
@@ -741,16 +1141,63 @@ router.post(
         });
       }
 
-      const imageUrls =
-        await uploadProductImages(
-          req.files || []
-        );
+      const spreadsheetUrl = String(sourceSpreadsheetUrl || '').trim();
+      if (spreadsheetUrl && (!(spreadsheetUrl.toLowerCase().startsWith('https://') || spreadsheetUrl.toLowerCase().startsWith('http://')) || spreadsheetUrl.length > 1000)) {
+        return res.status(400).json({ success: false, message: 'Spreadsheet link must be a valid HTTP or HTTPS URL no longer than 1000 characters.' });
+      }
+
+      let suppliedImageUrls = [];
+      if (req.body.imageUrls !== undefined && req.body.imageUrls !== '') {
+        try {
+          suppliedImageUrls = Array.isArray(req.body.imageUrls)
+            ? req.body.imageUrls
+            : JSON.parse(req.body.imageUrls);
+        } catch (error) {
+          return res.status(400).json({ success: false, message: 'Image links must be submitted as a valid list.' });
+        }
+      }
+      if (!Array.isArray(suppliedImageUrls)) {
+        return res.status(400).json({ success: false, message: 'Image links must be a list of URLs.' });
+      }
+      suppliedImageUrls = suppliedImageUrls.map((value) => String(value || '').trim()).filter(Boolean);
+      if (suppliedImageUrls.some((url) => !/^https?:\/\//i.test(url) || url.length > 2000)) {
+        return res.status(400).json({ success: false, message: 'Each image link must be a valid HTTP or HTTPS URL no longer than 2000 characters.' });
+      }
+      if ((req.files || []).length + suppliedImageUrls.length > MAX_PRODUCT_IMAGES) {
+        return res.status(400).json({ success: false, message: `A maximum of ${MAX_PRODUCT_IMAGES} product images is allowed across uploads and image links.` });
+      }
+
+      if (!(req.files || []).length && !suppliedImageUrls.length) {
+        console.warn('[Seller product upload] rejected: no image files or image URLs received');
+        return res.status(400).json({
+          success: false,
+          message: 'No product images reached the server. Please choose at least one JPG, PNG or WEBP image and try again.',
+        });
+      }
+
+      const uploadedImageUrls = await uploadProductImages(req.files || []);
+      const imageUrls = [...uploadedImageUrls, ...suppliedImageUrls];
+
+      if (
+        !imageUrls.length ||
+        uploadedImageUrls.length !== (req.files || []).length ||
+        imageUrls.some((url) => typeof url !== 'string' || !/^https?:\/\//i.test(url))
+      ) {
+        throw new Error('One or more product images could not be uploaded. Please retry with JPG, PNG or WEBP images up to 5 MB each.');
+      }
+
+      console.info('[Seller product upload] images uploaded successfully', {
+        uploadedFiles: (req.files || []).length,
+        hostedImageCount: imageUrls.length,
+      });
 
       const product =
         await Product.create({
           name: name.trim(),
 
           slug: productSlug,
+
+          code: normalizedSku,
 
           sku: normalizedSku,
 
@@ -831,6 +1278,8 @@ router.post(
           sellerNotes:
             sellerNotes || '',
 
+          sourceSpreadsheetUrl: spreadsheetUrl,
+
           specifications:
             parseSpecifications(
               specifications
@@ -862,15 +1311,44 @@ router.post(
           offerEndDate: null,
         });
 
-      const populatedProduct =
-        await Product.findById(
-          product._id
-        )
-          .populate('category')
-          .populate(
-            'seller',
-            'name email sellerProfile.storeName'
-          );
+      const sellerName = populatedProduct.seller?.name || req.user.name || 'Sylva seller';
+      const sellerEmail = populatedProduct.seller?.email || req.user.email || 'Not provided';
+      const categoryName = populatedProduct.category?.name || categoryRecord.name || 'Uncategorised';
+      const productAdminUrl = 'https://www.sylvatechnologies.co.ke/admin';
+      const safeProductName = escapeEmailHtml(populatedProduct.name);
+      const safeSellerName = escapeEmailHtml(sellerName);
+      const safeSellerEmail = escapeEmailHtml(sellerEmail);
+      const safeSku = escapeEmailHtml(populatedProduct.sku || normalizedSku);
+      const safeCategory = escapeEmailHtml(categoryName);
+      const safePrice = escapeEmailHtml(Number(populatedProduct.price || 0).toLocaleString('en-KE', { style: 'currency', currency: 'KES' }));
+      const imageList = (populatedProduct.images || []).map((url, index) =>
+        '<li><a href="' + escapeEmailHtml(url) + '">Product image ' + (index + 1) + '</a></li>'
+      ).join('');
+      const notification = await sendSalesNotificationEmail({
+        subject: 'Seller product submitted for approval: ' + populatedProduct.name,
+        html: '<div style="font-family:Arial,sans-serif;color:#17211b;max-width:680px;margin:auto;padding:24px">' +
+          '<h2 style="color:#166534">New seller product submitted</h2>' +
+          '<p>A seller has submitted a product that is waiting for admin review on Sylva Technologies.</p>' +
+          '<table style="border-collapse:collapse;width:100%">' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Product</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeProductName + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>SKU</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeSku + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Category</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeCategory + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Price</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safePrice + '</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Seller</b></td><td style="padding:8px;border-bottom:1px solid #ddd">' + safeSellerName + ' (' + safeSellerEmail + ')</td></tr>' +
+          '<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>Approval status</b></td><td style="padding:8px;border-bottom:1px solid #ddd">Pending review</td></tr>' +
+          '</table><p><b>Submitted images:</b></p><ul>' + (imageList || '<li>No image links available</li>') + '</ul>' +
+          '<p><a href="' + productAdminUrl + '" style="display:inline-block;background:#166534;color:#fff;padding:12px 18px;text-decoration:none;border-radius:6px">Open admin dashboard</a></p>' +
+          '<p style="color:#647067;font-size:12px">Automated Sylva Technologies sales notification.</p></div>',
+        text: 'New seller product submitted for admin approval. Product: ' + populatedProduct.name +
+          '; SKU: ' + (populatedProduct.sku || normalizedSku) + '; category: ' + categoryName +
+          '; price: KSh ' + populatedProduct.price + '; seller: ' + sellerName + ' (' + sellerEmail +
+          '); status: pending review. Admin dashboard: ' + productAdminUrl,
+      });
+      if (!notification?.success) {
+        console.error('[Sales email] seller product submission notification failed:', notification?.message || 'Unknown email error', { productId: String(populatedProduct._id) });
+      } else {
+        console.info('[Sales email] seller product submission notification sent', { productId: String(populatedProduct._id), messageId: notification.messageId });
+      }
 
       res.status(201).json({
         success: true,
@@ -882,7 +1360,8 @@ router.post(
     } catch (error) {
       console.error(
         'Seller product creation error:',
-        error
+        error?.message || error,
+        error?.stack || ''
       );
 
       res.status(500).json({
@@ -1242,6 +1721,14 @@ router.put(
           req.body.sellerNotes;
       }
 
+      if (req.body.sourceSpreadsheetUrl !== undefined) {
+        const spreadsheetUrl = String(req.body.sourceSpreadsheetUrl || '').trim();
+      if (spreadsheetUrl && (!(spreadsheetUrl.toLowerCase().startsWith('https://') || spreadsheetUrl.toLowerCase().startsWith('http://')) || spreadsheetUrl.length > 1000)) {
+          return res.status(400).json({ success: false, message: 'Spreadsheet link must be a valid HTTP or HTTPS URL no longer than 1000 characters.' });
+        }
+        product.sourceSpreadsheetUrl = spreadsheetUrl;
+      }
+
       if (
         req.body.specifications !==
         undefined
@@ -1549,11 +2036,15 @@ router.put(
 
       product.isActive = false;
 
-      product.rejectionReason =
-        String(
-          req.body?.rejectionReason ||
-            'Product did not meet the approval requirements.'
-        ).trim();
+      const rejectionReason = String(req.body?.rejectionReason || '').trim();
+      if (!rejectionReason) {
+        return res.status(400).json({
+          success: false,
+          message: 'A clear rejection reason is required so the seller knows what to fix.',
+        });
+      }
+
+      product.rejectionReason = rejectionReason;
 
       product.approvedAt = null;
       product.approvedBy = null;
@@ -1654,6 +2145,7 @@ router.post(
         name,
         brand,
         category,
+        code,
         sku,
         price,
         oldPrice,
@@ -1687,18 +2179,24 @@ router.post(
         seller,
       } = req.body;
 
+      // The product model requires a primary product code. Older admin
+      // forms send this value as "sku", while the current sheet workflow
+      // calls it "code". Accept either to keep both forms compatible.
+      const submittedCode = String(code || sku || '').trim();
+      const submittedSku = String(sku || '').trim();
+
       if (
         !name ||
         !brand ||
         !category ||
-        !sku ||
+        !submittedCode ||
         price === undefined ||
         price === ''
       ) {
         return res.status(400).json({
           success: false,
           message:
-            'Required product fields are missing.',
+            'Required product fields are missing. Enter a product code/SKU.',
         });
       }
 
@@ -1760,28 +2258,26 @@ router.post(
       const productSlug =
         buildSlug(name);
 
-      const normalizedSku =
-        String(sku)
-          .trim()
-          .toUpperCase();
+      const normalizedCode = submittedCode.toUpperCase();
+      const normalizedSku = submittedSku
+        ? submittedSku.toUpperCase()
+        : undefined;
 
-      const duplicate =
-        await Product.findOne({
-          $or: [
-            {
-              slug: productSlug,
-            },
-            {
-              sku: normalizedSku,
-            },
-          ],
-        });
+      const duplicateConditions = [
+        { slug: productSlug },
+        { code: normalizedCode },
+      ];
+      if (normalizedSku) duplicateConditions.push({ sku: normalizedSku });
+
+      const duplicate = await Product.findOne({
+        $or: duplicateConditions,
+      });
 
       if (duplicate) {
         return res.status(400).json({
           success: false,
           message:
-            'Product with the same slug or SKU already exists.',
+            'Product with the same name, product code, or SKU already exists.',
         });
       }
 
@@ -1821,8 +2317,10 @@ router.post(
           slug:
             productSlug,
 
-          sku:
-            normalizedSku,
+          code:
+            normalizedCode,
+
+          ...(normalizedSku ? { sku: normalizedSku } : {}),
 
           brand,
 
@@ -1859,13 +2357,13 @@ router.post(
             ),
 
           featured:
-            Boolean(featured),
+            parseBoolean(featured),
 
           flashSale:
-            Boolean(flashSale),
+            parseBoolean(flashSale),
 
           offer:
-            Boolean(offer),
+            parseBoolean(offer),
 
           offerMessage:
             offerMessage || '',
@@ -1877,10 +2375,10 @@ router.post(
             offerEndDate || null,
 
           isNew:
-            Boolean(isNew),
+            parseBoolean(isNew),
 
           isActive:
-            isActive !== false,
+            parseBoolean(isActive, true),
 
           condition:
             condition || 'New',
@@ -2123,6 +2621,13 @@ if (
         ) {
           product[field] =
             req.body[field];
+        }
+      }
+
+      // Admin forms may submit boolean flags as strings.
+      for (const field of ['featured', 'isNew', 'flashSale', 'offer', 'isActive']) {
+        if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+          product[field] = parseBoolean(req.body[field], product[field]);
         }
       }
 

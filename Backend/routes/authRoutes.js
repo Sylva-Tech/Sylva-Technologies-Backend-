@@ -1,4 +1,5 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -6,6 +7,11 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const VerificationToken = require('../models/VerificationToken');
+const sellerUpload = require('../middleware/sellerUpload');
+const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
+const cloudinary = require('../config/cloudinary');
+const { checkPinById } = require('../services/kraPinCheckerService');
+const { protect } = require('../middleware/authMiddleware');
 
 const {
   sendVerificationCodeAndLinkEmail,
@@ -13,6 +19,39 @@ const {
 } = require('../services/emailService');
 
 const router = express.Router();
+
+// Additional per-IP protection for password guessing and credential stuffing.
+// This is stricter than the general /api/auth limiter configured in app.js.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 8,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many login attempts. Please wait 15 minutes before trying again.',
+  },
+});
+
+const verifyTurnstile = require('../middleware/turnstileVerification');
+
+// Validate Turnstile tokens before sensitive account actions. Payment callbacks
+// are in orderRoutes and are intentionally not covered by this middleware.
+router.use((req, res, next) => {
+  const protectedPostPaths = new Set([
+    '/register',
+    '/login',
+    '/forgot-password',
+    '/verify-password-reset-code',
+    '/reset-password',
+  ]);
+
+  if (req.method === 'POST' && protectedPostPaths.has(req.path)) {
+    return verifyTurnstile(req, res, next);
+  }
+
+  return next();
+});
 
 /* ============================================================
  * CONFIGURATION
@@ -107,9 +146,13 @@ const createJwt = (user) => {
 const safeUser = (user) => {
   return {
     id: user._id,
+    _id: user._id,
     name: user.name,
     email: user.email,
     phone: user.phone || '',
+    idNumber: user.idNumber || '',
+    bio: user.bio || '',
+    profilePicture: user.profilePicture || '',
     role: user.role,
     sellerStatus: user.sellerStatus,
     accountStatus: user.accountStatus,
@@ -118,10 +161,390 @@ const safeUser = (user) => {
   };
 };
 
+const AFRICAN_COUNTRY_CODES = new Set('DZ AO BJ BW BF BI CV CM CF TD KM CG CD CI DJ EG GQ ER SZ ET GA GM GH GN GW KE LS LR LY MG MW ML MR MU MA MZ NA NE NG RW ST SN SC SL SO ZA SS SD TZ TG TN UG ZM ZW'.split(' '));
+
 /* ============================================================
  * REGISTER
  * POST /api/auth/register
  * ============================================================ */
+
+/*
+ * KRA PIN CHECKER BY ID
+ * POST /api/auth/kra/pin-checker-by-id
+ * Consumer credentials stay server-side; never accept them from the browser.
+ */
+router.post('/kra/pin-checker-by-id', async (req, res) => {
+  try {
+    const result = await checkPinById({
+      taxpayerType: req.body?.TaxpayerType,
+      taxpayerID: req.body?.TaxpayerID,
+      expectedPin: req.body?.expectedPin,
+    });
+
+    return res.json({
+      success: true,
+      verified: result.verified,
+      pinMatches: result.pinMatches,
+      taxpayerName: result.taxpayerName,
+      message: result.pinMatches
+        ? 'KRA confirmed that the supplied ID and PIN match.'
+        : 'KRA found the ID, but the returned PIN does not match the PIN entered.',
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 503).json({
+      success: false,
+      verified: false,
+      message: error.message || 'KRA PIN Checker is temporarily unavailable.',
+    });
+  }
+});
+
+/*
+ * SELLER REGISTRATION
+ * Requires typed ID/KRA PIN details and matching private document uploads.
+ */
+
+/*
+ * EXISTING CUSTOMER — APPLY TO BECOME A SELLER
+ * Keeps the existing account and wallet; no second account/password is created.
+ */
+router.post(
+  '/seller/apply',
+  protect,
+  sellerUpload.fields([
+    { name: 'idFront', maxCount: 1 },
+    { name: 'idBack', maxCount: 1 },
+    { name: 'taxDocument', maxCount: 1 },
+    { name: 'kraPin', maxCount: 1 },
+  ]),
+  async (req, res) => {
+    const uploadedDocuments = [];
+    try {
+      const currentUser = await User.findById(req.user._id);
+      if (!currentUser) return res.status(404).json({ success: false, message: 'Your account could not be found. Please sign in again.' });
+      if (currentUser.role === 'admin') return res.status(403).json({ success: false, message: 'Administrator accounts cannot apply for seller access.' });
+      if (currentUser.sellerStatus === 'pending') return res.status(409).json({ success: false, message: 'Your seller application is already awaiting review.' });
+      if (currentUser.sellerStatus === 'approved' && currentUser.role === 'seller') return res.status(409).json({ success: false, message: 'Your seller account is already approved.' });
+
+      const name = String(req.body?.officialName || currentUser.name || '').trim();
+      const country = String(req.body?.country || '').trim().toUpperCase();
+      const phone = String(req.body?.mpesaPhone || currentUser.phone || '').trim().replace(/\s+/g, '');
+      const storeName = String(req.body?.storeName || '').trim();
+      const storeProfile = String(req.body?.storeProfile || '').trim();
+      const idType = String(req.body?.idType || '').trim();
+      const idNumber = String(req.body?.idNumber || '').trim();
+      const taxIdentifier = String(req.body?.taxIdentifier || req.body?.kraPinNumber || '').trim().toUpperCase();
+      const privacyAccepted = String(req.body?.privacyPolicyAccepted) === 'true';
+      const termsAccepted = String(req.body?.termsAndConditionsAccepted) === 'true';
+      const files = req.files || {};
+      const idFront = files.idFront?.[0];
+      const idBack = files.idBack?.[0];
+      const taxDocumentFile = files.taxDocument?.[0] || files.kraPin?.[0];
+
+      if (!name || !country || !phone || !storeName || !storeProfile || !idType || !idNumber || !taxIdentifier) {
+        return res.status(400).json({ success: false, message: 'Complete all required country, store, ID and tax identification fields.' });
+      }
+      if (!AFRICAN_COUNTRY_CODES.has(country)) return res.status(400).json({ success: false, message: 'Select a supported African country.' });
+      if (!/^\+[1-9]\d{7,14}$/.test(phone)) return res.status(400).json({ success: false, message: 'Enter a valid international mobile number including the + country calling code.' });
+      if (!['national_id', 'passport', 'military_id', 'other'].includes(idType)) return res.status(400).json({ success: false, message: 'Select a valid identification document type.' });
+      if (idNumber.replace(/\s+/g, '').length < 5 || idNumber.length > 50) return res.status(400).json({ success: false, message: 'Enter a valid ID or passport number.' });
+      if (country === 'KE' && !/^[A-Z]\d{9}[A-Z]$/.test(taxIdentifier)) return res.status(400).json({ success: false, message: 'Enter a valid Kenyan KRA PIN number, for example A123456789B.' });
+      if (country !== 'KE' && (taxIdentifier.length < 3 || taxIdentifier.length > 50)) return res.status(400).json({ success: false, message: 'Enter the tax identifier issued by your country.' });
+      if (storeName.length < 2 || storeName.length > 100 || storeProfile.length < 20 || storeProfile.length > 1000) return res.status(400).json({ success: false, message: 'Enter a store name and description between 20 and 1000 characters.' });
+      if (!privacyAccepted || !termsAccepted) return res.status(400).json({ success: false, message: 'Accept the Seller Privacy Notice and Seller Terms & Conditions to continue.' });
+      if (!idFront || !idBack || !taxDocumentFile) return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your country-issued tax document.' });
+
+      const normalizedIdNumber = idNumber.replace(/\s+/g, '').toUpperCase();
+      const normalizedTaxIdentifier = taxIdentifier.replace(/\s+/g, '').toUpperCase();
+      const duplicateIdentity = await User.findOne({
+        _id: { $ne: currentUser._id },
+        $or: [
+          { 'sellerProfile.idNumber': normalizedIdNumber },
+          { 'sellerProfile.taxIdentifier': normalizedTaxIdentifier },
+          ...(country === 'KE' ? [{ 'sellerProfile.kraPin': normalizedTaxIdentifier }] : []),
+        ],
+      }).select('_id');
+      if (duplicateIdentity) return res.status(409).json({ success: false, message: 'These ID or tax identification details are already associated with another seller application/store.' });
+
+      const [frontUpload, backUpload, taxUpload] = await Promise.all([
+        uploadBufferToCloudinary(idFront.buffer),
+        uploadBufferToCloudinary(idBack.buffer),
+        uploadBufferToCloudinary(taxDocumentFile.buffer),
+      ]);
+      uploadedDocuments.push(frontUpload, backUpload, taxUpload);
+
+      const now = new Date();
+      currentUser.name = name;
+      currentUser.phone = phone;
+      currentUser.role = 'seller';
+      currentUser.sellerStatus = 'pending';
+      currentUser.accountStatus = currentUser.accountStatus || 'active';
+      currentUser.storeStatus = 'inactive';
+      currentUser.consent = {
+        ...(currentUser.consent?.toObject ? currentUser.consent.toObject() : currentUser.consent || {}),
+        privacyPolicy: true,
+        termsAndConditions: true,
+        informationAccuracy: true,
+        acceptedAt: now,
+      };
+      currentUser.sellerProfile = {
+        ...(currentUser.sellerProfile?.toObject ? currentUser.sellerProfile.toObject() : currentUser.sellerProfile || {}),
+        officialName: name,
+        country,
+        identityVerificationStatus: 'pending',
+        identityVerificationProvider: 'manual_review',
+        idType,
+        idNumber: normalizedIdNumber,
+        idFrontDocument: frontUpload.public_id,
+        idBackDocument: backUpload.public_id,
+        storeName,
+        storeProfile,
+        storeEmail: currentUser.email,
+        storePhone: phone,
+        mpesaPhone: phone,
+        kraPin: country === 'KE' ? normalizedTaxIdentifier : '',
+        taxIdentifier: normalizedTaxIdentifier,
+        taxDocument: taxUpload.public_id,
+        kraPinDocument: taxUpload.public_id,
+        applicationDate: now,
+      };
+      await currentUser.save();
+
+      return res.status(201).json({
+        success: true,
+        message: 'Your seller application has been submitted using your existing Sylva account. Your customer account and wallet are retained. Seller features will unlock after administrator approval.',
+        user: safeUser(currentUser),
+      });
+    } catch (error) {
+      await Promise.allSettled(uploadedDocuments.map((document) =>
+        cloudinary.uploader.destroy(document.public_id, {
+          resource_type: document.resource_type || 'image',
+          type: 'authenticated',
+        })
+      ));
+      console.error('Existing customer seller application error:', error.message);
+      return res.status(500).json({ success: false, message: 'Unable to submit your seller application. Please try again.' });
+    }
+  }
+);
+
+router.post(
+  '/seller/register',
+  sellerUpload.fields([
+    { name: 'idFront', maxCount: 1 },
+    { name: 'idBack', maxCount: 1 },
+    { name: 'taxDocument', maxCount: 1 },
+    { name: 'kraPin', maxCount: 1 }, // backward compatibility for older clients
+  ]),
+  verifyTurnstile,
+  async (req, res) => {
+    const uploadedDocuments = [];
+    let createdUser = null;
+
+    try {
+      const name = String(req.body?.officialName || '').trim();
+      const email = normalizeEmail(req.body?.email);
+      const phone = String(req.body?.mpesaPhone || '').trim().replace(/\s+/g, '');
+      const country = String(req.body?.country || '').trim().toUpperCase();
+      const password = String(req.body?.password || '');
+      const confirmPassword = String(req.body?.confirmPassword || '');
+      const storeName = String(req.body?.storeName || '').trim();
+      const storeProfile = String(req.body?.storeProfile || '').trim();
+      const idType = String(req.body?.idType || '').trim();
+      const taxpayerType = String(req.body?.taxpayerType || '').trim().toUpperCase();
+      const idNumber = String(req.body?.idNumber || '').trim();
+      const taxIdentifier = String(req.body?.taxIdentifier || req.body?.kraPinNumber || '').trim().toUpperCase();
+      const privacyAccepted = String(req.body?.privacyPolicyAccepted) === 'true';
+      const termsAccepted = String(req.body?.termsAndConditionsAccepted) === 'true';
+      const files = req.files || {};
+      const idFront = files.idFront?.[0];
+      const idBack = files.idBack?.[0];
+      const taxDocumentFile = files.taxDocument?.[0] || files.kraPin?.[0];
+
+      if (!name || name.length < 2 || !email || !phone || !country || !password || !storeName || !storeProfile || !idType || !idNumber || !taxIdentifier) {
+        return res.status(400).json({ success: false, message: 'Complete all required account, country, store, ID and tax identification fields.' });
+      }
+      if (!AFRICAN_COUNTRY_CODES.has(country)) {
+        return res.status(400).json({ success: false, message: 'Select a supported African country.' });
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
+      }
+      if (!/^\+[1-9]\d{7,14}$/.test(phone)) {
+        return res.status(400).json({ success: false, message: 'Enter a valid international mobile number including the + country calling code.' });
+      }
+      if (password.length < 6 || password !== confirmPassword) {
+        return res.status(400).json({ success: false, message: 'Use a password of at least 6 characters and confirm it correctly.' });
+      }
+      if (!['national_id', 'passport', 'military_id', 'other'].includes(idType)) {
+        return res.status(400).json({ success: false, message: 'Select a valid identification document type.' });
+      }
+      if (idNumber.length < 5 || idNumber.length > 50) {
+        return res.status(400).json({ success: false, message: 'Enter a valid ID or passport number.' });
+      }
+      if (country === 'KE' && !/^[A-Z]\d{9}[A-Z]$/.test(taxIdentifier)) {
+        return res.status(400).json({ success: false, message: 'Enter a valid KRA PIN number, for example A123456789B.' });
+      }
+      if (country !== 'KE' && (taxIdentifier.length < 3 || taxIdentifier.length > 50)) {
+        return res.status(400).json({ success: false, message: 'Enter the tax identifier issued by your country (3–50 characters).' });
+      }
+      if (storeName.length < 2 || storeName.length > 100 || storeProfile.length < 20 || storeProfile.length > 1000) {
+        return res.status(400).json({ success: false, message: 'Enter a store name and a store description between 20 and 1000 characters.' });
+      }
+      if (!privacyAccepted || !termsAccepted) {
+        return res.status(400).json({ success: false, message: 'Accept the Privacy Policy and Terms & Conditions to continue.' });
+      }
+      if (!idFront || !idBack || !taxDocumentFile) {
+        return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your country-issued tax document.' });
+<<<<<<< HEAD
+=======
+      }
+
+      // KRA and identity documents are reviewed manually by an administrator.
+      // Do not block seller registration on an external KRA API response.
+
+      const normalizedIdNumber = idNumber.replace(/\s+/g, '').toUpperCase();
+      const normalizedTaxIdentifier = taxIdentifier.replace(/\s+/g, '').toUpperCase();
+      const existingSellerIdentity = await User.findOne({
+        $or: [
+          { 'sellerProfile.idNumber': normalizedIdNumber },
+          { 'sellerProfile.taxIdentifier': normalizedTaxIdentifier },
+          ...(country === 'KE' ? [{ 'sellerProfile.kraPin': normalizedTaxIdentifier }] : []),
+        ],
+      }).select('_id sellerProfile.storeName sellerStatus');
+      if (existingSellerIdentity) {
+        return res.status(409).json({
+          success: false,
+          message: 'These ID or tax identification details are already associated with another seller application/store.',
+        });
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
+      }
+
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
+      }
+
+      const [frontUpload, backUpload, taxUpload] = await Promise.all([
+        uploadBufferToCloudinary(idFront.buffer),
+        uploadBufferToCloudinary(idBack.buffer),
+        uploadBufferToCloudinary(taxDocumentFile.buffer),
+      ]);
+      uploadedDocuments.push(frontUpload, backUpload, taxUpload);
+
+      const now = new Date();
+      createdUser = await User.create({
+        name,
+        email,
+        phone,
+        password,
+        role: 'seller',
+        sellerStatus: 'pending',
+        accountStatus: 'active',
+        storeStatus: 'inactive',
+        isVerified: false,
+        consent: {
+          privacyPolicy: true,
+          termsAndConditions: true,
+          informationAccuracy: true,
+          acceptedAt: now,
+        },
+        sellerProfile: {
+          officialName: name,
+          country,
+          identityVerificationStatus: 'pending',
+          identityVerificationProvider: 'manual_review',
+          idType,
+          idNumber: normalizedIdNumber,
+          idFrontDocument: frontUpload.public_id,
+          idBackDocument: backUpload.public_id,
+          storeName,
+          storeProfile,
+          storeEmail: email,
+          storePhone: phone,
+          mpesaPhone: phone,
+<<<<<<< HEAD
+          kraPin: country === 'KE' ? taxIdentifier : '',
+          taxIdentifier,
+=======
+          kraPin: country === 'KE' ? normalizedTaxIdentifier : '',
+          taxIdentifier: normalizedTaxIdentifier,
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
+          taxDocument: taxUpload.public_id,
+          kraPinDocument: taxUpload.public_id,
+          applicationDate: now,
+        },
+      });
+
+      const rawVerificationToken = generateSecureToken();
+      const verificationCode = generateVerificationCode();
+      const verificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      await VerificationToken.deleteMany({ user: createdUser._id, purpose: 'verification' });
+      await VerificationToken.deleteMany({ user: createdUser._id, purpose: 'verification-code' });
+      await VerificationToken.create({
+        user: createdUser._id,
+        purpose: 'verification',
+        tokenHash: hashToken(rawVerificationToken),
+        expiresAt: verificationExpiresAt,
+        method: 'email',
+      });
+      await VerificationToken.create({
+        user: createdUser._id,
+        purpose: 'verification-code',
+        tokenHash: hashToken(verificationCode),
+        expiresAt: verificationExpiresAt,
+        method: 'email',
+      });
+
+      const verifyLink = `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(rawVerificationToken)}&email=${encodeURIComponent(email)}`;
+      let emailSent = true;
+      try {
+        const result = await sendVerificationCodeAndLinkEmail({
+          to: email,
+          name,
+          otp: verificationCode,
+          verifyLink,
+          expiresInMinutes: 24 * 60,
+        });
+        emailSent = result?.success !== false;
+      } catch (emailError) {
+        emailSent = false;
+        console.error('Seller verification email error:', emailError.message);
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: emailSent
+          ? 'Seller application submitted. Verify your email, then wait for administrator approval.'
+          : 'Seller application submitted, but the verification email could not be sent. Use the resend verification option on the login page.',
+        emailSent,
+        user: safeUser(createdUser),
+      });
+    } catch (error) {
+      if (createdUser?._id) {
+        await Promise.allSettled([
+          VerificationToken.deleteMany({ user: createdUser._id }),
+          User.findByIdAndDelete(createdUser._id),
+        ]);
+      }
+      await Promise.allSettled(
+        uploadedDocuments.map((document) =>
+          cloudinary.uploader.destroy(document.public_id, {
+            resource_type: document.resource_type || 'image',
+            type: 'authenticated',
+          })
+        )
+      );
+
+      if (error.code === 11000) {
+        return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
+      }
+      console.error('Seller registration error:', error.message);
+      return res.status(500).json({ success: false, message: 'Unable to submit the seller application. Please try again.' });
+    }
+  }
+);
 
 router.post('/register', async (req, res) => {
   try {
@@ -129,15 +552,46 @@ router.post('/register', async (req, res) => {
       name,
       email,
       phone,
+      idNumber,
       password,
       confirmPassword,
     } = req.body;
 
-    const normalizedEmail = normalizeEmail(email);
-
-    if (!name || !normalizedEmail || !password) {
+    if (
+      typeof name !== 'string' ||
+      typeof email !== 'string' ||
+      typeof phone !== 'string' ||
+      typeof idNumber !== 'string' ||
+      typeof password !== 'string'
+    ) {
       return res.status(400).json({
-        message: 'Name, email and password are required.',
+        success: false,
+        message: 'Enter valid text values for all required account fields.',
+      });
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+    const normalizedIdNumber = idNumber.trim();
+
+    if (
+      !name.trim() ||
+      name.length > 120 ||
+      !normalizedEmail ||
+      normalizedEmail.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) ||
+      !phone.trim() ||
+      !normalizedIdNumber ||
+      !password ||
+      password.length > 1024
+    ) {
+      return res.status(400).json({
+        message: 'Name, email, phone, government ID number and password are required.',
+      });
+    }
+
+    if (normalizedIdNumber.length < 5 || normalizedIdNumber.length > 50) {
+      return res.status(400).json({
+        message: 'ID number must be between 5 and 50 characters.',
       });
     }
 
@@ -167,10 +621,16 @@ router.post('/register', async (req, res) => {
       });
     }
 
+    const duplicateId = await User.findOne({ idNumber: normalizedIdNumber }).select('_id');
+    if (duplicateId) {
+      return res.status(409).json({ message: 'An account with this ID number already exists.' });
+    }
+
     const user = await User.create({
       name: String(name).trim(),
       email: normalizedEmail,
-      phone: phone ? String(phone).trim() : '',
+      phone: String(phone).trim(),
+      idNumber: normalizedIdNumber,
       password,
       role: 'customer',
       sellerStatus: 'none',
@@ -420,31 +880,43 @@ router.post(
  * POST /api/auth/login
  * ============================================================ */
 
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
-    const {
-      email,
-      password,
-    } = req.body;
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+      ? req.body
+      : {};
+    const { email, password } = body;
 
-    const normalizedEmail =
-      normalizeEmail(email);
-
-    if (!normalizedEmail || !password) {
+    // Accept only scalar strings. Never allow attacker-controlled objects or
+    // MongoDB operators such as {$ne: null} to reach database query filters.
+    if (typeof email !== 'string' || typeof password !== 'string') {
       return res.status(400).json({
-        message:
-          'Email and password are required.',
+        success: false,
+        message: 'Enter a valid email address and password.',
       });
     }
 
-    const user = await User.findOne({
-      email: normalizedEmail,
-    });
+    const normalizedEmail = normalizeEmail(email);
 
-    if (!user) {
+    if (
+      !normalizedEmail ||
+      normalizedEmail.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) ||
+      password.length === 0 ||
+      password.length > 1024
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Enter a valid email address and password.',
+      });
+    }
+
+    // Query by a validated string only; do not spread request body into filters.
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user || user.accountDeleted) {
       return res.status(401).json({
-        message:
-          'Invalid email or password.',
+        message: 'Invalid email or password.',
       });
     }
 
@@ -1086,6 +1558,82 @@ router.post(
 );
 
 /* ============================================================
+ * RESEND EMAIL VERIFICATION FOR THE SIGNED-IN ACCOUNT
+ * POST /api/auth/resend-verification
+ * ============================================================ */
+
+router.post('/resend-verification', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || '';
+    if (!authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'Please sign in again to request verification.' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+    } catch {
+      return res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+    }
+
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Account not found.' });
+    }
+    if (user.isVerified === true) {
+      return res.status(200).json({ success: true, alreadyVerified: true, message: 'This email address is already verified.' });
+    }
+
+    const rawVerificationToken = generateSecureToken();
+    const verificationCode = generateVerificationCode();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await VerificationToken.deleteMany({ user: user._id, purpose: 'verification' });
+    await VerificationToken.deleteMany({ user: user._id, purpose: 'verification-code' });
+    await VerificationToken.create({
+      user: user._id,
+      purpose: 'verification',
+      tokenHash: hashToken(rawVerificationToken),
+      expiresAt,
+      method: 'email',
+    });
+    await VerificationToken.create({
+      user: user._id,
+      purpose: 'verification-code',
+      tokenHash: hashToken(verificationCode),
+      expiresAt,
+      method: 'email',
+    });
+
+    const verifyLink = `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(rawVerificationToken)}&email=${encodeURIComponent(user.email)}`;
+    const result = await sendVerificationCodeAndLinkEmail({
+      to: user.email,
+      name: user.name,
+      otp: verificationCode,
+      verifyLink,
+      expiresInMinutes: 24 * 60,
+    });
+
+    if (!result || result.success === false) {
+      await VerificationToken.deleteMany({ user: user._id, purpose: 'verification' });
+      await VerificationToken.deleteMany({ user: user._id, purpose: 'verification-code' });
+      return res.status(503).json({
+        success: false,
+        message: result?.message || 'The verification email could not be sent. Please try again later.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `A new verification email has been sent to ${user.email}. Open that email and click “Verify My Email”. The link expires in 24 hours.`,
+    });
+  } catch (error) {
+    console.error('Resend email verification error:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to send a verification email right now.' });
+  }
+});
+
+/* ============================================================
  * VERIFY EMAIL
  *
  * GET /api/auth/verify-email
@@ -1175,8 +1723,10 @@ router.get(
       });
 
       return res.status(200).json({
-        message:
-          'Email verified successfully.',
+        success: true,
+        verified: true,
+        message: 'Email verified successfully. Your account status is now Verified.',
+        user: safeUser(user),
       });
     } catch (error) {
       console.error(
@@ -1283,8 +1833,10 @@ router.post(
       });
 
       return res.status(200).json({
-        message:
-          'Email verified successfully. Please log in to continue.',
+        success: true,
+        verified: true,
+        message: 'Email verified successfully. Your account status is now Verified. Please log in to continue.',
+        user: safeUser(user),
       });
     } catch (error) {
       console.error(
@@ -1344,11 +1896,10 @@ router.get(
           decoded.id
         ).select('-password');
 
-      if (!user) {
+      if (!user || user.accountDeleted) {
         return res.status(401).json({
           success: false,
-          message:
-            'User account could not be found.',
+          message: 'This account is no longer active. Please log in with an active account.',
         });
       }
 

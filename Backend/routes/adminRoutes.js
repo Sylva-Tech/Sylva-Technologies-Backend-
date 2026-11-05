@@ -6,6 +6,10 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 
 const {
+  syncGoogleSheetProducts,
+} = require('../services/googleSheetProductSync');
+
+const {
   protect,
   adminOnly,
 } = require('../middleware/authMiddleware');
@@ -101,6 +105,9 @@ const sanitizeSeller = (
       '',
 
     sellerProfile: {
+      country: sellerProfile.country || 'KE',
+      identityVerificationStatus: sellerProfile.identityVerificationStatus || 'pending',
+      identityVerificationProvider: sellerProfile.identityVerificationProvider || 'manual_review',
       officialName:
         sellerProfile.officialName ||
         '',
@@ -144,17 +151,13 @@ const sanitizeSeller = (
    * returned when explicitly requested.
    */
   if (includeSensitive) {
-    data.sellerProfile.idFrontDocument =
-      sellerProfile.idFrontDocument ||
-      '';
-
-    data.sellerProfile.idBackDocument =
-      sellerProfile.idBackDocument ||
-      '';
-
-    data.sellerProfile.kraPinDocument =
-      sellerProfile.kraPinDocument ||
-      '';
+    data.sellerProfile.idType = sellerProfile.idType || '';
+    data.sellerProfile.idNumber = sellerProfile.idNumber || '';
+    data.sellerProfile.taxIdentifier = sellerProfile.taxIdentifier || sellerProfile.kraPin || '';
+    data.sellerProfile.idFrontDocument = sellerProfile.idFrontDocument || '';
+    data.sellerProfile.idBackDocument = sellerProfile.idBackDocument || '';
+    data.sellerProfile.taxDocument = sellerProfile.taxDocument || sellerProfile.kraPinDocument || '';
+    data.sellerProfile.kraPinDocument = sellerProfile.kraPinDocument || sellerProfile.taxDocument || '';
   }
 
   return data;
@@ -707,27 +710,27 @@ router.put(
       }
 
       if (
-        seller.sellerStatus ===
-        'approved'
+        seller.sellerStatus === 'approved' &&
+        seller.sellerProfile?.identityVerificationStatus === 'verified'
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'This seller account is already approved.',
-        });
+        return res.status(400).json({ success: false, message: 'This seller account and its identity documents are already approved.' });
       }
 
       if (
-        seller.sellerStatus !==
-          'pending' &&
-        seller.sellerStatus !==
-          'rejected'
+        seller.sellerStatus !== 'pending' &&
+        seller.sellerStatus !== 'rejected' &&
+        seller.sellerStatus !== 'approved'
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'This account does not have a seller application.',
-        });
+        return res.status(400).json({ success: false, message: 'This account does not have a seller application.' });
+      }
+
+      if (req.body?.identityReviewed !== true) {
+        return res.status(400).json({ success: false, message: 'Confirm that you have reviewed the ID front, ID back and country-issued tax document before approving identity verification.' });
+      }
+
+      const identityProfile = seller.sellerProfile || {};
+      if (!identityProfile.idFrontDocument || !identityProfile.idBackDocument || !(identityProfile.taxDocument || identityProfile.kraPinDocument)) {
+        return res.status(400).json({ success: false, message: 'Cannot approve identity verification until the ID front, ID back and country-issued tax document are available for review.' });
       }
 
       if (
@@ -737,10 +740,35 @@ router.put(
           {};
       }
 
+      const sellerProfile = seller.sellerProfile;
+      if (
+        !String(sellerProfile.idNumber || '').trim() ||
+        !String(sellerProfile.kraPin || '').trim() ||
+        !sellerProfile.idFrontDocument ||
+        !sellerProfile.idBackDocument ||
+        !sellerProfile.kraPinDocument
+      ) {
+        return res.status(422).json({
+          success: false,
+          message: 'This application is missing the ID number, KRA PIN, or required identity/tax documents. Ask the seller to complete the application before approval.',
+        });
+      }
+
+      if (req.body?.identityReviewed !== true) {
+        return res.status(400).json({
+          success: false,
+          message: 'Confirm that you have reviewed the ID front, ID back and tax document before approving this seller.',
+        });
+      }
+
       seller.role = 'seller';
 
       seller.sellerStatus =
         'approved';
+
+      // This route is the manual identity-document review decision point.
+      seller.sellerProfile.identityVerificationStatus = 'verified';
+      seller.sellerProfile.identityVerificationProvider = 'manual_review';
 
       /*
        * Approval controls seller
@@ -1164,7 +1192,54 @@ router.get(
     }
   }
 );
+/*
+|--------------------------------------------------------------------------
+| SYNC PRODUCTS FROM GOOGLE SHEET
+|--------------------------------------------------------------------------
+| POST /api/admin/products/sync-google-sheet
+|--------------------------------------------------------------------------
+*/
 
+router.post(
+  '/products/sync-google-sheet',
+  protect,
+  adminOnly,
+  async (req, res) => {
+    try {
+      const result =
+        await syncGoogleSheetProducts();
+
+      if (!result?.success) {
+        return res.status(400).json({
+          success: false,
+          message:
+            result?.message ||
+            'Google Sheet product sync failed.',
+          data: result,
+        });
+      }
+
+      return res.json({
+        success: true,
+        message:
+          'Google Sheet products synchronized successfully.',
+        data: result,
+      });
+    } catch (error) {
+      console.error(
+        'Google Sheet product sync error:',
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: `Unable to synchronize products from Google Sheet: ${error.message || 'Unknown synchronization error.'}`,
+        // Keep a separate field for admin tooling that reads structured errors.
+        error: error.message || 'Unknown synchronization error.',
+      });
+    }
+  }
+);
 module.exports = router;
 
 

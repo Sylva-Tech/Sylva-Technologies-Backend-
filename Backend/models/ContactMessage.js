@@ -22,6 +22,10 @@ const contactMessageSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    contentCiphertext: { type: String, default: '', select: false },
+    contentIv: { type: String, default: '', select: false },
+    contentAuthTag: { type: String, default: '', select: false },
+    contentEncryptionVersion: { type: Number, default: 0, select: false },
     message: {
       type: String,
       required: [true, 'Message is required'],

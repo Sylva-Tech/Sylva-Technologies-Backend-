@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Product = require('../models/Product');
 const SellerAppeal = require('../models/SellerAppeal');
+const cloudinary = require('../config/cloudinary');
 
 const {
   protect,
@@ -111,11 +112,21 @@ const serializeSeller = (
     storeName:
       getStoreName(item) || 'Not provided',
 
+    storeEmail:
+      item.sellerProfile?.storeEmail || item.email || '',
+
+    storePhone:
+      item.sellerProfile?.storePhone || item.phone || '',
+
     storeProfile:
       item.sellerProfile?.storeProfile || '',
 
     storeLocation:
       item.sellerProfile?.storeLocation || '',
+
+    country: item.sellerProfile?.country || 'KE',
+    identityVerificationStatus: item.sellerProfile?.identityVerificationStatus || 'pending',
+    identityVerificationProvider: item.sellerProfile?.identityVerificationProvider || 'manual_review',
 
     officialName:
       item.sellerProfile?.officialName ||
@@ -189,14 +200,37 @@ const serializeSeller = (
    * these sensitive verification fields.
    */
   if (includeSensitive) {
-    result.idNumber =
-      item.sellerProfile?.idNumber || '';
-
-    result.kraPin =
-      item.sellerProfile?.kraPin || '';
+    result.idNumber = item.sellerProfile?.idNumber || '';
+    result.kraPin = item.sellerProfile?.kraPin || '';
+    result.taxIdentifier = item.sellerProfile?.taxIdentifier || item.sellerProfile?.kraPin || '';
   }
 
   return result;
+};
+
+const createPrivateDocumentLink = async (publicId) => {
+  if (!publicId || typeof publicId !== 'string') return null;
+  const resourceTypes = ['image', 'raw', 'video'];
+  for (const resourceType of resourceTypes) {
+    try {
+      const resource = await cloudinary.api.resource(publicId, {
+        resource_type: resourceType,
+        type: 'authenticated',
+      });
+      return cloudinary.utils.private_download_url(
+        publicId,
+        resource.format || 'pdf',
+        {
+          resource_type: resourceType,
+          type: 'authenticated',
+          expires_at: Math.floor(Date.now() / 1000) + 300,
+        }
+      );
+    } catch (error) {
+      // Try the next Cloudinary resource type; do not expose the underlying reference.
+    }
+  }
+  return null;
 };
 
 const getReason = (value) =>
@@ -362,22 +396,22 @@ router.get(
        * Do not expose actual document paths/files.
        * Only tell the admin whether the documents exist.
        */
+      const taxDocumentRef = seller.sellerProfile?.taxDocument || seller.sellerProfile?.kraPinDocument;
       result.documents = {
-        idFront: Boolean(
-          seller.sellerProfile
-            ?.idFrontDocument
-        ),
-
-        idBack: Boolean(
-          seller.sellerProfile
-            ?.idBackDocument
-        ),
-
-        kraPin: Boolean(
-          seller.sellerProfile
-            ?.kraPinDocument
-        ),
+        idFront: Boolean(seller.sellerProfile?.idFrontDocument),
+        idBack: Boolean(seller.sellerProfile?.idBackDocument),
+        kraPin: Boolean(taxDocumentRef),
+        taxDocument: Boolean(taxDocumentRef),
       };
+
+      // Short-lived, admin-only download URLs; never return raw Cloudinary IDs.
+      const documentEntries = await Promise.all([
+        ['idFront', seller.sellerProfile?.idFrontDocument],
+        ['idBack', seller.sellerProfile?.idBackDocument],
+        ['kraPin', taxDocumentRef],
+        ['taxDocument', taxDocumentRef],
+      ].map(async ([key, publicId]) => [key, await createPrivateDocumentLink(publicId)]));
+      result.documentLinks = Object.fromEntries(documentEntries);
 
       result.appeals =
         appealHistory;
@@ -465,7 +499,7 @@ router.patch(
             },
           },
           {
-            new: true,
+            returnDocument: 'after',
             runValidators: true,
           }
         ).select('-password');

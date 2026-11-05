@@ -65,6 +65,18 @@ const orderSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // Admin inbox review is separate from fulfillment/payment status.
+    adminReviewedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    adminReviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+
     /*
     |--------------------------------------------------------------------------
     | CUSTOMER
@@ -170,10 +182,26 @@ const orderSchema = new mongoose.Schema(
         lowercase: true,
       },
 
+<<<<<<< HEAD
+      country: {
+        type: String,
+        trim: true,
+        maxlength: 100,
+      },
+
       county: {
         type: String,
         trim: true,
       },
+=======
+      idNumber: { type: String, trim: true, maxlength: 50, default: '' },
+      customerReference: { type: String, trim: true, maxlength: 30, default: '' },
+
+      country: { type: String, trim: true, maxlength: 100, default: 'Kenya' },
+      county: { type: String, trim: true },
+      subCounty: { type: String, trim: true },
+      ward: { type: String, trim: true },
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
 
       deliveryLocation: {
         type: String,
@@ -197,18 +225,78 @@ const orderSchema = new mongoose.Schema(
     |--------------------------------------------------------------------------
     */
 
-    paymentMethod: {
+   paymentMethod: {
+  type: String,
+  enum: [
+    'Cash on Delivery',
+    'M-Pesa',
+    'PayPal',
+    'WhatsApp Order',
+    'Wallet',
+  ],
+  default: 'Cash on Delivery',
+},
+
+    mpesaPhone: {
       type: String,
-      enum: [
-        'Cash on Delivery',
-        'M-Pesa',
-        'PayPal',
-        'WhatsApp Order',
-      ],
-      default: 'Cash on Delivery',
+      trim: true,
+      default: '',
+    },
+
+    mpesaCheckoutRequestId: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true,
+    },
+
+    mpesaReceiptNumber: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true,
     },
 
     paymentReference: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    paymentCurrency: {
+      type: String,
+      enum: ['KES', 'USD'],
+      default: 'KES',
+    },
+
+    paymentAmount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    paymentExchangeRate: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    paidAt: {
+      type: Date,
+      default: null,
+    },
+
+    cancellationDeadline: {
+      type: Date,
+      default: null,
+    },
+
+    cancellationRequestedAt: {
+      type: Date,
+      default: null,
+    },
+
+    refundReference: {
       type: String,
       trim: true,
       default: '',
@@ -221,6 +309,9 @@ const orderSchema = new mongoose.Schema(
         'Paid',
         'Failed',
         'Refunded',
+        'Refund Pending',
+        'Refund Processing',
+        'Refund Failed',
       ],
       default: 'Pending',
     },
@@ -244,6 +335,50 @@ const orderSchema = new mongoose.Schema(
       ],
       default: 'Pending',
     },
+
+    // Seller-specific fulfillment tracking, so each seller manages only their own items.
+    sellerFulfillments: [{
+      seller: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+      status: { type: String, enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered'], default: 'Pending' },
+      trackingNumber: { type: String, trim: true, maxlength: 120, default: '' },
+      carrier: { type: String, trim: true, maxlength: 120, default: '' },
+      note: { type: String, trim: true, maxlength: 1000, default: '' },
+      history: [{
+        status: { type: String, enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered'], required: true },
+        changedAt: { type: Date, default: Date.now },
+        changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+        note: { type: String, trim: true, maxlength: 1000, default: '' },
+        trackingNumber: { type: String, trim: true, maxlength: 120, default: '' },
+        carrier: { type: String, trim: true, maxlength: 120, default: '' },
+      }],
+    }],
+    statusHistory: [{
+      status: { type: String, trim: true, maxlength: 80, required: true },
+      changedAt: { type: Date, default: Date.now },
+      changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      actorRole: { type: String, trim: true, maxlength: 30, default: '' },
+      note: { type: String, trim: true, maxlength: 1000, default: '' },
+    }],
+
+    // Customer receipt confirmation and settlement audit.
+    deliveryAdminNotifiedAt: { type: Date, default: null },
+    deliveryConfirmationTokenHash: { type: String, default: '', select: false },
+    deliveryConfirmationExpiresAt: { type: Date, default: null, index: true },
+    deliveryConfirmedAt: { type: Date, default: null, index: true },
+    deliveryConfirmationSignature: { type: String, default: '', trim: true, maxlength: 120 },
+    deliveryConfirmationSignatureImage: { type: String, default: '', maxlength: 250000 },
+    // Recipient identity evidence is excluded from default queries to avoid leaking it to seller-facing order views.
+    deliveryConfirmationRecipientName: { type: String, default: '', trim: true, maxlength: 120 },
+    // Identity numbers and document images are excluded from default/seller-facing order queries.
+    deliveryConfirmationRecipientIdNumber: { type: String, default: '', trim: true, maxlength: 50, select: false },
+    deliveryCollectionType: { type: String, enum: ['self_collection', 'second_party_collection'], default: 'self_collection' },
+    deliveryConfirmationRecipientIdImage: { type: String, default: '', maxlength: 1450000, select: false },
+    deliveryConfirmationIsAuthorizedRecipient: { type: Boolean, default: false },
+    deliveryConfirmationCustomerAuthorizationConfirmed: { type: Boolean, default: false },
+    deliveryConfirmationIp: { type: String, default: '', maxlength: 100 },
+    deliveryConfirmationUserAgent: { type: String, default: '', maxlength: 500 },
+    sellerSettledAt: { type: Date, default: null },
+    platformCommissionRecordedAt: { type: Date, default: null },
 
     /*
     |--------------------------------------------------------------------------

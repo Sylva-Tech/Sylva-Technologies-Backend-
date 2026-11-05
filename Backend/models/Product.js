@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 
 const productSchema = new mongoose.Schema(
   {
@@ -22,14 +22,49 @@ const productSchema = new mongoose.Schema(
       trim: true,
     },
 
-    sku: {
+    /*
+     * NEW PRIMARY PRODUCT IDENTIFIER
+     *
+     * Google Sheets and the new product workflow use this field.
+     * Example: SYLT-001
+     */
+    code: {
       type: String,
       required: [
         true,
-        'SKU is required',
+        'Product code is required',
       ],
       unique: true,
       trim: true,
+      uppercase: true,
+    },
+
+    /*
+     * LEGACY SKU
+     *
+     * Kept temporarily so existing products and the current
+     * manual CSV/Excel import continue working during migration.
+     *
+     * New products should use `code`.
+     */
+    sku: {
+      type: String,
+      required: false,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
+
+    /*
+     * Track product ownership for safe spreadsheet reconciliation.
+     * Existing records remain unmarked until a successful sheet sync
+     * identifies them; seller/manual products are never pruned by sync.
+     */
+    source: {
+      type: String,
+      enum: ['manual', 'google_sheet', 'seller'],
+      default: 'manual',
+      index: true,
     },
 
     brand: {
@@ -101,7 +136,7 @@ const productSchema = new mongoose.Schema(
           return images.length <= 4;
         },
         message:
-          'A product can have a maximum of 4 images.',
+          'A product can have a maximum of 4 product images.',
       },
     },
 
@@ -213,6 +248,14 @@ const productSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // Optional seller-provided spreadsheet reference, shown only in the seller workspace.
+    sourceSpreadsheetUrl: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 1000,
+    },
+
     /*
      * Technical specifications.
      */
@@ -227,6 +270,21 @@ const productSchema = new mongoose.Schema(
     featured: {
       type: Boolean,
       default: false,
+    },
+
+    // Seller-sponsored homepage placement is time-limited and only activated
+    // after a verified wallet debit or successful Safaricom STK confirmation.
+    featuredExpiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    sponsorshipStatus: {
+      type: String,
+      enum: ['none', 'pending', 'active', 'expired', 'failed'],
+      default: 'none',
+      index: true,
     },
 
     isNew: {
@@ -323,9 +381,13 @@ productSchema.index({
   brand: 1,
 });
 
+/*
+ * Search both the new Code-era fields and the legacy SKU field.
+ */
 productSchema.index({
   name: 'text',
   brand: 'text',
+  code: 'text',
   sku: 'text',
 });
 
@@ -335,8 +397,7 @@ productSchema.index({
   createdAt: -1,
 });
 
-module.exports =
-  mongoose.model(
-    'Product',
-    productSchema
-  );
+module.exports = mongoose.model(
+  'Product',
+  productSchema
+);
