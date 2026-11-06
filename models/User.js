@@ -88,7 +88,6 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
 
-<<<<<<< Updated upstream
     // Admin inbox review is separate from account/seller status.
     adminReviewedAt: {
       type: Date,
@@ -119,8 +118,6 @@ const userSchema = new mongoose.Schema(
       },
     ],
 
-=======
->>>>>>> Stashed changes
     address: {
       type: String,
       default: '',
