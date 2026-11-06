@@ -7,14 +7,11 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const VerificationToken = require('../models/VerificationToken');
-<<<<<<< Updated upstream
 const sellerUpload = require('../middleware/sellerUpload');
 const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
 const cloudinary = require('../config/cloudinary');
 const { checkPinById } = require('../services/kraPinCheckerService');
 const { protect } = require('../middleware/authMiddleware');
-=======
->>>>>>> Stashed changes
 
 const {
   sendVerificationCodeAndLinkEmail,
@@ -169,7 +166,6 @@ const safeUser = (user) => {
  * POST /api/auth/register
  * ============================================================ */
 
-<<<<<<< Updated upstream
 /*
  * KRA PIN CHECKER BY ID
  * POST /api/auth/kra/pin-checker-by-id
@@ -398,28 +394,7 @@ router.post(
       }
       if (!idFront || !idBack || !taxDocumentFile) {
         return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your country-issued tax document.' });
-<<<<<<< HEAD
-=======
-      }
 
-      // KRA and identity documents are reviewed manually by an administrator.
-      // Do not block seller registration on an external KRA API response.
-
-      const normalizedIdNumber = idNumber.replace(/\s+/g, '').toUpperCase();
-      const normalizedTaxIdentifier = taxIdentifier.replace(/\s+/g, '').toUpperCase();
-      const existingSellerIdentity = await User.findOne({
-        $or: [
-          { 'sellerProfile.idNumber': normalizedIdNumber },
-          { 'sellerProfile.taxIdentifier': normalizedTaxIdentifier },
-          ...(country === 'KE' ? [{ 'sellerProfile.kraPin': normalizedTaxIdentifier }] : []),
-        ],
-      }).select('_id sellerProfile.storeName sellerStatus');
-      if (existingSellerIdentity) {
-        return res.status(409).json({
-          success: false,
-          message: 'These ID or tax identification details are already associated with another seller application/store.',
-        });
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
       }
 
       const existingUser = await User.findOne({ email });
@@ -465,13 +440,8 @@ router.post(
           storeEmail: email,
           storePhone: phone,
           mpesaPhone: phone,
-<<<<<<< HEAD
           kraPin: country === 'KE' ? taxIdentifier : '',
           taxIdentifier,
-=======
-          kraPin: country === 'KE' ? normalizedTaxIdentifier : '',
-          taxIdentifier: normalizedTaxIdentifier,
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
           taxDocument: taxUpload.public_id,
           kraPinDocument: taxUpload.public_id,
           applicationDate: now,
@@ -548,8 +518,6 @@ router.post(
   }
 );
 
-=======
->>>>>>> Stashed changes
 router.post('/register', async (req, res) => {
   try {
     const {
