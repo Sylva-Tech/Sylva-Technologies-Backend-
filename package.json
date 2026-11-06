@@ -36,13 +36,9 @@
     "resend": "^6.31.0"
   },
   "devDependencies": {
-<<<<<<< Updated upstream
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.1.14"
   },
   "engines": {
     "node": ">=24.22.1 <25"
-=======
-    "nodemon": "^3.1.14"
->>>>>>> Stashed changes
   }
 }
