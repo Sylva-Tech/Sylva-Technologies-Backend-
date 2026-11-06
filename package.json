@@ -11,12 +11,7 @@
     "seed:admin": "node scripts/seedAdmin.js",
     "test": "echo \"No tests configured yet\""
   },
-  "keywords": [
-    "express",
-    "mongodb",
-    "ecommerce",
-    "sylva"
-  ],
+  "keywords": ["express", "mongodb", "ecommerce", "sylva"],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
