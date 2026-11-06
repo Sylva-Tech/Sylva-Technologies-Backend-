@@ -1,0 +1,429 @@
+const mongoose = require('mongoose');
+
+const orderItemSchema = new mongoose.Schema(
+  {
+    product: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product',
+      required: true,
+    },
+
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    image: {
+      type: String,
+      default: '',
+    },
+
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+
+    unitPrice: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    subtotal: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+  },
+  {
+    _id: true,
+  }
+);
+
+const orderSchema = new mongoose.Schema(
+  {
+    /*
+    |--------------------------------------------------------------------------
+    | ORDER IDENTIFICATION
+    |--------------------------------------------------------------------------
+    */
+
+    orderNumber: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+      trim: true,
+    },
+
+    trackingCode: {
+      type: String,
+      default: '',
+      index: true,
+      trim: true,
+    },
+
+    // Admin inbox review is separate from fulfillment/payment status.
+    adminReviewedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    adminReviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | CUSTOMER
+    |--------------------------------------------------------------------------
+    */
+
+    customer: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+
+    customerName: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    customerEmail: {
+      type: String,
+      default: '',
+      trim: true,
+      lowercase: true,
+    },
+
+    customerPhone: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | ORDER ITEMS
+    |--------------------------------------------------------------------------
+    */
+
+    items: {
+      type: [orderItemSchema],
+      required: true,
+      validate: {
+        validator: function (items) {
+          return Array.isArray(items) && items.length > 0;
+        },
+        message:
+          'An order must contain at least one product.',
+      },
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | ORDER TOTALS
+    |--------------------------------------------------------------------------
+    |
+    | These values are calculated by the backend.
+    |
+    | subtotal = sum of all item subtotals
+    | deliveryFee = delivery charge
+    | total = subtotal + deliveryFee
+    |
+    |--------------------------------------------------------------------------
+    */
+
+    subtotal: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    deliveryFee: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    total: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | CUSTOMER DELIVERY DETAILS
+    |--------------------------------------------------------------------------
+    */
+
+    customerDetails: {
+      fullName: {
+        type: String,
+        trim: true,
+      },
+
+      phone: {
+        type: String,
+        trim: true,
+      },
+
+      email: {
+        type: String,
+        trim: true,
+        lowercase: true,
+      },
+
+<<<<<<< HEAD
+      country: {
+        type: String,
+        trim: true,
+        maxlength: 100,
+      },
+
+      county: {
+        type: String,
+        trim: true,
+      },
+=======
+      idNumber: { type: String, trim: true, maxlength: 50, default: '' },
+      customerReference: { type: String, trim: true, maxlength: 30, default: '' },
+
+      country: { type: String, trim: true, maxlength: 100, default: 'Kenya' },
+      county: { type: String, trim: true },
+      subCounty: { type: String, trim: true },
+      ward: { type: String, trim: true },
+>>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
+
+      deliveryLocation: {
+        type: String,
+        trim: true,
+      },
+
+      address: {
+        type: String,
+        trim: true,
+      },
+
+      notes: {
+        type: String,
+        trim: true,
+      },
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | PAYMENT
+    |--------------------------------------------------------------------------
+    */
+
+   paymentMethod: {
+  type: String,
+  enum: [
+    'Cash on Delivery',
+    'M-Pesa',
+    'PayPal',
+    'WhatsApp Order',
+    'Wallet',
+  ],
+  default: 'Cash on Delivery',
+},
+
+    mpesaPhone: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    mpesaCheckoutRequestId: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true,
+    },
+
+    mpesaReceiptNumber: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true,
+    },
+
+    paymentReference: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    paymentCurrency: {
+      type: String,
+      enum: ['KES', 'USD'],
+      default: 'KES',
+    },
+
+    paymentAmount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    paymentExchangeRate: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    paidAt: {
+      type: Date,
+      default: null,
+    },
+
+    cancellationDeadline: {
+      type: Date,
+      default: null,
+    },
+
+    cancellationRequestedAt: {
+      type: Date,
+      default: null,
+    },
+
+    refundReference: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+
+    paymentStatus: {
+      type: String,
+      enum: [
+        'Pending',
+        'Paid',
+        'Failed',
+        'Refunded',
+        'Refund Pending',
+        'Refund Processing',
+        'Refund Failed',
+      ],
+      default: 'Pending',
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | ORDER STATUS
+    |--------------------------------------------------------------------------
+    */
+
+    status: {
+      type: String,
+      enum: [
+        'Pending',
+        'Confirmed',
+        'Processing',
+        'Ready for Delivery',
+        'Shipped',
+        'Delivered',
+        'Cancelled',
+      ],
+      default: 'Pending',
+    },
+
+    // Seller-specific fulfillment tracking, so each seller manages only their own items.
+    sellerFulfillments: [{
+      seller: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+      status: { type: String, enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered'], default: 'Pending' },
+      trackingNumber: { type: String, trim: true, maxlength: 120, default: '' },
+      carrier: { type: String, trim: true, maxlength: 120, default: '' },
+      note: { type: String, trim: true, maxlength: 1000, default: '' },
+      history: [{
+        status: { type: String, enum: ['Pending', 'Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered'], required: true },
+        changedAt: { type: Date, default: Date.now },
+        changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+        note: { type: String, trim: true, maxlength: 1000, default: '' },
+        trackingNumber: { type: String, trim: true, maxlength: 120, default: '' },
+        carrier: { type: String, trim: true, maxlength: 120, default: '' },
+      }],
+    }],
+    statusHistory: [{
+      status: { type: String, trim: true, maxlength: 80, required: true },
+      changedAt: { type: Date, default: Date.now },
+      changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      actorRole: { type: String, trim: true, maxlength: 30, default: '' },
+      note: { type: String, trim: true, maxlength: 1000, default: '' },
+    }],
+
+    // Customer receipt confirmation and settlement audit.
+    deliveryAdminNotifiedAt: { type: Date, default: null },
+    deliveryConfirmationTokenHash: { type: String, default: '', select: false },
+    deliveryConfirmationExpiresAt: { type: Date, default: null, index: true },
+    deliveryConfirmedAt: { type: Date, default: null, index: true },
+    deliveryConfirmationSignature: { type: String, default: '', trim: true, maxlength: 120 },
+    deliveryConfirmationSignatureImage: { type: String, default: '', maxlength: 250000 },
+    // Recipient identity evidence is excluded from default queries to avoid leaking it to seller-facing order views.
+    deliveryConfirmationRecipientName: { type: String, default: '', trim: true, maxlength: 120 },
+    // Identity numbers and document images are excluded from default/seller-facing order queries.
+    deliveryConfirmationRecipientIdNumber: { type: String, default: '', trim: true, maxlength: 50, select: false },
+    deliveryCollectionType: { type: String, enum: ['self_collection', 'second_party_collection'], default: 'self_collection' },
+    deliveryConfirmationRecipientIdImage: { type: String, default: '', maxlength: 1450000, select: false },
+    deliveryConfirmationIsAuthorizedRecipient: { type: Boolean, default: false },
+    deliveryConfirmationCustomerAuthorizationConfirmed: { type: Boolean, default: false },
+    deliveryConfirmationIp: { type: String, default: '', maxlength: 100 },
+    deliveryConfirmationUserAgent: { type: String, default: '', maxlength: 500 },
+    sellerSettledAt: { type: Date, default: null },
+    platformCommissionRecordedAt: { type: Date, default: null },
+
+    /*
+    |--------------------------------------------------------------------------
+    | NOTES
+    |--------------------------------------------------------------------------
+    */
+
+    notes: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| INDEXES
+|--------------------------------------------------------------------------
+*/
+
+orderSchema.index({
+  customer: 1,
+  createdAt: -1,
+});
+
+orderSchema.index({
+  status: 1,
+  createdAt: -1,
+});
+
+orderSchema.index({
+  paymentStatus: 1,
+  createdAt: -1,
+});
+
+/*
+|--------------------------------------------------------------------------
+| MODEL
+|----------------------------------------------------------------
+----------
+*/
+
+module.exports =
+  mongoose.model('Order', orderSchema);
