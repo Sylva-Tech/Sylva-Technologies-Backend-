@@ -1,16 +1,21 @@
 const express = require('express');
-const crypto = require('crypto');
 const mongoose = require('mongoose');
 const axios = require('axios');
 
+const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Product = require('../models/Product');
+<<<<<<< Updated upstream
 const AdminWallet = require('../models/AdminWallet');
 const { getQuote: getShippingQuote } = require('./shippingRoutes');
 
 const {
 
+=======
+
+const {
+>>>>>>> Stashed changes
   protect,
   adminOnly,
   requireVerified,
@@ -83,9 +88,6 @@ const PAYMENT_STATUSES = [
   'Paid',
   'Failed',
   'Refunded',
-  'Refund Pending',
-  'Refund Processing',
-  'Refund Failed',
 ];
 
 
@@ -201,6 +203,7 @@ const applySellerSettlement = async (order) => {
       continue;
     }
 
+<<<<<<< Updated upstream
     const settlementReference = `order:${order.orderNumber}`;
     const sellerCountry = String(seller.sellerProfile?.country || 'KE').toUpperCase();
 <<<<<<< HEAD
@@ -376,6 +379,49 @@ const applySellerSettlement = async (order) => {
       });
       seller.wallet = wallet;
     }
+=======
+    const wallet = seller.wallet || {
+      currency: 'KES',
+      availableBalance: 0,
+      pendingBalance: 0,
+      transactions: [],
+    };
+
+    wallet.currency = wallet.currency || 'KES';
+
+    wallet.availableBalance = roundMoney(
+      Number(wallet.availableBalance || 0) +
+        Number(settlement.netAmount || 0)
+    );
+
+    wallet.lastUpdatedAt = new Date();
+
+    wallet.transactions = Array.isArray(
+      wallet.transactions
+    )
+      ? wallet.transactions
+      : [];
+
+    wallet.transactions.unshift({
+      _id: new mongoose.Types.ObjectId(),
+      type: 'credit',
+      amount: roundMoney(settlement.netAmount),
+      category: 'order_settlement',
+      status: 'completed',
+      description: `Order settlement for ${order.orderNumber}.`,
+      reference: `order:${order.orderNumber}`,
+      relatedOrder: order._id,
+      metadata: {
+        commission: roundMoney(settlement.commission),
+        grossAmount: roundMoney(settlement.grossAmount),
+        products: settlement.products,
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    seller.wallet = wallet;
+>>>>>>> Stashed changes
 
 >>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     await seller.save();
@@ -393,6 +439,7 @@ const applySellerSettlement = async (order) => {
   };
 };
 
+<<<<<<< Updated upstream
 
 // Track seller-owned M-Pesa and PayPal proceeds as held platform funds until the customer confirms delivery.
 // This is an internal ledger hold; the external payment remains in the configured provider merchant account.
@@ -860,6 +907,8 @@ const restoreOrderStock = async (order) => {
   }
 };
 
+=======
+>>>>>>> Stashed changes
 /*
 |--------------------------------------------------------------------------
 | GET ALL ORDERS - ADMIN
@@ -868,16 +917,10 @@ const restoreOrderStock = async (order) => {
 
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
-    // One-time compatibility backfill: existing orders predate inbox review tracking.
-    await Order.collection.updateMany(
-      { adminReviewedAt: { $exists: false } },
-      { $set: { adminReviewedAt: new Date() } }
-    );
-
     const orders = await Order.find()
       .populate(
         'customer',
-        'name email phone createdAt adminReviewedAt'
+        'name email phone'
       )
       .populate({
         path: 'items.product',
@@ -916,6 +959,7 @@ router.get('/', protect, adminOnly, async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
+<<<<<<< Updated upstream
 | MARK ORDER AS REVIEWED BY ADMIN
 |--------------------------------------------------------------------------
 */
@@ -1002,6 +1046,8 @@ router.get('/:id/delivery-evidence', protect, async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
+=======
+>>>>>>> Stashed changes
 | GET MY ORDERS - CUSTOMER
 |--------------------------------------------------------------------------
 */
@@ -1759,6 +1805,7 @@ const createOrderFromRequest = async ({
       });
     }
 
+<<<<<<< Updated upstream
     if (!['PayPal', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
       return res.status(400).json({
         success: false,
@@ -1766,6 +1813,8 @@ const createOrderFromRequest = async ({
       });
     }
 
+=======
+>>>>>>> Stashed changes
     if (!customerDetails?.fullName) {
       return res.status(400).json({
         success: false,
@@ -2195,6 +2244,7 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
           'name slug price images stock'
         );
 
+<<<<<<< Updated upstream
         /*
 |--------------------------------------------------------------------------
 | INITIALIZE PAYPAL PAYMENT
@@ -2424,6 +2474,81 @@ if (paymentMethod === 'PayPal') {
     if (paymentMethod === 'Wallet' && populatedOrder.paymentStatus === 'Paid') {
       await sendPaidOrderEmails(populatedOrder);
     }
+=======
+    /*
+    |--------------------------------------------------------------------------
+    | SEND ORDER EMAILS
+    |--------------------------------------------------------------------------
+    */
+
+    try {
+      if (customerEmail) {
+        await sendOrderConfirmationEmail({
+          to: customerEmail,
+
+          customerName:
+            customerDetails.fullName,
+
+          order: {
+            ...populatedOrder.toObject(),
+
+            orderNumber:
+              populatedOrder.orderNumber,
+
+            trackingCode:
+              populatedOrder.trackingCode ||
+              populatedOrder.orderNumber,
+          },
+
+          orderDate:
+            new Date(
+              populatedOrder.createdAt
+            ).toLocaleString(),
+        });
+      }
+
+      const adminAddress =
+        process.env.SALES_EMAIL ||
+        'sales@sylvatechnologies.co.ke';
+
+      await sendAdminOrderNotificationEmail({
+        to: adminAddress,
+
+        order: {
+          ...populatedOrder.toObject(),
+
+          orderNumber:
+            populatedOrder.orderNumber,
+
+          trackingCode:
+            populatedOrder.trackingCode ||
+            populatedOrder.orderNumber,
+        },
+
+        customer: {
+          name:
+            customerDetails.fullName,
+
+          email:
+            customerEmail,
+
+          phone:
+            customerDetails.phone,
+        },
+      });
+    } catch (emailError) {
+      /*
+      |--------------------------------------------------------------------------
+      | EMAIL FAILURE SHOULD NOT CANCEL THE ORDER
+      |--------------------------------------------------------------------------
+      */
+
+      console.error(
+        'Order email notification failed:',
+        emailError
+      );
+    }
+>>>>>>> Stashed changes
 
     /*
     |--------------------------------------------------------------------------
@@ -2431,6 +2556,7 @@ if (paymentMethod === 'PayPal') {
     |--------------------------------------------------------------------------
     */
 
+<<<<<<< Updated upstream
  return res.status(201).json({
   success: true,
   message: paymentMethod === 'PayPal'
@@ -2443,6 +2569,14 @@ if (paymentMethod === 'PayPal') {
   mpesaPayment,
 });
 
+=======
+    return res.status(201).json({
+      success: true,
+      message:
+        'Order created successfully.',
+      data: populatedOrder,
+    });
+>>>>>>> Stashed changes
   } catch (error) {
     console.error(
       'Create order error:',
@@ -2492,6 +2626,7 @@ router.post(
   }
 );
 
+<<<<<<< Updated upstream
 
 /*
 |--------------------------------------------------------------------------
@@ -2883,6 +3018,8 @@ router.post('/:id/cancel', protect, async (req, res) => {
   }
 });
 
+=======
+>>>>>>> Stashed changes
 /*
 |--------------------------------------------------------------------------
 | UPDATE ORDER STATUS - ADMIN
@@ -2943,6 +3080,7 @@ router.patch(
       }
 
       if (
+<<<<<<< Updated upstream
         ['Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered'].includes(status) &&
         order.paymentStatus !== 'Paid'
       ) {
@@ -2953,6 +3091,8 @@ router.patch(
       }
 
       if (
+=======
+>>>>>>> Stashed changes
         previousStatus === status
       ) {
         const unchangedOrder =
@@ -2982,14 +3122,28 @@ router.patch(
       |--------------------------------------------------------------------------
       */
 
-      if (status === 'Cancelled' && previousStatus !== 'Cancelled') {
-        if (order.paymentStatus === 'Paid' || order.paymentStatus === 'Refund Pending') {
-          return res.status(409).json({
-            success: false,
-            message: 'Paid orders must use the cancellation/refund workflow so customer funds are not left unrefunded.',
-          });
+      if (
+        status === 'Cancelled' &&
+        previousStatus !== 'Cancelled'
+      ) {
+        for (const item of order.items) {
+          if (!item.product) {
+            continue;
+          }
+
+          await Product.updateOne(
+            {
+              _id: item.product,
+            },
+            {
+              $inc: {
+                stock: Number(
+                  item.quantity || 0
+                ),
+              },
+            }
+          );
         }
-        await restoreOrderStock(order);
       }
 
       /*
@@ -3143,6 +3297,7 @@ router.patch(
         });
       }
 
+<<<<<<< Updated upstream
       if (paymentStatus === 'Paid' && order.paymentMethod === 'PayPal') {
         return res.status(409).json({
           success: false,
@@ -3150,6 +3305,8 @@ router.patch(
         });
       }
 
+=======
+>>>>>>> Stashed changes
       const isFirstPaymentConfirmation =
         paymentStatus === 'Paid' &&
         order.paymentStatus !== 'Paid';

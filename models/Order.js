@@ -65,18 +65,6 @@ const orderSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // Admin inbox review is separate from fulfillment/payment status.
-    adminReviewedAt: {
-      type: Date,
-      default: null,
-      index: true,
-    },
-    adminReviewedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
-    },
-
     /*
     |--------------------------------------------------------------------------
     | CUSTOMER
@@ -182,6 +170,7 @@ const orderSchema = new mongoose.Schema(
         lowercase: true,
       },
 
+<<<<<<< Updated upstream
 <<<<<<< HEAD
       country: {
         type: String,
@@ -189,6 +178,8 @@ const orderSchema = new mongoose.Schema(
         maxlength: 100,
       },
 
+=======
+>>>>>>> Stashed changes
       county: {
         type: String,
         trim: true,
@@ -225,6 +216,7 @@ const orderSchema = new mongoose.Schema(
     |--------------------------------------------------------------------------
     */
 
+<<<<<<< Updated upstream
    paymentMethod: {
   type: String,
   enum: [
@@ -236,6 +228,18 @@ const orderSchema = new mongoose.Schema(
   ],
   default: 'Cash on Delivery',
 },
+=======
+    paymentMethod: {
+      type: String,
+      enum: [
+        'Cash on Delivery',
+        'M-Pesa',
+        'PayPal',
+        'WhatsApp Order',
+      ],
+      default: 'Cash on Delivery',
+    },
+>>>>>>> Stashed changes
 
     mpesaPhone: {
       type: String,
@@ -263,6 +267,7 @@ const orderSchema = new mongoose.Schema(
       default: '',
     },
 
+<<<<<<< Updated upstream
     paymentCurrency: {
       type: String,
       enum: ['KES', 'USD'],
@@ -302,6 +307,8 @@ const orderSchema = new mongoose.Schema(
       default: '',
     },
 
+=======
+>>>>>>> Stashed changes
     paymentStatus: {
       type: String,
       enum: [
@@ -309,9 +316,6 @@ const orderSchema = new mongoose.Schema(
         'Paid',
         'Failed',
         'Refunded',
-        'Refund Pending',
-        'Refund Processing',
-        'Refund Failed',
       ],
       default: 'Pending',
     },

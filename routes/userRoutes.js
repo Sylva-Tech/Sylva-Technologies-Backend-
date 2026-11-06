@@ -19,6 +19,7 @@ const cloudinary = require('../config/cloudinary');
 
 const router = express.Router();
 
+<<<<<<< Updated upstream
 /*
 |--------------------------------------------------------------------------
 | MARK CUSTOMER ACCOUNT AS REVIEWED BY ADMIN
@@ -262,6 +263,8 @@ router.put(
   }
 );
 
+=======
+>>>>>>> Stashed changes
 router.delete('/me', protect, async (req, res) => {
   try {
     const currentPassword = String(req.body?.currentPassword || '');
@@ -386,12 +389,6 @@ router.get(
   adminOnly,
   async (req, res) => {
     try {
-      // One-time compatibility backfill: existing accounts predate inbox review tracking.
-      await User.collection.updateMany(
-        { adminReviewedAt: { $exists: false } },
-        { $set: { adminReviewedAt: new Date() } }
-      );
-
       const users = await User.find()
         .select('-password')
         .sort({
@@ -716,14 +713,12 @@ router.put(
 
       if (
         !idNumber ||
-        idNumber.trim().length < 3 ||
-        !kraPin ||
-        !/^[A-Za-z]\d{9}[A-Za-z]$/.test(String(kraPin).trim())
+        idNumber.trim().length < 3
       ) {
         return res.status(400).json({
           success: false,
           message:
-            'Please provide a valid identification number and KRA PIN number.',
+            'Please provide your identification number.',
         });
       }
 

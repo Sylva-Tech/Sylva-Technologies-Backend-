@@ -88,6 +88,7 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
 
+<<<<<<< Updated upstream
     // Admin inbox review is separate from account/seller status.
     adminReviewedAt: {
       type: Date,
@@ -118,6 +119,8 @@ const userSchema = new mongoose.Schema(
       },
     ],
 
+=======
+>>>>>>> Stashed changes
     address: {
       type: String,
       default: '',
@@ -261,26 +264,6 @@ const userSchema = new mongoose.Schema(
        * PERSONAL INFORMATION
        * ------------------------------------------ */
 
-      country: {
-        type: String,
-        default: 'KE',
-        uppercase: true,
-        trim: true,
-        maxlength: 2,
-      },
-
-      identityVerificationStatus: {
-        type: String,
-        enum: ['pending', 'verified', 'rejected'],
-        default: 'pending',
-      },
-
-      identityVerificationProvider: {
-        type: String,
-        enum: ['manual_review', 'stripe_identity', 'other'],
-        default: 'manual_review',
-      },
-
       officialName: {
         type: String,
         default: '',
@@ -358,13 +341,6 @@ const userSchema = new mongoose.Schema(
         ],
       },
 
-      storeProfile: {
-        type: String,
-        default: '',
-        trim: true,
-        maxlength: [1000, 'Store profile cannot exceed 1000 characters'],
-      },
-
       storeEmail: {
         type: String,
         default: '',
@@ -394,19 +370,6 @@ const userSchema = new mongoose.Schema(
           30,
           'M-Pesa phone number is too long',
         ],
-      },
-
-      taxIdentifier: {
-        type: String,
-        default: '',
-        trim: true,
-        maxlength: [50, 'Tax identifier is too long'],
-      },
-
-      taxDocument: {
-        type: String,
-        default: '',
-        maxlength: [500, 'Tax document reference is too long'],
       },
 
       kraPin: {
@@ -732,33 +695,6 @@ const userSchema = new mongoose.Schema(
         type: Date,
         default: null,
       },
-    },
-
-    /* ==========================================
-     * SEPARATE INTERNATIONAL USD WALLET
-     * PayPal deposits are credited only after the
-     * backend captures and verifies the PayPal order.
-     * This balance is never mixed with the KES wallet.
-     * ========================================== */
-    usdWallet: {
-      currency: { type: String, default: 'USD', enum: ['USD'] },
-      availableBalance: { type: Number, default: 0, min: 0 },
-      pendingBalance: { type: Number, default: 0, min: 0 },
-      lastUpdatedAt: { type: Date, default: null },
-      transactions: [{
-        _id: { type: mongoose.Schema.Types.ObjectId, default: () => new mongoose.Types.ObjectId() },
-        type: { type: String, enum: ['credit', 'debit'], default: 'credit' },
-        amount: { type: Number, default: 0, min: 0 },
-        currency: { type: String, default: 'USD', enum: ['USD'] },
-        category: { type: String, default: 'manual_adjustment', trim: true, maxlength: 100 },
-        status: { type: String, enum: ['pending', 'completed', 'paid', 'rejected', 'failed', 'reversed'], default: 'completed' },
-        description: { type: String, default: '', trim: true, maxlength: 500 },
-        reference: { type: String, default: '', trim: true, maxlength: 150 },
-        createdAt: { type: Date, default: Date.now },
-        updatedAt: { type: Date, default: Date.now },
-        processedAt: { type: Date, default: null },
-        metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
-      }],
     },
 
     /* ==========================================

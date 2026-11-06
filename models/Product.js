@@ -1,4 +1,4 @@
-﻿const mongoose = require('mongoose');
+const mongoose = require('mongoose');
 
 const productSchema = new mongoose.Schema(
   {
@@ -22,36 +22,13 @@ const productSchema = new mongoose.Schema(
       trim: true,
     },
 
-    /*
-     * NEW PRIMARY PRODUCT IDENTIFIER
-     *
-     * Google Sheets and the new product workflow use this field.
-     * Example: SYLT-001
-     */
-    code: {
+    sku: {
       type: String,
       required: [
         true,
-        'Product code is required',
+        'SKU is required',
       ],
       unique: true,
-      trim: true,
-      uppercase: true,
-    },
-
-    /*
-     * LEGACY SKU
-     *
-     * Kept temporarily so existing products and the current
-     * manual CSV/Excel import continue working during migration.
-     *
-     * New products should use `code`.
-     */
-    sku: {
-      type: String,
-      required: false,
-      unique: true,
-      sparse: true,
       trim: true,
     },
 
@@ -136,7 +113,7 @@ const productSchema = new mongoose.Schema(
           return images.length <= 4;
         },
         message:
-          'A product can have a maximum of 4 product images.',
+          'A product can have a maximum of 4 images.',
       },
     },
 
@@ -381,13 +358,9 @@ productSchema.index({
   brand: 1,
 });
 
-/*
- * Search both the new Code-era fields and the legacy SKU field.
- */
 productSchema.index({
   name: 'text',
   brand: 'text',
-  code: 'text',
   sku: 'text',
 });
 
@@ -397,7 +370,8 @@ productSchema.index({
   createdAt: -1,
 });
 
-module.exports = mongoose.model(
-  'Product',
-  productSchema
-);
+module.exports =
+  mongoose.model(
+    'Product',
+    productSchema
+  );

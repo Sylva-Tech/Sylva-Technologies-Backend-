@@ -6,10 +6,6 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 
 const {
-  syncGoogleSheetProducts,
-} = require('../services/googleSheetProductSync');
-
-const {
   protect,
   adminOnly,
 } = require('../middleware/authMiddleware');
@@ -105,9 +101,6 @@ const sanitizeSeller = (
       '',
 
     sellerProfile: {
-      country: sellerProfile.country || 'KE',
-      identityVerificationStatus: sellerProfile.identityVerificationStatus || 'pending',
-      identityVerificationProvider: sellerProfile.identityVerificationProvider || 'manual_review',
       officialName:
         sellerProfile.officialName ||
         '',
@@ -151,13 +144,17 @@ const sanitizeSeller = (
    * returned when explicitly requested.
    */
   if (includeSensitive) {
-    data.sellerProfile.idType = sellerProfile.idType || '';
-    data.sellerProfile.idNumber = sellerProfile.idNumber || '';
-    data.sellerProfile.taxIdentifier = sellerProfile.taxIdentifier || sellerProfile.kraPin || '';
-    data.sellerProfile.idFrontDocument = sellerProfile.idFrontDocument || '';
-    data.sellerProfile.idBackDocument = sellerProfile.idBackDocument || '';
-    data.sellerProfile.taxDocument = sellerProfile.taxDocument || sellerProfile.kraPinDocument || '';
-    data.sellerProfile.kraPinDocument = sellerProfile.kraPinDocument || sellerProfile.taxDocument || '';
+    data.sellerProfile.idFrontDocument =
+      sellerProfile.idFrontDocument ||
+      '';
+
+    data.sellerProfile.idBackDocument =
+      sellerProfile.idBackDocument ||
+      '';
+
+    data.sellerProfile.kraPinDocument =
+      sellerProfile.kraPinDocument ||
+      '';
   }
 
   return data;
@@ -710,27 +707,27 @@ router.put(
       }
 
       if (
-        seller.sellerStatus === 'approved' &&
-        seller.sellerProfile?.identityVerificationStatus === 'verified'
+        seller.sellerStatus ===
+        'approved'
       ) {
-        return res.status(400).json({ success: false, message: 'This seller account and its identity documents are already approved.' });
+        return res.status(400).json({
+          success: false,
+          message:
+            'This seller account is already approved.',
+        });
       }
 
       if (
-        seller.sellerStatus !== 'pending' &&
-        seller.sellerStatus !== 'rejected' &&
-        seller.sellerStatus !== 'approved'
+        seller.sellerStatus !==
+          'pending' &&
+        seller.sellerStatus !==
+          'rejected'
       ) {
-        return res.status(400).json({ success: false, message: 'This account does not have a seller application.' });
-      }
-
-      if (req.body?.identityReviewed !== true) {
-        return res.status(400).json({ success: false, message: 'Confirm that you have reviewed the ID front, ID back and country-issued tax document before approving identity verification.' });
-      }
-
-      const identityProfile = seller.sellerProfile || {};
-      if (!identityProfile.idFrontDocument || !identityProfile.idBackDocument || !(identityProfile.taxDocument || identityProfile.kraPinDocument)) {
-        return res.status(400).json({ success: false, message: 'Cannot approve identity verification until the ID front, ID back and country-issued tax document are available for review.' });
+        return res.status(400).json({
+          success: false,
+          message:
+            'This account does not have a seller application.',
+        });
       }
 
       if (
@@ -765,10 +762,6 @@ router.put(
 
       seller.sellerStatus =
         'approved';
-
-      // This route is the manual identity-document review decision point.
-      seller.sellerProfile.identityVerificationStatus = 'verified';
-      seller.sellerProfile.identityVerificationProvider = 'manual_review';
 
       /*
        * Approval controls seller
@@ -1192,14 +1185,8 @@ router.get(
     }
   }
 );
-/*
-|--------------------------------------------------------------------------
-| SYNC PRODUCTS FROM GOOGLE SHEET
-|--------------------------------------------------------------------------
-| POST /api/admin/products/sync-google-sheet
-|--------------------------------------------------------------------------
-*/
 
+<<<<<<< Updated upstream
 router.post(
   '/products/sync-google-sheet',
   protect,
@@ -1240,6 +1227,8 @@ router.post(
     }
   }
 );
+=======
+>>>>>>> Stashed changes
 module.exports = router;
 
 

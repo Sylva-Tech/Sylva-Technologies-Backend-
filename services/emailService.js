@@ -39,34 +39,39 @@ const getFromEmail = (type = 'verification') => {
   const senders = {
     verification:
       process.env.EMAIL_FROM_VERIFICATION ||
+      process.env.EMAIL_FROM ||
       'Sylva Technologies <verification@sylvatechnologies.co.ke>',
 
     passwordReset:
       process.env.EMAIL_FROM_PASSWORD_RESET ||
+      process.env.EMAIL_FROM ||
       'Sylva Technologies <resetpassword@sylvatechnologies.co.ke>',
 
     orders:
       process.env.EMAIL_FROM_ORDERS ||
+      process.env.EMAIL_FROM ||
       'Sylva Technologies <order@sylvatechnologies.co.ke>',
-
-    payment:
-      process.env.EMAIL_FROM_PAYMENT ||
-      'Sylva Technologies <payment@sylvatechnologies.co.ke>',
 
     admin:
       process.env.EMAIL_FROM_ADMIN ||
-      'Sylva Technologies <admin@sylvatechnologies.co.ke>',
+      process.env.EMAIL_FROM_SALES ||
+      process.env.EMAIL_FROM ||
+      'Sylva Technologies <sales@sylvatechnologies.co.ke>',
 
     sales:
       process.env.EMAIL_FROM_SALES ||
+      process.env.EMAIL_FROM_ADMIN ||
+      process.env.EMAIL_FROM ||
       'Sylva Technologies <sales@sylvatechnologies.co.ke>',
 
     support:
       process.env.EMAIL_FROM_SUPPORT ||
+      process.env.EMAIL_FROM ||
       'Sylva Technologies <support@sylvatechnologies.co.ke>',
 
     sellers:
       process.env.EMAIL_FROM_SELLERS ||
+      process.env.EMAIL_FROM ||
       'Sylva Technologies <sellers@sylvatechnologies.co.ke>',
   };
 
@@ -145,23 +150,6 @@ const sendMail = async ({
       await resend.emails.send({
         from: getFromEmail(sender),
         to,
-        ...(sender === 'payment'
-          ? {
-              replyTo:
-                process.env.EMAIL_REPLY_TO_SUPPORT ||
-                'support@sylvatechnologies.co.ke',
-            }
-          : {}),
-        // Keep an internal admin copy of business emails. Never copy account
-        // verification or password-reset codes/links to another mailbox.
-        ...(sender !== 'verification' && sender !== 'passwordReset'
-          ? {
-              bcc: [
-                process.env.ADMIN_EMAIL ||
-                  'admin@sylvatechnologies.co.ke',
-              ],
-            }
-          : {}),
         subject,
         html: appendCustomerCareHtml(html),
         text: appendCustomerCareText(text),
@@ -900,11 +888,11 @@ const sendOrderConfirmationEmail = async ({
   return sendMail({
     to,
     subject:
-      `Payment Confirmation & Order Receipt - ${order.orderNumber}`,
+      `Order Confirmation - ${order.orderNumber}`,
     html,
     text:
-      `Hello ${customerName}, your payment for Sylva Technologies order ${order.orderNumber} has been confirmed. Your order is now being processed. Tracking code: ${order.trackingCode || order.orderNumber}. Please reply to support@sylvatechnologies.co.ke if you need assistance.`,
-    sender: 'payment',
+      `Thank you ${customerName} for shopping with Sylva Technologies. Your order ${order.orderNumber} has been placed successfully and is now being processed. Tracking code: ${order.trackingCode || order.orderNumber}.`,
+    sender: 'orders',
   });
 };
 
@@ -928,17 +916,13 @@ const sendAdminOrderNotificationEmail =
       });
 
     return sendMail({
-      to:
-        to ||
-        process.env.ORDERS_EMAIL ||
-        process.env.SALES_EMAIL ||
-        'sales@sylvatechnologies.co.ke',
+      to: to || process.env.SALES_EMAIL || 'sales@sylvatechnologies.co.ke',
       subject:
         `${order.paymentStatus === 'Paid' ? 'Payment received - order' : 'New order received'} ${order.orderNumber}`,
       html,
       text:
         `A new order ${order.orderNumber} has been placed by ${customer.name}. Tracking code: ${order.trackingCode || order.orderNumber}. Payment: ${order.paymentMethod}. Delivery: ${order.customerDetails?.deliveryLocation || order.customerDetails?.address || 'N/A'}.`,
-      sender: 'orders',
+      sender: 'sales',
     });
   };
 

@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const Category = require('../models/Category');
 const Product = require('../models/Product');
 const Brand = require('../models/Brand');
@@ -6,13 +6,12 @@ const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-const buildSlug = (value) =>
-  String(value || '')
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-');
+const buildSlug = (value) => value
+  .toLowerCase()
+  .trim()
+  .replace(/[^a-z0-9\s-]/g, '')
+  .replace(/\s+/g, '-')
+  .replace(/-+/g, '-');
 
 // Seed a broad, editable electronics catalogue without overwriting existing admin changes.
 router.post('/admin/seed-catalog', protect, adminOnly, async (req, res) => {
@@ -229,110 +228,65 @@ router.get('/admin/all', protect, adminOnly, async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const categories = await Category.find({
-      isActive: true,
-    }).sort({ name: 1 });
-
+    const categories = await Category.find({ isActive: true }).sort({ name: 1 });
     res.json(categories);
   } catch (error) {
-    res.status(500).json({
-      message: error.message || 'Unable to fetch categories.',
-    });
+    res.status(500).json({ message: error.message || 'Unable to fetch categories.' });
   }
 });
 
 router.post('/', protect, adminOnly, async (req, res) => {
   try {
-    const {
-      name,
-      description,
-      image,
-      parentCategory,
-      isActive,
-    } = req.body;
+    const { name, description, image, parentCategory } = req.body;
 
     if (!name) {
-      return res.status(400).json({
-        message: 'Category name is required.',
-      });
+      return res.status(400).json({ message: 'Category name is required.' });
     }
 
     const slug = buildSlug(name);
-
     const existing = await Category.findOne({ slug });
-
     if (existing) {
-      return res.status(400).json({
-        message: 'Category already exists.',
-      });
+      return res.status(400).json({ message: 'Category already exists.' });
     }
 
     const category = await Category.create({
       name,
       slug,
-      description: description || '',
-      image: image || '',
+      description,
+      image,
       parentCategory: parentCategory || null,
-      isActive: isActive !== false,
     });
 
     res.status(201).json(category);
   } catch (error) {
-    res.status(500).json({
-      message: error.message || 'Unable to create category.',
-    });
+    res.status(500).json({ message: error.message || 'Unable to create category.' });
   }
 });
 
 router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
     const category = await Category.findById(req.params.id);
-
     if (!category) {
-      return res.status(404).json({
-        message: 'Category not found.',
-      });
+      return res.status(404).json({ message: 'Category not found.' });
     }
 
     if (req.body.name && req.body.name !== category.name) {
-      category.name = req.body.name;
       category.slug = buildSlug(req.body.name);
     }
 
-    if (req.body.description !== undefined) {
-      category.description = req.body.description;
-    }
-
-    if (req.body.image !== undefined) {
-      category.image = req.body.image;
-    }
-
-    if (req.body.parentCategory !== undefined) {
-      category.parentCategory = req.body.parentCategory || null;
-    }
-
-    if (req.body.isActive !== undefined) {
-      category.isActive = Boolean(req.body.isActive);
-    }
-
+    Object.assign(category, req.body);
     const updated = await category.save();
-
     res.json(updated);
   } catch (error) {
-    res.status(500).json({
-      message: error.message || 'Unable to update category.',
-    });
+    res.status(500).json({ message: error.message || 'Unable to update category.' });
   }
 });
 
 router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
     const category = await Category.findById(req.params.id);
-
     if (!category) {
-      return res.status(404).json({
-        message: 'Category not found.',
-      });
+      return res.status(404).json({ message: 'Category not found.' });
     }
 
     const [productCount, childCount] = await Promise.all([
@@ -349,14 +303,9 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
     }
 
     await category.deleteOne();
-
-    res.json({
-      message: 'Category deleted successfully.',
-    });
+    res.json({ message: 'Category deleted successfully.' });
   } catch (error) {
-    res.status(500).json({
-      message: error.message || 'Unable to delete category.',
-    });
+    res.status(500).json({ message: error.message || 'Unable to delete category.' });
   }
 });
 

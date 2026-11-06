@@ -3,15 +3,17 @@ const mongoose = require('mongoose');
 const axios = require('axios');
 
 const User = require('../models/User');
+<<<<<<< Updated upstream
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const AdminWallet = require('../models/AdminWallet');
 const { sendMail } = require('../services/emailService');
+=======
+>>>>>>> Stashed changes
 
 const {
   protect,
   adminOnly,
-  requireVerified,
 } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -56,13 +58,21 @@ const payoutRateLimitStore = new Map();
 const PAYOUT_RATE_WINDOW_MS = 15 * 60 * 1000;
 const PAYOUT_RATE_MAX_REQUESTS = 5;
 
-const getClientIp = (req) => (
-  // app.js configures Express trust proxy; use its resolved client IP rather
-  // than trusting a caller-supplied X-Forwarded-For header directly.
-  req.ip ||
-  req.socket?.remoteAddress ||
-  'unknown'
-);
+const getClientIp = (req) => {
+  const forwarded = req.headers['x-forwarded-for'];
+
+  if (forwarded) {
+    return String(forwarded)
+      .split(',')[0]
+      .trim();
+  }
+
+  return (
+    req.ip ||
+    req.socket?.remoteAddress ||
+    'unknown'
+  );
+};
 
 const cleanupRateLimitStore = () => {
   const now = Date.now();
@@ -278,94 +288,9 @@ const serializeSellerTransaction = (
       rejectionReason:
         metadata.rejectionReason ||
         undefined,
-
-      accountDisplayName:
-        metadata.accountDisplayName ||
-        undefined,
     },
   };
 };
-
-const ensureUsdWallet = (user) => {
-  if (!user.usdWallet) user.usdWallet = {};
-  const wallet = user.usdWallet;
-  wallet.currency = 'USD';
-  wallet.availableBalance = roundMoney(wallet.availableBalance || 0);
-  wallet.pendingBalance = roundMoney(wallet.pendingBalance || 0);
-  wallet.transactions = Array.isArray(wallet.transactions) ? wallet.transactions : [];
-  wallet.lastUpdatedAt = wallet.lastUpdatedAt || new Date();
-  user.usdWallet = wallet;
-  return wallet;
-};
-
-const serializeUsdWallet = (user) => {
-  const wallet = ensureUsdWallet(user);
-  const transactions = [...wallet.transactions]
-    .sort((a, b) => new Date(b.createdAt || b.processedAt || 0) - new Date(a.createdAt || a.processedAt || 0))
-    .map((entry) => ({
-      _id: entry._id,
-      type: entry.type || 'credit',
-      amount: roundMoney(entry.amount || 0),
-      currency: 'USD',
-      category: entry.category || 'manual_adjustment',
-      status: entry.status || 'pending',
-      description: entry.description || '',
-      reference: entry.reference || '',
-      createdAt: entry.createdAt || null,
-      processedAt: entry.processedAt || null,
-      metadata: {
-        payoutMethod: entry.metadata?.payoutMethod || undefined,
-        destination: entry.metadata?.destination || undefined,
-        rejectionReason: entry.metadata?.rejectionReason || undefined,
-        paypalOrderId: entry.metadata?.paypalOrderId || undefined,
-      },
-    }));
-  return {
-    currency: 'USD',
-    availableBalance: roundMoney(wallet.availableBalance),
-    pendingBalance: roundMoney(wallet.pendingBalance),
-    totalBalance: roundMoney(wallet.availableBalance + wallet.pendingBalance),
-    lastUpdatedAt: wallet.lastUpdatedAt || null,
-    transactions,
-  };
-};
-
-const paypalApiBase = () => (
-  String(process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'sandbox').toLowerCase() === 'live'
-    ? 'https://api-m.paypal.com'
-    : 'https://api-m.sandbox.paypal.com'
-);
-
-const getPayPalAccessToken = async () => {
-  const clientId = process.env.PAYPAL_CLIENT_ID;
-  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
-    const error = new Error('PayPal is not configured on the server.');
-    error.statusCode = 503;
-    throw error;
-  }
-  const response = await axios.post(
-    paypalApiBase() + '/v1/oauth2/token',
-    'grant_type=client_credentials',
-    {
-      auth: { username: clientId, password: clientSecret },
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      timeout: 15000,
-    }
-  );
-  if (!response.data?.access_token) throw new Error('PayPal did not return an access token.');
-  return response.data.access_token;
-};
-
-const isInternationalSeller = (user) => (
-  user?.role === 'seller' &&
-  String(user.sellerProfile?.country || 'KE').toUpperCase() !== 'KE' &&
-  user.sellerStatus === 'approved' &&
-  user.sellerProfile?.identityVerificationStatus === 'verified' &&
-  ['active', 'warning'].includes(user.accountStatus) &&
-  user.storeStatus === 'active' &&
-  user.isVerified === true
-);
 
 /*
 |--------------------------------------------------------------------------
@@ -495,11 +420,11 @@ const validatePayoutAmount = (
     };
   }
 
-  if (amount < 50) {
+  if (amount < 100) {
     return {
       valid: false,
       message:
-        'The minimum withdrawal amount is KSh 50.',
+        'The minimum payout amount is KSh 100.',
     };
   }
 
@@ -584,8 +509,7 @@ const validatePayoutDestination = (
   ).trim();
 
   if (
-    payoutMethod === 'mpesa' ||
-    payoutMethod === 'airtel_money'
+    payoutMethod === 'mpesa'
   ) {
     const normalized =
       normalizeKenyanPhone(value);
@@ -593,29 +517,15 @@ const validatePayoutDestination = (
     if (!normalized) {
       return {
         valid: false,
-        message: payoutMethod === 'airtel_money'
-          ? 'Please provide a valid Kenyan Airtel Money phone number.'
-          : 'Please provide a valid Kenyan M-Pesa phone number.',
+        message:
+          'Please provide a valid Kenyan M-Pesa phone number.',
       };
     }
 
     return {
       valid: true,
-      destination: normalized,
-    };
-  }
-
-  if (payoutMethod === 'paypal') {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) || value.length > 254) {
-      return {
-        valid: false,
-        message: 'Enter a valid email address linked to the recipient PayPal account.',
-      };
-    }
-
-    return {
-      valid: true,
-      destination: value.toLowerCase(),
+      destination:
+        normalized,
     };
   }
 
@@ -650,7 +560,7 @@ const validatePayoutDestination = (
   return {
     valid: false,
     message:
-      'Unsupported payout method. Choose M-Pesa, Airtel Money, PayPal, or bank.',
+      'Unsupported payout method. Choose M-Pesa or bank.',
   };
 };
 
@@ -676,31 +586,15 @@ router.get(
       if (!user) {
         return res.status(404).json({
           success: false,
-          message: 'Wallet could not be found.',
-        });
-      }
-      if (!['customer', 'seller'].includes(user.role) ||
-          (user.role === 'customer' && user.isVerified !== true)) {
-        return res.status(403).json({
-          success: false,
-          message: 'Verify your customer account to access your private wallet.',
+          message:
+            'Wallet could not be found.',
         });
       }
 
-      const walletData = serializeWallet(user);
-      const international = user.role === 'seller' &&
-        String(user.sellerProfile?.country || 'KE').toUpperCase() !== 'KE';
       return res.json({
         success: true,
-        data: {
-          ...walletData,
-          usdWallet: international ? serializeUsdWallet(user) : null,
-          sellerCountry: user.role === 'seller' ? (user.sellerProfile?.country || 'KE') : null,
-          sellerStatus: user.role === 'seller' ? (user.sellerStatus || 'pending') : null,
-          sellerEmailVerified: user.role === 'seller' ? user.isVerified === true : null,
-          sellerStoreStatus: user.role === 'seller' ? (user.storeStatus || 'inactive') : null,
-          sellerIdentityVerificationStatus: user.role === 'seller' ? (user.sellerProfile?.identityVerificationStatus || 'pending') : null,
-        },
+        data:
+          serializeWallet(user),
       });
     } catch (error) {
       console.error(
@@ -739,14 +633,8 @@ router.get(
       if (!user) {
         return res.status(404).json({
           success: false,
-          message: 'Wallet could not be found.',
-        });
-      }
-      if (!['customer', 'seller'].includes(user.role) ||
-          (user.role === 'customer' && user.isVerified !== true)) {
-        return res.status(403).json({
-          success: false,
-          message: 'Verify your customer account to access wallet transactions.',
+          message:
+            'Wallet could not be found.',
         });
       }
 
@@ -824,16 +712,55 @@ router.post(
         });
       }
 
-      if (user.isVerified !== true) {
-        return res.status(403).json({ success: false, message: 'Verify your email before requesting a wallet withdrawal.' });
+      /*
+       * IMPORTANT:
+       *
+       * isActiveSeller() requires:
+       * role = seller
+       * sellerStatus = approved
+       * accountStatus = active/warning
+       * storeStatus = active
+       */
+      const isActiveSeller =
+        typeof user.isActiveSeller ===
+        'function'
+          ? user.isActiveSeller()
+          : (
+              user.role === 'seller' &&
+              user.sellerStatus ===
+                'approved' &&
+              [
+                'active',
+                'warning',
+              ].includes(
+                user.accountStatus
+              ) &&
+              user.storeStatus ===
+                'active'
+            );
+
+      if (!isActiveSeller) {
+        return res.status(403).json({
+          success: false,
+          message:
+            'Only active and approved sellers can request payouts.',
+        });
       }
-      const activeSeller = user.role === 'seller' &&
-        user.sellerStatus === 'approved' &&
-        ['active', 'warning'].includes(user.accountStatus) &&
-        user.storeStatus === 'active';
-      const activeCustomer = user.role === 'customer' && user.accountStatus === 'active';
-      if (!activeSeller && !activeCustomer) {
-        return res.status(403).json({ success: false, message: 'Only verified active customers and approved active sellers can request wallet withdrawals.' });
+
+      /*
+       * Explicitly block suspended/banned accounts.
+       */
+      if (
+        user.accountStatus ===
+          'suspended' ||
+        user.accountStatus ===
+          'banned'
+      ) {
+        return res.status(403).json({
+          success: false,
+          message:
+            'Your seller account is not permitted to request payouts.',
+        });
       }
 
       /*
@@ -871,7 +798,6 @@ router.post(
       if (
         ![
           'mpesa',
-          'airtel_money',
           'bank',
         ].includes(
           payoutMethod
@@ -902,7 +828,8 @@ router.post(
         !payoutDestination
       ) {
         payoutDestination =
-          (user.role === 'seller' ? user.sellerProfile?.mpesaPhone : user.phone) || '';
+          user.sellerProfile
+            ?.mpesaPhone || '';
       }
 
       const destinationValidation =
@@ -1022,32 +949,87 @@ router.post(
         });
       }
 
-      const now = new Date();
-      const transactionId = new mongoose.Types.ObjectId();
+      /*
+       * Move available -> pending.
+       */
+      wallet.availableBalance =
+        roundMoney(
+          availableBalance -
+            amount
+        );
+
+      wallet.pendingBalance =
+        roundMoney(
+          pendingBalance +
+            amount
+        );
+
+      wallet.lastUpdatedAt =
+        new Date();
+
+      /*
+       * Create transaction ID.
+       */
+      const transactionId =
+        new mongoose.Types.ObjectId();
+
+      const now =
+        new Date();
+
+      const transactionReference =
+        `payout-${Date.now()}-${transactionId
+          .toString()
+          .slice(-6)}`;
+
+      /*
+       * Create payout transaction.
+       */
       const transaction = {
         _id: transactionId,
+
         type: 'debit',
+
         amount,
-        category: 'payout_request',
-        status: 'pending',
-        description: 'Wallet withdrawal request awaiting administrator processing.',
-        reference: 'PAYOUT-' + transactionId.toString().slice(-8).toUpperCase(),
-        createdAt: now,
-        updatedAt: now,
-        processedAt: null,
+
+        category:
+          'payout_request',
+
+        status:
+          'pending',
+
+        description:
+          'Seller payout request submitted for admin review.',
+
+        reference:
+          transactionReference,
+
+        relatedOrder:
+          null,
+
+        createdAt:
+          now,
+
+        processedAt:
+          null,
+
+        updatedAt:
+          now,
+
         metadata: {
-          walletCurrency: 'KES',
           payoutMethod,
-          destination: payoutDestination,
-          requestedAt: now.toISOString(),
+
+          destination:
+            payoutDestination,
+
+          requestedAt:
+            now.toISOString(),
         },
       };
 
       /*
-       * Reserve funds atomically. The query rechecks the balance and pending
-       * payout condition at write time, so concurrent requests cannot spend
-       * the same available funds or create multiple pending payouts.
+       * Add newest transaction first.
        */
+<<<<<<< Updated upstream
       const updateFilter = {
         _id: user._id,
         isVerified: true,
@@ -1078,23 +1060,34 @@ router.post(
 =======
         { returnDocument: 'after', runValidators: true }
 >>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
+=======
+      wallet.transactions.unshift(
+        transaction
+>>>>>>> Stashed changes
       );
 
-      if (!updatedUser) {
-        return res.status(409).json({
-          success: false,
-          message: 'Your wallet changed or a withdrawal is already pending. Refresh your wallet and try again.',
-        });
-      }
+      /*
+       * Save wallet.
+       */
+      await user.save();
 
-      const savedTransaction = updatedUser.wallet.transactions.id(transactionId);
-
+      /*
+       * Return safe response.
+       */
       return res.status(201).json({
         success: true,
-        message: 'Withdrawal request submitted successfully and is awaiting payout processing.',
+
+        message:
+          'Payout request submitted successfully and is awaiting admin processing.',
+
         data: {
-          wallet: serializeWallet(updatedUser),
-          transaction: serializeSellerTransaction(savedTransaction || transaction),
+          wallet:
+            serializeWallet(user),
+
+          transaction:
+            serializeSellerTransaction(
+              transaction
+            ),
         },
       });
     } catch (error) {
@@ -1121,6 +1114,7 @@ router.post(
 |--------------------------------------------------------------------------
 */
 
+<<<<<<< Updated upstream
 /* USD-only PayPal withdrawal request. Payouts are manually processed by an
    authorized admin; requesting one does not send money automatically. */
 router.post('/payout-request-usd', protect, payoutRateLimit, async (req, res) => {
@@ -1192,13 +1186,15 @@ router.post('/payout-request-usd', protect, payoutRateLimit, async (req, res) =>
   }
 });
 
+=======
+>>>>>>> Stashed changes
 router.get(
   '/admin/payouts',
   protect,
   adminOnly,
-  requireVerified,
   async (req, res) => {
     try {
+<<<<<<< Updated upstream
 <<<<<<< HEAD
       const payoutAccounts = await User.find({
         role: mongoose.trusted({ $in: ['seller', 'customer'] }),
@@ -1208,6 +1204,22 @@ router.get(
         ],
       })
           .select('name email phone role sellerProfile wallet usdWallet')
+=======
+      const sellers = await User.find(
+        mongoose.trusted({
+          role: 'seller',
+          'wallet.transactions': {
+            $elemMatch: {
+              category: 'payout_request',
+              status: 'pending',
+            },
+          },
+        })
+      )
+          .select(
+            'name email phone sellerProfile wallet'
+          )
+>>>>>>> Stashed changes
           .lean();
 =======
       const payoutAccounts = await User.find(
@@ -1231,7 +1243,7 @@ router.get(
         [];
 
       for (
-        const seller of payoutAccounts
+        const seller of sellers
       ) {
         const transactions =
           Array.isArray(
@@ -1257,8 +1269,7 @@ router.get(
             _id:
               entry._id,
 
-            account: {
-              role: seller.role,
+            seller: {
               _id:
                 seller._id,
 
@@ -1272,19 +1283,12 @@ router.get(
                 seller.phone || '',
 
               storeName:
-                seller.sellerProfile?.storeName || '',
+                seller.sellerProfile
+                  ?.storeName || '',
 
               mpesaPhone:
                 seller.sellerProfile
                   ?.mpesaPhone || '',
-            },
-            seller: {
-              _id: seller._id,
-              name: seller.name || '',
-              email: seller.email || '',
-              phone: seller.phone || '',
-              storeName: seller.sellerProfile?.storeName || '',
-              mpesaPhone: seller.sellerProfile?.mpesaPhone || '',
             },
 
             type:
@@ -1297,7 +1301,6 @@ router.get(
                   0
               ),
 
-            currency: 'KES',
             status:
               entry.status,
 
@@ -1340,26 +1343,6 @@ router.get(
             reference: entry.reference || '',
             createdAt: entry.createdAt || null,
             processedAt: entry.processedAt || null,
-          });
-        }
-      }
-
-      // Include pending USD-wallet payouts in the same admin review queue.
-      for (const seller of payoutAccounts) {
-        for (const entry of (Array.isArray(seller.usdWallet?.transactions) ? seller.usdWallet.transactions : [])) {
-          if (entry.category !== 'payout_request' || entry.status !== 'pending') continue;
-          pendingPayouts.push({
-            _id: entry._id,
-            account: { role: seller.role, _id: seller._id, name: seller.name || '', email: seller.email || '', phone: seller.phone || '', storeName: seller.sellerProfile?.storeName || '', mpesaPhone: seller.sellerProfile?.mpesaPhone || '' },
-            seller: { _id: seller._id, name: seller.name || '', email: seller.email || '', phone: seller.phone || '', storeName: seller.sellerProfile?.storeName || '', mpesaPhone: seller.sellerProfile?.mpesaPhone || '' },
-            type: entry.type || 'debit',
-            amount: roundMoney(entry.amount || 0),
-            currency: 'USD',
-            status: entry.status,
-            payoutMethod: entry.metadata?.payoutMethod || 'paypal',
-            destination: entry.metadata?.destination || '',
-            reference: entry.reference || '',
-            createdAt: entry.createdAt || null,
           });
         }
       }
@@ -1427,7 +1410,6 @@ router.patch(
   '/admin/payouts/:transactionId',
   protect,
   adminOnly,
-  requireVerified,
   async (req, res) => {
     try {
       const {
@@ -1514,10 +1496,8 @@ router.patch(
        */
       const seller =
         await User.findOne({
-          $or: [
-            { 'wallet.transactions._id': transactionId },
-            { 'usdWallet.transactions._id': transactionId },
-          ],
+          'wallet.transactions._id':
+            transactionId,
         });
 
       if (!seller) {
@@ -1528,8 +1508,18 @@ router.patch(
         });
       }
 
-      if (!['seller', 'customer'].includes(seller.role)) {
-        return res.status(400).json({ success: false, message: 'This withdrawal does not belong to a customer or seller wallet.' });
+      /*
+       * Make sure this is a seller.
+       */
+      if (
+        seller.role !==
+        'seller'
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'This payout does not belong to a seller account.',
+        });
       }
 
       /*
@@ -1551,9 +1541,15 @@ router.patch(
         });
       }
 
-      const isUsdPayout = (seller.usdWallet?.transactions || []).some((entry) => String(entry._id) === String(transactionId));
-      const wallet = isUsdPayout ? ensureUsdWallet(seller) : ensureWallet(seller);
-      const tx = wallet.transactions.id(transactionId);
+      const wallet =
+        ensureWallet(
+          seller
+        );
+
+      const tx =
+        wallet.transactions.id(
+          transactionId
+        );
 
       if (!tx) {
         return res.status(404).json({
@@ -1617,9 +1613,15 @@ router.patch(
         });
       }
 
-      const currentPendingBalance = roundMoney(wallet.pendingBalance);
-      const currentAvailableBalance = roundMoney(wallet.availableBalance);
-      const currencyLabel = isUsdPayout ? 'USD' : 'KES';
+      const currentPendingBalance =
+        roundMoney(
+          wallet.pendingBalance
+        );
+
+      const currentAvailableBalance =
+        roundMoney(
+          wallet.availableBalance
+        );
 
       /*
        * IMPORTANT:
@@ -1635,7 +1637,7 @@ router.patch(
         payoutAmount
       ) {
         console.error(
-          `Wallet integrity mismatch while processing ${currencyLabel} payout ${transactionId} for seller ${seller._id}`
+          `Wallet integrity mismatch while processing payout ${transactionId} for seller ${seller._id}`
         );
 
         return res.status(409).json({
@@ -1769,8 +1771,8 @@ router.patch(
         message:
           decision ===
           'approved'
-            ? 'Withdrawal marked as paid. Confirm the external payout was sent first.'
-            : 'Withdrawal rejected and the amount has been returned to the account wallet.',
+            ? 'Payout approved and marked as paid successfully.'
+            : 'Payout rejected and the amount has been returned to the seller wallet.',
 
         data: {
           transaction: {
@@ -1825,6 +1827,7 @@ router.patch(
   }
 );
 
+<<<<<<< Updated upstream
 
 
 /* SELLER M-PESA STK TOP-UP. Configure Daraja secrets in the backend environment. */
@@ -2777,4 +2780,6 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
   }
 });
 
+=======
+>>>>>>> Stashed changes
 module.exports = router;

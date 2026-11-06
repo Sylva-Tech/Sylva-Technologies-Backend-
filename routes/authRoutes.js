@@ -7,11 +7,14 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const VerificationToken = require('../models/VerificationToken');
+<<<<<<< Updated upstream
 const sellerUpload = require('../middleware/sellerUpload');
 const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
 const cloudinary = require('../config/cloudinary');
 const { checkPinById } = require('../services/kraPinCheckerService');
 const { protect } = require('../middleware/authMiddleware');
+=======
+>>>>>>> Stashed changes
 
 const {
   sendVerificationCodeAndLinkEmail,
@@ -161,13 +164,12 @@ const safeUser = (user) => {
   };
 };
 
-const AFRICAN_COUNTRY_CODES = new Set('DZ AO BJ BW BF BI CV CM CF TD KM CG CD CI DJ EG GQ ER SZ ET GA GM GH GN GW KE LS LR LY MG MW ML MR MU MA MZ NA NE NG RW ST SN SC SL SO ZA SS SD TZ TG TN UG ZM ZW'.split(' '));
-
 /* ============================================================
  * REGISTER
  * POST /api/auth/register
  * ============================================================ */
 
+<<<<<<< Updated upstream
 /*
  * KRA PIN CHECKER BY ID
  * POST /api/auth/kra/pin-checker-by-id
@@ -546,6 +548,8 @@ router.post(
   }
 );
 
+=======
+>>>>>>> Stashed changes
 router.post('/register', async (req, res) => {
   try {
     const {
@@ -1558,82 +1562,6 @@ router.post(
 );
 
 /* ============================================================
- * RESEND EMAIL VERIFICATION FOR THE SIGNED-IN ACCOUNT
- * POST /api/auth/resend-verification
- * ============================================================ */
-
-router.post('/resend-verification', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization || '';
-    if (!authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, message: 'Please sign in again to request verification.' });
-    }
-
-    let decoded;
-    try {
-      decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
-    } catch {
-      return res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
-    }
-
-    const user = await User.findById(decoded.id);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'Account not found.' });
-    }
-    if (user.isVerified === true) {
-      return res.status(200).json({ success: true, alreadyVerified: true, message: 'This email address is already verified.' });
-    }
-
-    const rawVerificationToken = generateSecureToken();
-    const verificationCode = generateVerificationCode();
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
-    await VerificationToken.deleteMany({ user: user._id, purpose: 'verification' });
-    await VerificationToken.deleteMany({ user: user._id, purpose: 'verification-code' });
-    await VerificationToken.create({
-      user: user._id,
-      purpose: 'verification',
-      tokenHash: hashToken(rawVerificationToken),
-      expiresAt,
-      method: 'email',
-    });
-    await VerificationToken.create({
-      user: user._id,
-      purpose: 'verification-code',
-      tokenHash: hashToken(verificationCode),
-      expiresAt,
-      method: 'email',
-    });
-
-    const verifyLink = `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(rawVerificationToken)}&email=${encodeURIComponent(user.email)}`;
-    const result = await sendVerificationCodeAndLinkEmail({
-      to: user.email,
-      name: user.name,
-      otp: verificationCode,
-      verifyLink,
-      expiresInMinutes: 24 * 60,
-    });
-
-    if (!result || result.success === false) {
-      await VerificationToken.deleteMany({ user: user._id, purpose: 'verification' });
-      await VerificationToken.deleteMany({ user: user._id, purpose: 'verification-code' });
-      return res.status(503).json({
-        success: false,
-        message: result?.message || 'The verification email could not be sent. Please try again later.',
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: `A new verification email has been sent to ${user.email}. Open that email and click “Verify My Email”. The link expires in 24 hours.`,
-    });
-  } catch (error) {
-    console.error('Resend email verification error:', error.message);
-    return res.status(500).json({ success: false, message: 'Unable to send a verification email right now.' });
-  }
-});
-
-/* ============================================================
  * VERIFY EMAIL
  *
  * GET /api/auth/verify-email
@@ -1723,10 +1651,8 @@ router.get(
       });
 
       return res.status(200).json({
-        success: true,
-        verified: true,
-        message: 'Email verified successfully. Your account status is now Verified.',
-        user: safeUser(user),
+        message:
+          'Email verified successfully.',
       });
     } catch (error) {
       console.error(
@@ -1833,10 +1759,8 @@ router.post(
       });
 
       return res.status(200).json({
-        success: true,
-        verified: true,
-        message: 'Email verified successfully. Your account status is now Verified. Please log in to continue.',
-        user: safeUser(user),
+        message:
+          'Email verified successfully. Please log in to continue.',
       });
     } catch (error) {
       console.error(
