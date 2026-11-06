@@ -3,13 +3,10 @@ const mongoose = require('mongoose');
 const axios = require('axios');
 
 const User = require('../models/User');
-<<<<<<< Updated upstream
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const AdminWallet = require('../models/AdminWallet');
 const { sendMail } = require('../services/emailService');
-=======
->>>>>>> Stashed changes
 
 const {
   protect,
@@ -1029,7 +1026,6 @@ router.post(
       /*
        * Add newest transaction first.
        */
-<<<<<<< Updated upstream
       const updateFilter = {
         _id: user._id,
         isVerified: true,
@@ -1055,15 +1051,7 @@ router.post(
           $set: { 'wallet.lastUpdatedAt': now },
           $push: { 'wallet.transactions': { $each: [transaction], $position: 0 } },
         },
-<<<<<<< HEAD
         { new: true, runValidators: true }
-=======
-        { returnDocument: 'after', runValidators: true }
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
-=======
-      wallet.transactions.unshift(
-        transaction
->>>>>>> Stashed changes
       );
 
       /*
@@ -1114,7 +1102,6 @@ router.post(
 |--------------------------------------------------------------------------
 */
 
-<<<<<<< Updated upstream
 /* USD-only PayPal withdrawal request. Payouts are manually processed by an
    authorized admin; requesting one does not send money automatically. */
 router.post('/payout-request-usd', protect, payoutRateLimit, async (req, res) => {
@@ -1166,11 +1153,7 @@ router.post('/payout-request-usd', protect, payoutRateLimit, async (req, res) =>
         $set: { 'usdWallet.lastUpdatedAt': now },
         $push: { 'usdWallet.transactions': { $each: [transaction], $position: 0 } },
       },
-<<<<<<< HEAD
       { new: true, runValidators: true }
-=======
-      { returnDocument: 'after', runValidators: true }
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     );
     if (!updatedUser) {
       return res.status(409).json({ success: false, message: 'Your USD wallet changed or another withdrawal is pending. Refresh and try again.' });
@@ -1186,16 +1169,12 @@ router.post('/payout-request-usd', protect, payoutRateLimit, async (req, res) =>
   }
 });
 
-=======
->>>>>>> Stashed changes
 router.get(
   '/admin/payouts',
   protect,
   adminOnly,
   async (req, res) => {
     try {
-<<<<<<< Updated upstream
-<<<<<<< HEAD
       const payoutAccounts = await User.find({
         role: mongoose.trusted({ $in: ['seller', 'customer'] }),
         $or: [
@@ -1204,40 +1183,7 @@ router.get(
         ],
       })
           .select('name email phone role sellerProfile wallet usdWallet')
-=======
-      const sellers = await User.find(
-        mongoose.trusted({
-          role: 'seller',
-          'wallet.transactions': {
-            $elemMatch: {
-              category: 'payout_request',
-              status: 'pending',
-            },
-          },
-        })
-      )
-          .select(
-            'name email phone sellerProfile wallet'
-          )
->>>>>>> Stashed changes
           .lean();
-=======
-      const payoutAccounts = await User.find(
-        mongoose.trusted({
-          $and: [
-            { role: mongoose.trusted({ $in: ['seller', 'customer'] }) },
-            {
-              $or: [
-                { 'wallet.transactions': { $elemMatch: { category: 'payout_request', status: mongoose.trusted({ $in: ['pending', 'paid', 'rejected'] }) } } },
-                { 'usdWallet.transactions': { $elemMatch: { category: 'payout_request', status: mongoose.trusted({ $in: ['pending', 'paid', 'rejected'] }) } } },
-              ],
-            },
-          ],
-        })
-      )
-        .select('name email phone role sellerProfile wallet usdWallet')
-        .lean();
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
 
       const pendingPayouts =
         [];
@@ -1827,7 +1773,6 @@ router.patch(
   }
 );
 
-<<<<<<< Updated upstream
 
 
 /* SELLER M-PESA STK TOP-UP. Configure Daraja secrets in the backend environment. */
@@ -1945,13 +1890,8 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
 
     if (idempotencyKey) {
       const existing = isAdminDeposit
-<<<<<<< HEAD
         ? await AdminWallet.findOne({ key: 'platform', transactions: { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } })
         : await User.findOne({ _id: user._id, 'wallet.transactions': { $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } } });
-=======
-        ? await AdminWallet.findOne({ key: 'platform', transactions: mongoose.trusted({ $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } }) })
-        : await User.findOne({ _id: user._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { category: 'mpesa_topup', 'metadata.idempotencyKey': idempotencyKey } }) });
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
       const existingTx = isAdminDeposit
         ? existing?.transactions.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey)
         : existing?.wallet?.transactions?.find((entry) => entry.category === 'mpesa_topup' && entry.metadata?.idempotencyKey === idempotencyKey);
@@ -2084,21 +2024,7 @@ router.post('/topup/stk', protect, payoutRateLimit, async (req, res) => {
       throw providerError;
     }
   } catch (error) {
-<<<<<<< HEAD
     console.error('M-Pesa deposit initiation failed:', error.response?.data || error.message);
-=======
-    const providerCode = String(error.response?.data?.errorCode || '');
-    const providerMessage = String(error.response?.data?.errorMessage || error.response?.data?.ResponseDescription || error.message || '');
-    console.error('M-Pesa deposit initiation failed:', {
-      code: providerCode || undefined,
-      message: providerMessage,
-      environment: String(process.env.MPESA_ENV || 'sandbox').trim().toLowerCase(),
-      shortcodeConfigured: Boolean(String(process.env.MPESA_SHORTCODE || '').trim()),
-      tillConfigured: Boolean(String(process.env.MPESA_TILL_NUMBER || '').trim()),
-      transactionType: String(process.env.MPESA_TRANSACTION_TYPE || '').trim() || undefined,
-      providerResponse: error.response?.data || undefined,
-    });
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     return res.status(502).json({
       success: false,
       message: 'Unable to start the deposit. Check the transaction status before trying again.',
@@ -2284,11 +2210,7 @@ router.post('/topup/paypal/capture', protect, payoutRateLimit, async (req, res) 
           'usdWallet.transactions.$.updatedAt': now,
         },
       },
-<<<<<<< HEAD
       { new: true, runValidators: true }
-=======
-      { returnDocument: 'after', runValidators: true }
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     );
     if (!updatedUser) {
       const latest = await User.findById(user._id);
@@ -2358,13 +2280,8 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
           if (terminalFailure) {
             const now = new Date();
             const ownerFilter = isAdmin
-<<<<<<< HEAD
               ? { _id: owner._id, transactions: { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } }
               : { _id: owner._id, 'wallet.transactions': { $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } } };
-=======
-              ? { _id: owner._id, transactions: mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } }) }
-              : { _id: owner._id, 'wallet.transactions': mongoose.trusted({ $elemMatch: { _id: tx._id, status: 'pending', 'metadata.checkoutRequestID': String(tx.metadata.checkoutRequestID) } }) };
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
             const failedDescription = resultCode === '1032'
               ? 'M-Pesa deposit cancelled by the customer.'
               : resultCode === '1037'
@@ -2382,10 +2299,7 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
               return res.json({ success: true, data: {
                 transactionId: String(refreshedTx._id), status: refreshedTx.status,
                 amount: roundMoney(refreshedTx.amount), reference: refreshedTx.reference || '',
-<<<<<<< HEAD
-=======
-                receipt: refreshedTx.metadata?.mpesaReceiptNumber || '',
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
+
                 description: refreshedTx.description || '', createdAt: refreshedTx.createdAt || null,
                 updatedAt: refreshedTx.updatedAt || null, processedAt: refreshedTx.processedAt || null,
                 reconciliationRequired: refreshedTx.metadata?.reconciliationRequired === true,
@@ -2404,10 +2318,7 @@ router.get('/topup/status/:transactionId', protect, async (req, res) => {
       status: tx.status,
       amount: roundMoney(tx.amount),
       reference: tx.reference || '',
-<<<<<<< HEAD
-=======
-      receipt: tx.metadata?.mpesaReceiptNumber || '',
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
+
       description: tx.description || '',
       createdAt: tx.createdAt || null,
       updatedAt: tx.updatedAt || null,
@@ -2780,6 +2691,4 @@ router.get('/admin/overview', protect, adminOnly, requireVerified, async (req, r
   }
 });
 
-=======
->>>>>>> Stashed changes
 module.exports = router;
