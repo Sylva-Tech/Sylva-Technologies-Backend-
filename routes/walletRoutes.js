@@ -11,6 +11,7 @@ const { sendMail } = require('../services/emailService');
 const {
   protect,
   adminOnly,
+  requireVerified,
 } = require('../middleware/authMiddleware');
 
 const router = express.Router();
