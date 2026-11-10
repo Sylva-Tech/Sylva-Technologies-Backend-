@@ -7,6 +7,7 @@ const AliExpressOAuthState = require('../models/AliExpressOAuthState');
 const {
   buildAuthorizationUrl,
   exchangeAuthorizationCode,
+  refreshAccessToken,
   encryptSecret,
 } = require('../services/aliexpressService');
 
@@ -22,7 +23,7 @@ const connectLimiter = rateLimit({
 router.get('/status', protect, adminOnly, async (req, res) => {
   try {
     const connection = await AliExpressConnection.findOne({ provider: 'aliexpress' }).lean();
-    const configured = Boolean(process.env.ALIEXPRESS_APP_KEY && process.env.ALIEXPRESS_APP_SECRET && process.env.ALIEXPRESS_REDIRECT_URI && process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY);
+    const configured = Boolean(process.env.ALIEXPRESS_APP_KEY && process.env.ALIEXPRESS_APP_SECRET && process.env.ALIEXPRESS_REDIRECT_URI && /^[a-f0-9]{64}$/i.test(process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY || ''));
     return res.json({
       success: true,
       data: {
@@ -100,6 +101,27 @@ router.get('/callback', async (req, res) => {
       { upsert: true, setDefaultsOnInsert: true },
     ).catch(() => {});
     return res.status(502).send('Sylva could not complete AliExpress authorization. Return to the admin dashboard and check the connection status.');
+  }
+});
+
+router.post('/refresh', protect, adminOnly, connectLimiter, async (req, res) => {
+  try {
+    const connection = await AliExpressConnection.findOne({ provider: 'aliexpress' }).select('+refreshTokenEncrypted');
+    if (!connection || connection.status !== 'connected' || !connection.refreshTokenEncrypted) {
+      return res.status(409).json({ success: false, message: 'No active AliExpress refresh token is available. Re-authorize the account.' });
+    }
+    const { decryptSecret } = require('../services/aliexpressService');
+    const token = await refreshAccessToken(decryptSecret(connection.refreshTokenEncrypted));
+    connection.accessTokenEncrypted = encryptSecret(token.access_token);
+    connection.refreshTokenEncrypted = encryptSecret(token.refresh_token || decryptSecret(connection.refreshTokenEncrypted));
+    connection.accessTokenExpiresAt = token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000) : null;
+    connection.refreshTokenExpiresAt = token.refresh_expires_in ? new Date(Date.now() + Number(token.refresh_expires_in) * 1000) : connection.refreshTokenExpiresAt;
+    connection.lastError = '';
+    await connection.save();
+    return res.json({ success: true, message: 'AliExpress access token refreshed.', data: { accessTokenExpiresAt: connection.accessTokenExpiresAt } });
+  } catch (error) {
+    console.error('AliExpress token refresh failed:', error.message);
+    return res.status(502).json({ success: false, message: 'Token refresh failed. Re-authorize the AliExpress account if the refresh token has expired.' });
   }
 });
 
