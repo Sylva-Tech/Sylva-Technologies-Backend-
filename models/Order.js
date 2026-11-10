@@ -170,29 +170,17 @@ const orderSchema = new mongoose.Schema(
         lowercase: true,
       },
 
-<<<<<<< Updated upstream
-<<<<<<< HEAD
       country: {
         type: String,
         trim: true,
         maxlength: 100,
       },
 
-=======
->>>>>>> Stashed changes
+ Stashed changes
       county: {
         type: String,
         trim: true,
       },
-=======
-      idNumber: { type: String, trim: true, maxlength: 50, default: '' },
-      customerReference: { type: String, trim: true, maxlength: 30, default: '' },
-
-      country: { type: String, trim: true, maxlength: 100, default: 'Kenya' },
-      county: { type: String, trim: true },
-      subCounty: { type: String, trim: true },
-      ward: { type: String, trim: true },
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
 
       deliveryLocation: {
         type: String,
@@ -216,7 +204,6 @@ const orderSchema = new mongoose.Schema(
     |--------------------------------------------------------------------------
     */
 
-<<<<<<< Updated upstream
    paymentMethod: {
   type: String,
   enum: [
@@ -228,18 +215,7 @@ const orderSchema = new mongoose.Schema(
   ],
   default: 'Cash on Delivery',
 },
-=======
-    paymentMethod: {
-      type: String,
-      enum: [
-        'Cash on Delivery',
-        'M-Pesa',
-        'PayPal',
-        'WhatsApp Order',
-      ],
-      default: 'Cash on Delivery',
-    },
->>>>>>> Stashed changes
+ Stashed changes
 
     mpesaPhone: {
       type: String,
@@ -267,7 +243,6 @@ const orderSchema = new mongoose.Schema(
       default: '',
     },
 
-<<<<<<< Updated upstream
     paymentCurrency: {
       type: String,
       enum: ['KES', 'USD'],
@@ -307,8 +282,7 @@ const orderSchema = new mongoose.Schema(
       default: '',
     },
 
-=======
->>>>>>> Stashed changes
+ Stashed changes
     paymentStatus: {
       type: String,
       enum: [

@@ -16,11 +16,9 @@ const flipAdvertisementRoutes = require('./routes/flipAdvertisementRoutes');
 const movingBarRoutes = require('./routes/movingBarRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const walletRoutes = require('./routes/walletRoutes');
-<<<<<<< Updated upstream
 const sponsorshipRoutes = require('./routes/sponsorshipRoutes');
 const adminWalletRoutes = require('./routes/adminWalletRoutes');
-=======
->>>>>>> Stashed changes
+ Stashed changes
 const sellerManagementRoutes = require('./routes/sellerManagementRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const shippingRoutes = require('./routes/shippingRoutes');
@@ -215,15 +213,13 @@ app.use(
   express.json({
     limit: '10mb',
     strict: true,
-<<<<<<< Updated upstream
     verify: (req, res, buffer) => {
       // Provider callbacks and signed inbound email events need the exact request bytes.
       if (['/api/support-inbox/inbound/resend', '/api/mailbox/events/resend'].includes(req.originalUrl.split('?')[0])) {
         req.rawBody = Buffer.from(buffer);
       }
     },
-=======
->>>>>>> Stashed changes
+ Stashed changes
   })
 );
 
@@ -405,13 +401,11 @@ app.use('/api/admin', adminRoutes);
 
 app.use('/api/wallet', walletRoutes);
 
-<<<<<<< Updated upstream
 app.use('/api/sponsorship', sponsorshipRoutes);
 
 app.use('/api/admin-wallet', adminWalletRoutes);
 
-=======
->>>>>>> Stashed changes
+ Stashed changes
 app.use(
   '/api/seller-management',
   sellerManagementRoutes

@@ -6,16 +6,12 @@ const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Product = require('../models/Product');
-<<<<<<< Updated upstream
 const AdminWallet = require('../models/AdminWallet');
 const { getQuote: getShippingQuote } = require('./shippingRoutes');
 
 const {
 
-=======
-
-const {
->>>>>>> Stashed changes
+ Stashed changes
   protect,
   adminOnly,
   requireVerified,
@@ -203,10 +199,8 @@ const applySellerSettlement = async (order) => {
       continue;
     }
 
-<<<<<<< Updated upstream
     const settlementReference = `order:${order.orderNumber}`;
     const sellerCountry = String(seller.sellerProfile?.country || 'KE').toUpperCase();
-<<<<<<< HEAD
     if ((seller.wallet?.transactions || []).some((tx) => tx.reference === settlementReference)) continue;
     const orderCurrency = String(order.currency || 'KES').toUpperCase();
     const now = new Date();
@@ -286,142 +280,12 @@ const applySellerSettlement = async (order) => {
         updatedAt: now,
       });
       seller.wallet = wallet;
-=======
-    if ((seller.wallet?.transactions || []).some((tx) => tx.reference === settlementReference)) {
-      settledCount += 1;
-      continue;
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
+ ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     }
     const orderCurrency = String(order.currency || 'KES').toUpperCase();
     const now = new Date();
 
-<<<<<<< HEAD
-=======
-    if (sellerCountry !== 'KE') {
-      // Current checkout accepts KES payments. Never silently mix KES into a USD wallet:
-      // an explicit finance-configured KES-per-USD rate is required for international sellers.
-      const kesPerUsd = Number(process.env.WALLET_KES_PER_USD);
-      if (orderCurrency === 'KES' && (!Number.isFinite(kesPerUsd) || kesPerUsd <= 0)) {
-        console.error(`International seller settlement deferred for order ${order.orderNumber}: set WALLET_KES_PER_USD before settling KES proceeds to USD.`);
-        continue;
-      }
-      const settlementCurrency = orderCurrency === 'USD' ? 'USD' : 'USD';
-      const settlementAmount = orderCurrency === 'USD'
-        ? roundMoney(settlement.netAmount)
-        : roundMoney(settlement.netAmount / kesPerUsd);
-      const usdWallet = seller.usdWallet || {
-        currency: 'USD', availableBalance: 0, pendingBalance: 0, transactions: [],
-      };
-      usdWallet.currency = 'USD';
-      usdWallet.transactions = Array.isArray(usdWallet.transactions) ? usdWallet.transactions : [];
-      if (usdWallet.transactions.some((tx) => tx.reference === settlementReference)) {
-        settledCount += 1;
-        continue;
-      }
-      usdWallet.availableBalance = roundMoney(Number(usdWallet.availableBalance || 0) + settlementAmount);
-      usdWallet.lastUpdatedAt = now;
-      usdWallet.transactions.unshift({
-        _id: new mongoose.Types.ObjectId(),
-        type: 'credit',
-        amount: settlementAmount,
-        currency: settlementCurrency,
-        category: 'order_settlement',
-        status: 'completed',
-        description: `USD seller settlement for order ${order.orderNumber}.`,
-        reference: settlementReference,
-        createdAt: now,
-        updatedAt: now,
-        processedAt: now,
-        metadata: {
-          sourceCurrency: orderCurrency,
-          grossAmount: roundMoney(settlement.grossAmount),
-          grossCurrency: orderCurrency,
-          commission: roundMoney(settlement.commission),
-          commissionCurrency: orderCurrency,
-          netAmountBeforeConversion: roundMoney(settlement.netAmount),
-          exchangeRateKesPerUsd: orderCurrency === 'KES' ? kesPerUsd : null,
-          settlementCurrency: 'USD',
-          products: settlement.products,
-        },
-      });
-      seller.usdWallet = usdWallet;
-    } else {
-      const wallet = seller.wallet || {
-        currency: String(order.paymentCurrency || 'USD').toUpperCase(), availableBalance: 0, pendingBalance: 0, transactions: [],
-      };
-      wallet.currency = wallet.currency || 'KES';
-      wallet.transactions = Array.isArray(wallet.transactions) ? wallet.transactions : [];
-      if (wallet.transactions.some((tx) => tx.reference === settlementReference)) {
-        settledCount += 1;
-        continue;
-      }
-      wallet.availableBalance = roundMoney(Number(wallet.availableBalance || 0) + Number(settlement.netAmount || 0));
-      wallet.lastUpdatedAt = now;
-      wallet.transactions.unshift({
-        _id: new mongoose.Types.ObjectId(),
-        type: 'credit',
-        amount: roundMoney(settlement.netAmount),
-        category: 'order_settlement',
-        status: 'completed',
-        description: `Order settlement for ${order.orderNumber}.`,
-        reference: settlementReference,
-        relatedOrder: order._id,
-        metadata: {
-          commission: roundMoney(settlement.commission),
-          commissionCurrency: orderCurrency,
-          grossAmount: roundMoney(settlement.grossAmount),
-          grossCurrency: orderCurrency,
-          settlementCurrency: 'KES',
-          products: settlement.products,
-        },
-        createdAt: now,
-        updatedAt: now,
-      });
-      seller.wallet = wallet;
-    }
-=======
-    const wallet = seller.wallet || {
-      currency: 'KES',
-      availableBalance: 0,
-      pendingBalance: 0,
-      transactions: [],
-    };
-
-    wallet.currency = wallet.currency || 'KES';
-
-    wallet.availableBalance = roundMoney(
-      Number(wallet.availableBalance || 0) +
-        Number(settlement.netAmount || 0)
-    );
-
-    wallet.lastUpdatedAt = new Date();
-
-    wallet.transactions = Array.isArray(
-      wallet.transactions
-    )
-      ? wallet.transactions
-      : [];
-
-    wallet.transactions.unshift({
-      _id: new mongoose.Types.ObjectId(),
-      type: 'credit',
-      amount: roundMoney(settlement.netAmount),
-      category: 'order_settlement',
-      status: 'completed',
-      description: `Order settlement for ${order.orderNumber}.`,
-      reference: `order:${order.orderNumber}`,
-      relatedOrder: order._id,
-      metadata: {
-        commission: roundMoney(settlement.commission),
-        grossAmount: roundMoney(settlement.grossAmount),
-        products: settlement.products,
-      },
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    seller.wallet = wallet;
->>>>>>> Stashed changes
+ Stashed changes
 
 >>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     await seller.save();
@@ -439,7 +303,6 @@ const applySellerSettlement = async (order) => {
   };
 };
 
-<<<<<<< Updated upstream
 
 // Track seller-owned M-Pesa and PayPal proceeds as held platform funds until the customer confirms delivery.
 // This is an internal ledger hold; the external payment remains in the configured provider merchant account.
@@ -907,8 +770,7 @@ const restoreOrderStock = async (order) => {
   }
 };
 
-=======
->>>>>>> Stashed changes
+ Stashed changes
 /*
 |--------------------------------------------------------------------------
 | GET ALL ORDERS - ADMIN
@@ -959,7 +821,6 @@ router.get('/', protect, adminOnly, async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-<<<<<<< Updated upstream
 | MARK ORDER AS REVIEWED BY ADMIN
 |--------------------------------------------------------------------------
 */
@@ -1046,8 +907,7 @@ router.get('/:id/delivery-evidence', protect, async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-=======
->>>>>>> Stashed changes
+ Stashed changes
 | GET MY ORDERS - CUSTOMER
 |--------------------------------------------------------------------------
 */
@@ -1805,7 +1665,6 @@ const createOrderFromRequest = async ({
       });
     }
 
-<<<<<<< Updated upstream
     if (!['PayPal', 'M-Pesa', 'Wallet'].includes(paymentMethod)) {
       return res.status(400).json({
         success: false,
@@ -1813,8 +1672,7 @@ const createOrderFromRequest = async ({
       });
     }
 
-=======
->>>>>>> Stashed changes
+ Stashed changes
     if (!customerDetails?.fullName) {
       return res.status(400).json({
         success: false,
@@ -2244,7 +2102,6 @@ const orderNumber = `ST-${datePart}-${uniquePart}`;
           'name slug price images stock'
         );
 
-<<<<<<< Updated upstream
         /*
 |--------------------------------------------------------------------------
 | INITIALIZE PAYPAL PAYMENT
@@ -2474,81 +2331,7 @@ if (paymentMethod === 'PayPal') {
     if (paymentMethod === 'Wallet' && populatedOrder.paymentStatus === 'Paid') {
       await sendPaidOrderEmails(populatedOrder);
     }
-=======
-    /*
-    |--------------------------------------------------------------------------
-    | SEND ORDER EMAILS
-    |--------------------------------------------------------------------------
-    */
-
-    try {
-      if (customerEmail) {
-        await sendOrderConfirmationEmail({
-          to: customerEmail,
-
-          customerName:
-            customerDetails.fullName,
-
-          order: {
-            ...populatedOrder.toObject(),
-
-            orderNumber:
-              populatedOrder.orderNumber,
-
-            trackingCode:
-              populatedOrder.trackingCode ||
-              populatedOrder.orderNumber,
-          },
-
-          orderDate:
-            new Date(
-              populatedOrder.createdAt
-            ).toLocaleString(),
-        });
-      }
-
-      const adminAddress =
-        process.env.SALES_EMAIL ||
-        'sales@sylvatechnologies.co.ke';
-
-      await sendAdminOrderNotificationEmail({
-        to: adminAddress,
-
-        order: {
-          ...populatedOrder.toObject(),
-
-          orderNumber:
-            populatedOrder.orderNumber,
-
-          trackingCode:
-            populatedOrder.trackingCode ||
-            populatedOrder.orderNumber,
-        },
-
-        customer: {
-          name:
-            customerDetails.fullName,
-
-          email:
-            customerEmail,
-
-          phone:
-            customerDetails.phone,
-        },
-      });
-    } catch (emailError) {
-      /*
-      |--------------------------------------------------------------------------
-      | EMAIL FAILURE SHOULD NOT CANCEL THE ORDER
-      |--------------------------------------------------------------------------
-      */
-
-      console.error(
-        'Order email notification failed:',
-        emailError
-      );
-    }
->>>>>>> Stashed changes
+ Stashed changes
 
     /*
     |--------------------------------------------------------------------------
@@ -2556,7 +2339,6 @@ if (paymentMethod === 'PayPal') {
     |--------------------------------------------------------------------------
     */
 
-<<<<<<< Updated upstream
  return res.status(201).json({
   success: true,
   message: paymentMethod === 'PayPal'
@@ -2569,14 +2351,7 @@ if (paymentMethod === 'PayPal') {
   mpesaPayment,
 });
 
-=======
-    return res.status(201).json({
-      success: true,
-      message:
-        'Order created successfully.',
-      data: populatedOrder,
-    });
->>>>>>> Stashed changes
+ Stashed changes
   } catch (error) {
     console.error(
       'Create order error:',
@@ -2626,7 +2401,6 @@ router.post(
   }
 );
 
-<<<<<<< Updated upstream
 
 /*
 |--------------------------------------------------------------------------
@@ -3018,8 +2792,7 @@ router.post('/:id/cancel', protect, async (req, res) => {
   }
 });
 
-=======
->>>>>>> Stashed changes
+ Stashed changes
 /*
 |--------------------------------------------------------------------------
 | UPDATE ORDER STATUS - ADMIN
@@ -3080,7 +2853,6 @@ router.patch(
       }
 
       if (
-<<<<<<< Updated upstream
         ['Confirmed', 'Processing', 'Ready for Delivery', 'Shipped', 'Delivered'].includes(status) &&
         order.paymentStatus !== 'Paid'
       ) {
@@ -3091,8 +2863,7 @@ router.patch(
       }
 
       if (
-=======
->>>>>>> Stashed changes
+ Stashed changes
         previousStatus === status
       ) {
         const unchangedOrder =
@@ -3297,7 +3068,6 @@ router.patch(
         });
       }
 
-<<<<<<< Updated upstream
       if (paymentStatus === 'Paid' && order.paymentMethod === 'PayPal') {
         return res.status(409).json({
           success: false,
@@ -3305,8 +3075,7 @@ router.patch(
         });
       }
 
-=======
->>>>>>> Stashed changes
+ Stashed changes
       const isFirstPaymentConfirmation =
         paymentStatus === 'Paid' &&
         order.paymentStatus !== 'Paid';

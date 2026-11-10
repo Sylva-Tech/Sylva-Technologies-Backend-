@@ -1186,7 +1186,6 @@ router.get(
   }
 );
 
-<<<<<<< Updated upstream
 router.post(
   '/products/sync-google-sheet',
   protect,
@@ -1227,8 +1226,7 @@ router.post(
     }
   }
 );
-=======
->>>>>>> Stashed changes
+ Stashed changes
 module.exports = router;
 
 

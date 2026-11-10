@@ -19,7 +19,6 @@ const cloudinary = require('../config/cloudinary');
 
 const router = express.Router();
 
-<<<<<<< Updated upstream
 /*
 |--------------------------------------------------------------------------
 | MARK CUSTOMER ACCOUNT AS REVIEWED BY ADMIN
@@ -263,8 +262,7 @@ router.put(
   }
 );
 
-=======
->>>>>>> Stashed changes
+ Stashed changes
 router.delete('/me', protect, async (req, res) => {
   try {
     const currentPassword = String(req.body?.currentPassword || '');

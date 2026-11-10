@@ -1,7 +1,6 @@
 # Environment and secrets
 .env
 .env.local
-<<<<<<< Updated upstream
 .env.*
 Backend/.env
 Frontend/.env
@@ -34,8 +33,4 @@ backend-merge-backup/
 Sylva-conflict-review/
 all-merge-conflicts.txt
 CheckoutPage-paypal-review.patch
-=======
-dist/
-build/
-*.log
->>>>>>> Stashed changes
+ Stashed changes
