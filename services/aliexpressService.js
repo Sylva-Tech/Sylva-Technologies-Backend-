@@ -32,17 +32,15 @@ const buildAuthorizationUrl = (state) => {
   return url.toString();
 };
 
-const exchangeAuthorizationCode = async (code) => {
+const callTokenApi = async (apiPath, values) => {
   requiredEnv();
-  const apiPath = '/auth/token/create';
   const params = {
     app_key: process.env.ALIEXPRESS_APP_KEY,
     timestamp: new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14),
     sign_method: 'sha256',
-    code,
+    ...values,
   };
   params.sign = signRequest(apiPath, params);
-
   const response = await fetch(`${API_BASE}${apiPath}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -50,8 +48,8 @@ const exchangeAuthorizationCode = async (code) => {
     signal: AbortSignal.timeout(15000),
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.code && String(payload.code) !== '0' || payload.error_response) {
-    const error = new Error(payload.message || payload.error_message || 'AliExpress token exchange failed.');
+  if (!response.ok || (payload.code && String(payload.code) !== '0') || payload.error_response) {
+    const error = new Error(payload.message || payload.error_message || 'AliExpress token request failed.');
     error.status = response.status || 502;
     throw error;
   }
@@ -59,6 +57,9 @@ const exchangeAuthorizationCode = async (code) => {
   if (!data.access_token) throw new Error('AliExpress did not return an access token. Check the app API permissions and token API response.');
   return data;
 };
+
+const exchangeAuthorizationCode = (code) => callTokenApi('/auth/token/create', { code });
+const refreshAccessToken = (refreshToken) => callTokenApi('/auth/token/refresh', { refresh_token: refreshToken });
 
 const encryptSecret = (value) => {
   if (!value) return '';
@@ -82,4 +83,4 @@ const decryptSecret = (value) => {
   return Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]).toString('utf8');
 };
 
-module.exports = { buildAuthorizationUrl, exchangeAuthorizationCode, encryptSecret, decryptSecret };
+module.exports = { buildAuthorizationUrl, exchangeAuthorizationCode, refreshAccessToken, encryptSecret, decryptSecret };
