@@ -2,7 +2,6 @@ const express = require('express');
 const mongoose = require('mongoose');
 const axios = require('axios');
 
-const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Product = require('../models/Product');
@@ -279,13 +278,11 @@ const applySellerSettlement = async (order) => {
         updatedAt: now,
       });
       seller.wallet = wallet;
- ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     }
     const orderCurrency = String(order.currency || 'KES').toUpperCase();
     const now = new Date();
 
 
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     await seller.save();
 
     settledCount += 1;
