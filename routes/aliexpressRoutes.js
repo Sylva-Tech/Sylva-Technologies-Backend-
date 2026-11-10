@@ -19,9 +19,7 @@ const connectLimiter = rateLimit({
   message: { success: false, message: 'Too many AliExpress connection attempts. Try again later.' },
 });
 
-router.use(protect, adminOnly);
-
-router.get('/status', async (req, res) => {
+router.get('/status', protect, adminOnly, async (req, res) => {
   try {
     const connection = await AliExpressConnection.findOne({ provider: 'aliexpress' }).lean();
     const configured = Boolean(process.env.ALIEXPRESS_APP_KEY && process.env.ALIEXPRESS_APP_SECRET && process.env.ALIEXPRESS_REDIRECT_URI && process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY);
@@ -44,7 +42,7 @@ router.get('/status', async (req, res) => {
   }
 });
 
-router.post('/connect', connectLimiter, async (req, res) => {
+router.post('/connect', protect, adminOnly, connectLimiter, async (req, res) => {
   try {
     const state = crypto.randomBytes(32).toString('hex');
     await AliExpressOAuthState.deleteMany({ createdBy: req.user._id });
@@ -105,7 +103,7 @@ router.get('/callback', async (req, res) => {
   }
 });
 
-router.post('/disconnect', async (req, res) => {
+router.post('/disconnect', protect, adminOnly, async (req, res) => {
   try {
     await AliExpressConnection.findOneAndUpdate(
       { provider: 'aliexpress' },
