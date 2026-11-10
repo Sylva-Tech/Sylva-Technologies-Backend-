@@ -129,7 +129,7 @@ router.post('/disconnect', protect, adminOnly, async (req, res) => {
   try {
     await AliExpressConnection.findOneAndUpdate(
       { provider: 'aliexpress' },
-      { $set: { status: 'disconnected', accessTokenEncrypted: '', refreshTokenEncrypted: '', accessTokenExpiresAt: null, refreshTokenExpiresAt: null } },
+      { $set: { status: 'disconnected', sellerId: '', account: '', accountPlatform: '', accessTokenEncrypted: '', refreshTokenEncrypted: '', accessTokenExpiresAt: null, refreshTokenExpiresAt: null } },
       { upsert: true, setDefaultsOnInsert: true },
     );
     return res.json({ success: true, message: 'AliExpress connection removed.' });
