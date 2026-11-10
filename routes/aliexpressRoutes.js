@@ -50,7 +50,7 @@ router.post('/connect', protect, adminOnly, connectLimiter, async (req, res) => 
     await AliExpressOAuthState.create({
       stateHash: crypto.createHash('sha256').update(state).digest('hex'),
       createdBy: req.user._id,
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 20 * 60 * 1000),
     });
     return res.json({ success: true, authorizationUrl: buildAuthorizationUrl(state) });
   } catch (error) {
