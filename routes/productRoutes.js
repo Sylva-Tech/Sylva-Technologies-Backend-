@@ -1309,6 +1309,15 @@ router.post(
           offerEndDate: null,
         });
 
+      // Populate the saved product before composing the seller/admin notification.
+      const populatedProduct = await Product.findById(product._id)
+        .populate('category', 'name slug')
+        .populate('seller', 'name email sellerProfile.storeName');
+
+      if (!populatedProduct) {
+        throw new Error('Product was created but could not be reloaded for confirmation.');
+      }
+
       const sellerName = populatedProduct.seller?.name || req.user.name || 'Sylva seller';
       const sellerEmail = populatedProduct.seller?.email || req.user.email || 'Not provided';
       const categoryName = populatedProduct.category?.name || categoryRecord.name || 'Uncategorised';
