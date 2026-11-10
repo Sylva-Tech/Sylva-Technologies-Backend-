@@ -12,6 +12,7 @@ test('builds the AliExpress OAuth URL with the registered callback and state', (
   process.env.ALIEXPRESS_APP_KEY = 'test-app-key';
   process.env.ALIEXPRESS_APP_SECRET = 'test-app-secret';
   process.env.ALIEXPRESS_REDIRECT_URI = 'https://www.sylvatechnologies.co.ke/callback';
+  process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY = 'a'.repeat(64);
   const url = new URL(buildAuthorizationUrl('one-time-state'));
   assert.equal(url.origin, 'https://api-sg.aliexpress.com');
   assert.equal(url.pathname, '/oauth/authorize');
