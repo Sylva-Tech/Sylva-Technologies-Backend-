@@ -1190,7 +1190,7 @@ router.get(
         [];
 
       for (
-        const seller of sellers
+        const seller of payoutAccounts
       ) {
         const transactions =
           Array.isArray(
