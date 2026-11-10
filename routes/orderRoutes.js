@@ -279,10 +279,6 @@ const applySellerSettlement = async (order) => {
       });
       seller.wallet = wallet;
     }
-    const orderCurrency = String(order.currency || 'KES').toUpperCase();
-    const now = new Date();
-
-
     await seller.save();
 
     settledCount += 1;
