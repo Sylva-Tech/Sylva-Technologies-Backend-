@@ -6,6 +6,7 @@ const AUTH_BASE = 'https://api-sg.aliexpress.com/oauth/authorize';
 const requiredEnv = () => {
   const missing = ['ALIEXPRESS_APP_KEY', 'ALIEXPRESS_APP_SECRET', 'ALIEXPRESS_REDIRECT_URI']
     .filter((key) => !process.env[key]);
+  if (!/^[a-f0-9]{64}$/i.test(process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY || '')) missing.push('ALIEXPRESS_TOKEN_ENCRYPTION_KEY (64-character hex)');
   if (missing.length) {
     const error = new Error(`AliExpress configuration is incomplete: ${missing.join(', ')}`);
     error.code = 'ALIEXPRESS_NOT_CONFIGURED';
