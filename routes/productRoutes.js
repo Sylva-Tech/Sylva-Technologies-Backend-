@@ -230,6 +230,7 @@ router.get('/', async (req, res) => {
       offer,
       inStock,
       condition,
+      source,
       sort,
       page = 1,
       limit = 12,
@@ -270,6 +271,20 @@ router.get('/', async (req, res) => {
       isActive: mongoose.trusted({ $ne: false }),
       approvalStatus: 'approved',
     };
+
+    // Source filtering keeps Sylva inventory, independent seller listings and
+    // AliExpress imports distinct while preserving visibility/approval rules.
+    if (source === 'seller') {
+      filter.seller = mongoose.trusted({ $ne: null });
+    } else if (source === 'sylva') {
+      filter.seller = null;
+      filter.source = mongoose.trusted({ $ne: 'aliexpress' });
+    } else if (source === 'aliexpress') {
+      filter.source = 'aliexpress';
+      filter.seller = null;
+    } else if (source && source !== 'all') {
+      return res.status(400).json({ success: false, message: 'Invalid product source filter.' });
+    }
 
     /*
      * Category filter.
