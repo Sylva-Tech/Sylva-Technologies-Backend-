@@ -5,14 +5,10 @@ const AliExpressConnection = require('../models/AliExpressConnection');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
 const { callDropshipApi, decryptSecret, encryptSecret, refreshAccessToken } = require('../services/aliexpressService');
+const { isTechProduct } = require('../utils/aliexpressTechCatalog');
 
 const router = express.Router();
 router.use(protect, adminOnly);
-
-const TECH_TERMS = /\b(laptop|notebook|desktop|computer|pc|macbook|mac|chromebook|smartphone|iphone|android|mobile phone|tablet|ipad|router|modem|switch|network|wifi|wi-fi|ethernet|server|nas|ssd|hdd|hard drive|flash drive|usb|memory card|ram|memory|motherboard|processor|cpu|gpu|graphics card|monitor|display|projector|printer|scanner|keyboard|mouse|webcam|headset|headphone|earphone|earbud|speaker|microphone|soundbar|camera|cctv|security camera|surveillance|power bank|charger|charging cable|adapter|hub|dock|computer case|pc case|cooling fan|ups|uninterruptible power|smartwatch|smart watch|wearable|television|tv|electronics|electronic accessory|gaming console|game controller|joystick|graphics tablet|drawing tablet)\b/i;
-const NON_TECH_TERMS = /\b(dress|clothing|fashion|jewelry|jewellery|cosmetic|makeup|skincare|perfume|sofa|furniture|curtain|bedding|kitchenware|cookware|toy|doll|pet food|dog clothes|cat clothes|garden tool|plant pot|carpet|rug|wall art|wedding decor)\b/i;
-
-const isTechProduct = (value) => TECH_TERMS.test(String(value || '')) && !NON_TECH_TERMS.test(String(value || ''));
 
 const walk = (value, visit, depth = 0) => {
   if (!value || typeof value !== 'object' || depth > 9) return undefined;
