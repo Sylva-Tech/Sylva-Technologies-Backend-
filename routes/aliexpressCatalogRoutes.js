@@ -74,13 +74,13 @@ const normalizeSearchItem = (item) => {
   return {
     productId,
     title,
-    imageUrl: String(image).startsWith('//') ? \`https:\${image}\` : String(image),
+    imageUrl: String(image).startsWith('//') ? `https:${image}` : String(image),
     supplierPrice: Number.isFinite(supplierPrice) ? supplierPrice : 0,
     originalPrice: Number.isFinite(originalPrice) ? originalPrice : 0,
     currency: item.targetOriginalPriceCurrency || item.target_sale_price_currency || 'USD',
     rating: item.score || item.evaluate_rate || '',
     orders: item.orders || item.lastest_volume || '',
-    productUrl: String(url).startsWith('//') ? \`https:\${url}\` : String(url),
+    productUrl: String(url).startsWith('//') ? `https:${url}` : String(url),
   };
 };
 
@@ -206,7 +206,7 @@ router.post('/import', async (req, res) => {
     const imageValue = findValue(payload, ['product_main_image_url', 'itemMainPic', 'main_image_url', 'image_url']);
     const imageList = findNode(payload, ['image_urls', 'product_images', 'product_images_list']);
     const images = [];
-    if (typeof imageValue === 'string') images.push(imageValue.startsWith('//') ? \`https:\${imageValue}\` : imageValue);
+    if (typeof imageValue === 'string') images.push(imageValue.startsWith('//') ? `https:${imageValue}` : imageValue);
     if (Array.isArray(imageList)) {
       for (const value of imageList) {
         const url = typeof value === 'string' ? value : value?.url;
@@ -220,11 +220,11 @@ router.post('/import', async (req, res) => {
 
     const product = await Product.create({
       name: title,
-      slug: \`aliexpress-\${productId}\`,
-      sku: \`AE-\${productId}\`,
+      slug: `aliexpress-${productId}`,
+      sku: `AE-${productId}`,
       source: 'aliexpress',
       aliexpressProductId: productId,
-      aliexpressProductUrl: \`https://www.aliexpress.com/item/\${productId}.html\`,
+      aliexpressProductUrl: `https://www.aliexpress.com/item/${productId}.html`,
       aliexpressSupplierPrice: supplierPrice,
       aliexpressSupplierCurrency: currency,
       aliexpressSyncedAt: new Date(),
