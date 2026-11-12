@@ -108,8 +108,8 @@ router.get('/status', protect, adminOnly, async (req, res) => {
         accessTokenExpiresAt: connection?.accessTokenExpiresAt || null,
         lastError: connection?.lastError || '',
         supplierOrderingEnabled: false,
-        catalogSyncEnabled: false,
-        catalogSyncReason: 'Product-query API permissions and response mapping have not yet been verified for this AliExpress application.',
+        catalogSyncEnabled: connection?.status === 'connected',
+        catalogSyncReason: 'Supplier feed sync requires the AliExpress Dropshipping API permission group and an account enrolled in the Dropshipping Center. The first sync verifies live access.',
       },
     });
   } catch (error) {
