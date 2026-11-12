@@ -31,6 +31,8 @@ test('AliExpress feed request is signed and uses the connected account token', a
     secret: process.env.ALIEXPRESS_APP_SECRET,
     redirect: process.env.ALIEXPRESS_REDIRECT_URI,
     encryption: process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY,
+    dsKey: process.env.ALIEXPRESS_DS_APP_KEY,
+    dsSecret: process.env.ALIEXPRESS_DS_APP_SECRET,
     fetch: global.fetch,
   };
   const appSecret = 'unit-test-app-secret';
@@ -39,6 +41,8 @@ test('AliExpress feed request is signed and uses the connected account token', a
   process.env.ALIEXPRESS_APP_SECRET = appSecret;
   process.env.ALIEXPRESS_REDIRECT_URI = 'https://example.test/callback';
   process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY = 'c'.repeat(64);
+  process.env.ALIEXPRESS_DS_APP_KEY = 'unit-test-ds-app-key';
+  process.env.ALIEXPRESS_DS_APP_SECRET = appSecret;
   global.fetch = async (url, options) => {
     captured = { url: String(url), body: String(options.body) };
     return {
@@ -84,6 +88,8 @@ test('AliExpress feed request is signed and uses the connected account token', a
     if (previous.secret === undefined) delete process.env.ALIEXPRESS_APP_SECRET; else process.env.ALIEXPRESS_APP_SECRET = previous.secret;
     if (previous.redirect === undefined) delete process.env.ALIEXPRESS_REDIRECT_URI; else process.env.ALIEXPRESS_REDIRECT_URI = previous.redirect;
     if (previous.encryption === undefined) delete process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY; else process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY = previous.encryption;
+    if (previous.dsKey === undefined) delete process.env.ALIEXPRESS_DS_APP_KEY; else process.env.ALIEXPRESS_DS_APP_KEY = previous.dsKey;
+    if (previous.dsSecret === undefined) delete process.env.ALIEXPRESS_DS_APP_SECRET; else process.env.ALIEXPRESS_DS_APP_SECRET = previous.dsSecret;
     global.fetch = previous.fetch;
   }
 });
