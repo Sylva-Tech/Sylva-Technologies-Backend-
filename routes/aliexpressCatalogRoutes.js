@@ -196,15 +196,15 @@ router.post('/import', async (req, res) => {
     if (!title || !isTechProduct(title)) {
       return res.status(422).json({ success: false, message: 'AliExpress product details do not identify an eligible technology product. It was not imported.' });
     }
-    const supplierPrice = Number(findValue(detail, ['target_sale_price', 'targetSalePrice', 'sale_price', 'min_price', 'price']) || req.body.supplierPrice || 0);
+    const supplierPrice = Number(findValue(payload, ['target_sale_price', 'targetSalePrice', 'app_sale_price', 'appSalePrice', 'sku_price', 'skuPrice', 'sale_price', 'min_price', 'price']) || req.body.supplierPrice || 0);
     if (!Number.isFinite(supplierPrice) || supplierPrice <= 0) {
       return res.status(422).json({ success: false, message: 'AliExpress did not return a usable supplier price. Product was not imported.' });
     }
     const currency = String(findValue(detail, ['target_sale_price_currency', 'currency', 'target_currency']) || 'USD').toUpperCase();
     if (currency !== 'USD') return res.status(422).json({ success: false, message: 'AliExpress returned an unexpected supplier currency. Product was not imported.' });
 
-    const imageValue = findValue(detail, ['product_main_image_url', 'itemMainPic', 'main_image_url', 'image_url']);
-    const imageList = findNode(detail, ['image_urls', 'product_images', 'product_images_list']);
+    const imageValue = findValue(payload, ['product_main_image_url', 'itemMainPic', 'main_image_url', 'image_url']);
+    const imageList = findNode(payload, ['image_urls', 'product_images', 'product_images_list']);
     const images = [];
     if (typeof imageValue === 'string') images.push(imageValue.startsWith('//') ? \`https:\${imageValue}\` : imageValue);
     if (Array.isArray(imageList)) {
@@ -213,8 +213,8 @@ router.post('/import', async (req, res) => {
         if (url && /^https?:\/\//i.test(url) && !images.includes(url)) images.push(url);
       }
     }
-    const description = cleanText(findValue(detail, ['detail', 'description', 'product_description', 'mobile_detail']), 20000) || title;
-    const brand = cleanText(findValue(detail, ['brand_name', 'brandName', 'brand']), 120) || 'Unbranded';
+    const description = cleanText(findValue(payload, ['detail', 'description', 'product_description', 'mobile_detail']), 20000) || title;
+    const brand = cleanText(findValue(payload, ['brand_name', 'brandName', 'brand']), 120) || 'Unbranded';
     const exchangeRate = Number(process.env.ALIEXPRESS_KES_PER_USD || 0);
     const suggestedKes = exchangeRate > 0 ? Math.round(supplierPrice * exchangeRate * (1 + markupPercent / 100)) : 0;
 
