@@ -173,7 +173,6 @@ router.post('/withdrawals', protect, adminOnly, requireVerified, financialAction
         } },
       },
       { new: true, runValidators: true }
- ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     );
     if (!updated) return res.status(409).json({ success: false, message: 'Insufficient available platform funds or wallet changed. Refresh and try again.' });
     return res.status(202).json({ success: true, message: 'Withdrawal request saved and funds reserved. The external M-Pesa, Airtel Money or bank payout must still be sent and confirmed.', data: { reference: ref, amount, method, status: 'pending' } });
@@ -220,7 +219,6 @@ router.patch('/withdrawals/:transactionId', protect, adminOnly, requireVerified,
       },
       update,
       { new: true, runValidators: true }
- ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     );
     if (!updated) return res.status(409).json({ success: false, message: 'This withdrawal was already processed or the pending balance changed. Refresh and review the ledger.' });
     return res.json({ success: true, message: decision === 'paid' ? 'Marked paid. Only do this after the external M-Pesa, Airtel Money or bank transfer is complete.' : 'Withdrawal rejected and funds returned.', data: safe(updated) });
