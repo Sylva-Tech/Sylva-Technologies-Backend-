@@ -67,7 +67,7 @@ async function storeDocumentFiles(messageId, files, replace = false) {
 
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
-    const allowedFolders = ['inbox', 'outbox', 'sent', 'drafts', 'archive', 'trash'];
+    const allowedFolders = ['inbox', 'outbox', 'sent', 'drafts', 'archive', 'spam', 'trash'];
     const folder = allowedFolders.includes(req.query.folder) ? req.query.folder : 'inbox';
     const query = { folder };
     const messages = await MailboxMessage.find(query)
@@ -214,7 +214,7 @@ router.get('/:id', protect, adminOnly, async (req, res) => {
   try {
     const message = await MailboxMessage.findById(req.params.id).select('+contentCiphertext +contentIv +contentAuthTag +contentEncryptionVersion');
     if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
-    if (message.folder === 'inbox' && !message.isRead) {
+    if (['inbox', 'spam'].includes(message.folder) && !message.isRead) {
       message.isRead = true;
       await message.save();
     }
@@ -483,7 +483,7 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
 router.patch('/:id/folder', protect, adminOnly, async (req, res) => {
   try {
     const folder = String(req.body?.folder || '');
-    if (!['inbox', 'sent', 'drafts', 'archive', 'trash'].includes(folder)) return res.status(400).json({ success: false, message: 'Invalid mailbox folder.' });
+    if (!['inbox', 'sent', 'drafts', 'archive', 'spam', 'trash'].includes(folder)) return res.status(400).json({ success: false, message: 'Invalid mailbox folder.' });
     const message = await MailboxMessage.findByIdAndUpdate(req.params.id, { $set: { folder } }, { returnDocument: 'after', runValidators: true });
     if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
     return res.json({ success: true, message });
