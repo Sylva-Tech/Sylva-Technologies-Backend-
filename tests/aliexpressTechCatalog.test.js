@@ -7,6 +7,7 @@ test('accepts Sylva technology sourcing terms', () => {
     'Business laptop Core i7',
     'Laptops',
     'Smartphones',
+    'Phones',
     'Routers',
     'Monitors',
     'Printers',
