@@ -262,7 +262,6 @@ router.put(
   }
 );
 
- Stashed changes
 router.delete('/me', protect, async (req, res) => {
   try {
     const currentPassword = String(req.body?.currentPassword || '');
