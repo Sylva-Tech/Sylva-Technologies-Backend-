@@ -54,6 +54,17 @@ const numericValue = (value) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
+const safeAliExpressUrl = (value, allowedDomains) => {
+  try {
+    const url = new URL(String(value || '').trim());
+    const hostname = url.hostname.toLowerCase();
+    const allowed = url.protocol === 'https:' && allowedDomains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+    return allowed ? url.toString().slice(0, 2000) : '';
+  } catch {
+    return '';
+  }
+};
+
 const normalizeFeedProduct = (item) => {
   const providerProductId = String(item?.product_id || '').trim();
   const title = String(item?.product_title || '').trim().slice(0, 500);
@@ -61,11 +72,11 @@ const normalizeFeedProduct = (item) => {
   const imageUrls = [
     item.product_main_image_url,
     ...(Array.isArray(item.product_small_image_urls) ? item.product_small_image_urls : []),
-  ].map((value) => String(value || '').trim()).filter((value) => /^https:\/\//i.test(value)).slice(0, 12);
+  ].map((value) => safeAliExpressUrl(value, ['alicdn.com', 'aliexpress.com', 'aliexpress-media.com'])).filter(Boolean).slice(0, 12);
   return {
     providerProductId,
     title,
-    productUrl: String(item.product_detail_url || '').trim().slice(0, 2000),
+    productUrl: safeAliExpressUrl(item.product_detail_url, ['aliexpress.com']),
     imageUrl: imageUrls[0] || '',
     imageUrls,
     supplierPrice: numericValue(item.sale_price || item.original_price),
