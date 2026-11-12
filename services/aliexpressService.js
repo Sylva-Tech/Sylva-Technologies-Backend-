@@ -33,11 +33,15 @@ const buildAuthorizationUrl = (state) => {
   return url.toString();
 };
 
+// IOP REST timestamps accept epoch milliseconds. Do not reuse the legacy TOP
+// gateway's GMT+8 formatted timestamp for OAuth token exchange requests.
+const formatIopTimestamp = (date = new Date()) => String(date.getTime());
+
 const callTokenApi = async (apiPath, values) => {
   requiredEnv();
   const params = {
     app_key: process.env.ALIEXPRESS_APP_KEY,
-    timestamp: new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14),
+    timestamp: formatIopTimestamp(),
     sign_method: 'sha256',
     ...values,
   };
@@ -129,7 +133,7 @@ const signTopRequest = (params) => {
 
 const callDropshipApi = async (method, values, accessToken) => {
   requiredEnv();
-  if (!/^aliexpress\.ds\.[a-z.]+$/.test(String(method || ''))) {
+  if (!/^aliexpress\\.ds\\.[a-z.]+$/.test(String(method || ''))) {
     throw new Error('Unsupported AliExpress Dropshipping API method.');
   }
   if (!accessToken) {
@@ -157,7 +161,7 @@ const callDropshipApi = async (method, values, accessToken) => {
     signal: AbortSignal.timeout(20000),
   });
   const payload = await response.json().catch(() => ({}));
-  const wrapperKey = `${method.replace(/\./g, '_')}_response`;
+  const wrapperKey = `${method.split('.').join('_')}_response`;
   const wrapper = payload?.[wrapperKey] || payload;
   const result = wrapper?.result || wrapper?.resp_result?.result || wrapper?.data?.result;
 
@@ -178,4 +182,4 @@ const fetchRecommendedFeed = async (values, accessToken) => {
   return { ...response, products: extractRecommendedProducts(response.raw) };
 };
 
-module.exports = { buildAuthorizationUrl, exchangeAuthorizationCode, refreshAccessToken, encryptSecret, decryptSecret, formatAliExpressTimestamp, extractRecommendedProducts, callDropshipApi, fetchRecommendedFeed };
+module.exports = { buildAuthorizationUrl, exchangeAuthorizationCode, refreshAccessToken, encryptSecret, decryptSecret, formatIopTimestamp, formatAliExpressTimestamp, extractRecommendedProducts, callDropshipApi, fetchRecommendedFeed };
