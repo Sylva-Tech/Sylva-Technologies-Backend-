@@ -191,3 +191,5 @@ router.post('/catalog/sync', limiter, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.isBuyerPlatform = isBuyerPlatform;
+module.exports.normalizeProduct = normalizeProduct;
