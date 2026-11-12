@@ -115,6 +115,7 @@ router.get('/status', protect, adminOnly, async (req, res) => {
         status: connection?.status || 'disconnected',
         sellerId: connection?.sellerId || '',
         account: connection?.account || '',
+        accountPlatform: connection?.accountPlatform || '',
         lastConnectedAt: connection?.lastConnectedAt || null,
         accessTokenExpiresAt: connection?.accessTokenExpiresAt || null,
         lastError: connection?.lastError || '',
