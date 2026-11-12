@@ -5,6 +5,12 @@ const { isTechProduct, isTechCategory } = require('../utils/aliexpressTechCatalo
 test('accepts Sylva technology sourcing terms', () => {
   for (const value of [
     'Business laptop Core i7',
+    'Laptops',
+    'Smartphones',
+    'Routers',
+    'Monitors',
+    'Printers',
+    'Keyboards and mice',
     'Android smartphone 5G',
     'Wi-Fi 6 router',
     '1TB NVMe SSD',
