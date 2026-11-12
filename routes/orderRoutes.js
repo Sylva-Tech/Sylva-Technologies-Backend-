@@ -278,8 +278,6 @@ const applySellerSettlement = async (order) => {
       });
       seller.wallet = wallet;
     }
-
-
     await seller.save();
 
     settledCount += 1;
@@ -350,6 +348,7 @@ const holdSellerProceedsInPlatformWallet = async (order) => {
       held += 1;
       continue;
     }
+    const now = new Date();
     const updated = await AdminWallet.findOneAndUpdate(
       {
         key: 'platform',
@@ -418,6 +417,7 @@ const releaseSellerProceedsFromPlatformWallet = async (order) => {
     if (!hold || hold.status !== 'pending') {
       throw new Error('Pending seller proceeds hold is missing for order ' + order.orderNumber + ', seller ' + seller.sellerId + '.');
     }
+    const now = new Date();
     const updated = await AdminWallet.findOneAndUpdate(
       {
         key: 'platform',
