@@ -71,6 +71,7 @@ test('AliExpress feed request is signed and uses the connected account token', a
     assert.equal(captured.url, 'https://eco.taobao.com/router/rest');
     const params = Object.fromEntries(new URLSearchParams(captured.body));
     assert.equal(params.method, 'aliexpress.ds.recommend.feed.get');
+    assert.equal(params.app_key, 'unit-test-ds-app-key');
     assert.equal(params.sign_method, 'hmac');
     assert.equal(params.session, 'unit-test-access-token');
     assert.match(params.timestamp, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
@@ -138,5 +139,33 @@ test('AliExpress IOP token exchange uses a millisecond epoch timestamp and path-
     if (previous.redirect === undefined) delete process.env.ALIEXPRESS_REDIRECT_URI; else process.env.ALIEXPRESS_REDIRECT_URI = previous.redirect;
     if (previous.encryption === undefined) delete process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY; else process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY = previous.encryption;
     global.fetch = previous.fetch;
+  }
+});
+
+
+test('AliExpress unknown TOP App Key errors are mapped to an actionable integration error', async () => {
+  const previousKey = process.env.ALIEXPRESS_DS_APP_KEY;
+  const previousSecret = process.env.ALIEXPRESS_DS_APP_SECRET;
+  const previousFetch = global.fetch;
+  process.env.ALIEXPRESS_DS_APP_KEY = 'unit-test-ds-app-key';
+  process.env.ALIEXPRESS_DS_APP_SECRET = 'unit-test-ds-secret';
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ error_response: { sub_code: 'isv.appkey-not-exists', sub_msg: 'Invalid app Key', request_id: 'test-request-1' } }),
+  });
+  try {
+    const { fetchRecommendedFeed } = require('../services/aliexpressService');
+    await assert.rejects(
+      fetchRecommendedFeed({ feed_name: 'DS bestseller' }, 'unit-test-access-token'),
+      (error) => error.code === 'ALIEXPRESS_DS_APP_KEY_NOT_REGISTERED' &&
+        error.providerCode === 'isv.appkey-not-exists' &&
+        error.requestId === 'test-request-1' &&
+        !error.message.includes('unit-test-ds-secret'),
+    );
+  } finally {
+    if (previousKey === undefined) delete process.env.ALIEXPRESS_DS_APP_KEY; else process.env.ALIEXPRESS_DS_APP_KEY = previousKey;
+    if (previousSecret === undefined) delete process.env.ALIEXPRESS_DS_APP_SECRET; else process.env.ALIEXPRESS_DS_APP_SECRET = previousSecret;
+    global.fetch = previousFetch;
   }
 });
