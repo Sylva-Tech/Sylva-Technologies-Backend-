@@ -26,3 +26,6 @@ jobs:
             echo "Checking $file"
             node --check "$file"
           done < <(find . -type f -name '*.js' -not -path './node_modules/*' -not -path './.git/*' -not -name 'old-*' -print0)
+
+      - name: Load Express application and registered routers
+        run: node -e "require('./app'); console.log('Express application loaded successfully')"
