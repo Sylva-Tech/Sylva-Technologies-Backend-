@@ -24,6 +24,7 @@ const shippingRoutes = require('./routes/shippingRoutes');
 const mailboxRoutes = require('./routes/mailboxRoutes');
 const supportInboxRoutes = require('./routes/supportInboxRoutes');
 const aliexpressRoutes = require('./routes/aliexpressRoutes');
+const aliexpressFulfillmentRoutes = require('./routes/aliexpressFulfillmentRoutes');
 const {
   cloudflareOriginGuard,
   financialRateLimit,
@@ -421,6 +422,7 @@ app.use('/api/support-inbox', supportInboxRoutes);
 
 // AliExpress OAuth and supplier connection endpoints.
 app.use('/api/aliexpress', aliexpressRoutes);
+app.use('/api/aliexpress/fulfillment', aliexpressFulfillmentRoutes);
 
 /*
 |--------------------------------------------------------------------------

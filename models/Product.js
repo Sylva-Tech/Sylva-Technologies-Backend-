@@ -39,7 +39,7 @@ const productSchema = new mongoose.Schema(
      */
     source: {
       type: String,
-      enum: ['manual', 'google_sheet', 'seller'],
+      enum: ['manual', 'google_sheet', 'seller', 'aliexpress'],
       default: 'manual',
       index: true,
     },
