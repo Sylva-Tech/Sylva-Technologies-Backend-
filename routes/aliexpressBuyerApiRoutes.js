@@ -8,6 +8,7 @@ const {
   encryptSecret,
   refreshAccessToken,
   fetchRecommendedFeed,
+  getDropshipApiConfig,
 } = require('../services/aliexpressService');
 
 const router = express.Router();
@@ -110,6 +111,7 @@ router.get('/status', async (req, res) => {
       process.env.ALIEXPRESS_REDIRECT_URI && /^[a-f0-9]{64}$/i.test(process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY || ''));
     const connected = connection?.status === 'connected';
     const buyerAuthorized = connected && isBuyerPlatform(connection?.accountPlatform);
+    const dropshipApi = getDropshipApiConfig();
     return res.json({
       success: true,
       data: {
@@ -123,13 +125,19 @@ router.get('/status', async (req, res) => {
         accessTokenExpiresAt: connection?.accessTokenExpiresAt || null,
         lastError: connection?.lastError || '',
         buyerAuthorized,
-        catalogSyncEnabled: Boolean(configured && buyerAuthorized),
-        catalogSyncReason: buyerAuthorized
-          ? 'Buyer-account session detected. Read-only catalogue sync can be tested against AliExpress; the legacy Dropshipping API is deprecated and provider acceptance must be confirmed by a live request.'
-          : 'A connected buyerApp session is required. Seller Center OAuth cannot be used for Dropshipping buyer APIs.',
+        dropshipApiConfigured: dropshipApi.configured,
+        catalogSyncEnabled: Boolean(configured && buyerAuthorized && dropshipApi.configured),
+        catalogSyncReason: !configured
+          ? 'IOP OAuth configuration is incomplete. Check the AliExpress OAuth environment variables.'
+          : !buyerAuthorized
+            ? 'A connected buyerApp session is required. Seller Center OAuth cannot be used for Dropshipping buyer APIs.'
+            : !dropshipApi.configured
+              ? 'The Dropshipping TOP gateway requires its own ALIEXPRESS_DS_APP_KEY and ALIEXPRESS_DS_APP_SECRET settings. The IOP OAuth key/secret are deliberately not reused.'
+              : 'Buyer authorization and separate Dropshipping gateway credentials are configured. Live provider acceptance still needs to be verified by a successful catalogue request.',
         supplierOrderingEnabled: false,
         supplierOrderingReason: 'Supplier order placement and payment remain disabled until current production API support, supplier payment flow, and duplicate-order safeguards are verified.',
         apiGeneration: 'legacy-top-dropshipping-deprecated',
+        dropshipGateway: 'https://eco.taobao.com/router/rest',
       },
     });
   } catch (error) {
@@ -139,6 +147,13 @@ router.get('/status', async (req, res) => {
 
 router.post('/catalog/sync', limiter, async (req, res) => {
   try {
+    if (!getDropshipApiConfig().configured) {
+      return res.status(503).json({
+        success: false,
+        code: 'ALIEXPRESS_DS_API_CREDENTIALS_MISSING',
+        message: 'Configure ALIEXPRESS_DS_APP_KEY and ALIEXPRESS_DS_APP_SECRET on the backend. These must be the credentials provisioned for the Dropshipping/TOP API; do not paste secrets into the frontend or chat.',
+      });
+    }
     const { accessToken } = await getBuyerConnection();
     const feedName = String(req.body?.feedName || 'DS bestseller').trim().slice(0, 100);
     const country = String(req.body?.country || 'KE').trim().toUpperCase();
@@ -185,6 +200,7 @@ router.post('/catalog/sync', limiter, async (req, res) => {
       success: false,
       code: error.code || 'ALIEXPRESS_LIVE_SYNC_FAILED',
       message: error.message || 'AliExpress catalogue synchronization failed.',
+      providerCode: error.providerCode || null,
       providerRequestId: error.requestId || error.request_id || null,
     });
   }
