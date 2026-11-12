@@ -42,9 +42,10 @@ const callDropshipApi = async (method, values, accessToken) => {
   });
   const payload = await response.json().catch(() => ({}));
   const envelope = payload[`${method.replaceAll('.', '_')}_response`] || payload;
-  const error = envelope.error_response || envelope;
-  const errorCode = error.code || error.error_code || error.errorCode;
-  const hasError = !response.ok || Boolean(envelope.error_response) ||
+  const responseData = envelope.resp_result || envelope.data || envelope;
+  const error = envelope.error_response || responseData.error_response || responseData;
+  const errorCode = error.code || error.error_code || error.errorCode || envelope.code;
+  const hasError = !response.ok || Boolean(envelope.error_response || responseData.error_response) ||
     (errorCode && !['0', '00', '200'].includes(String(errorCode)));
   if (hasError) {
     const message = error.msg || error.message || error.sub_msg || 'AliExpress Dropshipping API request failed.';
