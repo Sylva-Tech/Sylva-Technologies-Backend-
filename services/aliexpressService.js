@@ -117,6 +117,16 @@ const extractRecommendedProducts = (payload) => {
   return [];
 };
 
+const signTopRequest = (params) => {
+  const secret = process.env.ALIEXPRESS_APP_SECRET;
+  const payload = Object.keys(params)
+    .filter((key) => key !== 'sign')
+    .sort()
+    .map((key) => `${key}${params[key]}`)
+    .join('');
+  return crypto.createHmac('md5', secret).update(payload, 'utf8').digest('hex').toUpperCase();
+};
+
 const callDropshipApi = async (method, values, accessToken) => {
   requiredEnv();
   if (!/^aliexpress\.ds\.[a-z.]+$/.test(String(method || ''))) {
@@ -132,13 +142,13 @@ const callDropshipApi = async (method, values, accessToken) => {
     app_key: process.env.ALIEXPRESS_APP_KEY,
     method,
     timestamp: formatAliExpressTimestamp(),
-    sign_method: 'sha256',
+    sign_method: 'hmac',
     format: 'json',
     v: '2.0',
     session: accessToken,
     ...values,
   };
-  params.sign = signRequest(method, params);
+  params.sign = signTopRequest(params);
 
   const response = await fetch(DROPSHIP_API_BASE, {
     method: 'POST',
