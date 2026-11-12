@@ -9,12 +9,14 @@ const buildFulfillmentIdempotencyKey = (orderId, itemId) => {
   return String(orderId) + ':' + String(itemId);
 };
 
-const reconcilePaidAliExpressOrders = async ({ limit = 100 } = {}) => {
+const reconcilePaidAliExpressOrders = async ({ limit = 100, orderId = null } = {}) => {
   const safeLimit = Math.min(250, Math.max(1, Number(limit) || 100));
-  const orders = await Order.find({
+  const orderFilter = {
     paymentStatus: 'Paid',
     status: mongoose.trusted({ $ne: 'Cancelled' }),
-  })
+  };
+  if (orderId && mongoose.Types.ObjectId.isValid(String(orderId))) orderFilter._id = orderId;
+  const orders = await Order.find(orderFilter)
     .sort({ paidAt: 1, _id: 1 })
     .limit(safeLimit)
     .select('_id orderNumber items paymentStatus status')
