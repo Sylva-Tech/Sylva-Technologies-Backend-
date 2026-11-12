@@ -17,6 +17,7 @@ const uploadProductImage = require('../utils/uploadProductImage');
 const { sendSalesNotificationEmail } = require('../services/emailService');
 
 const router = express.Router();
+const { isTechCategory } = require('../utils/aliexpressTechCatalog');
 
 /*
  * Maximum number of product images allowed.
@@ -230,6 +231,7 @@ router.get('/', async (req, res) => {
       offer,
       inStock,
       condition,
+      source,
       sort,
       page = 1,
       limit = 12,
@@ -270,6 +272,20 @@ router.get('/', async (req, res) => {
       isActive: mongoose.trusted({ $ne: false }),
       approvalStatus: 'approved',
     };
+
+    // Source filtering keeps Sylva inventory, independent seller listings and
+    // AliExpress imports distinct while preserving visibility/approval rules.
+    if (source === 'seller') {
+      filter.seller = mongoose.trusted({ $ne: null });
+    } else if (source === 'sylva') {
+      filter.seller = null;
+      filter.source = mongoose.trusted({ $ne: 'aliexpress' });
+    } else if (source === 'aliexpress') {
+      filter.source = 'aliexpress';
+      filter.seller = null;
+    } else if (source && source !== 'all') {
+      return res.status(400).json({ success: false, message: 'Invalid product source filter.' });
+    }
 
     /*
      * Category filter.
@@ -899,6 +915,7 @@ router.post('/seller/import', protect, approvedSellerOnly, async (req, res) => {
           description: String(row.description || row.shortDescription || '').trim(),
           shortDescription: String(row.shortDescription || '').trim(),
           seller: req.user._id,
+          source: 'seller',
           price,
           oldPrice,
           discount: calculateDiscount(oldPrice, price),
@@ -1215,6 +1232,8 @@ router.post(
 
           seller:
             req.user._id,
+
+          source: 'seller',
 
           price:
             numericPrice,
@@ -2101,6 +2120,8 @@ router.put(
 
 router.get(
   '/:id',
+  protect,
+  adminOnly,
   async (req, res) => {
     try {
       const product =
@@ -2735,6 +2756,16 @@ if (
 
           product.category =
             categoryRecord._id;
+        }
+      }
+
+      if (product.source === 'aliexpress') {
+        const supplierCategory = await Category.findById(product.category).select('name').lean();
+        if (!supplierCategory || !isTechCategory(supplierCategory.name || '')) {
+          return res.status(400).json({ success: false, message: 'AliExpress products must remain in a technology category.' });
+        }
+        if (product.isActive && (!(Number(product.price) > 0) || !(Number(product.stock) > 0))) {
+          return res.status(400).json({ success: false, message: 'Before publishing an AliExpress product, set a verified KES retail price and confirmed available stock.' });
         }
       }
 
