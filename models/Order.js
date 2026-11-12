@@ -176,7 +176,6 @@ const orderSchema = new mongoose.Schema(
         maxlength: 100,
       },
 
- Stashed changes
       county: {
         type: String,
         trim: true,
@@ -215,7 +214,6 @@ const orderSchema = new mongoose.Schema(
   ],
   default: 'Cash on Delivery',
 },
- Stashed changes
 
     mpesaPhone: {
       type: String,
@@ -282,7 +280,6 @@ const orderSchema = new mongoose.Schema(
       default: '',
     },
 
- Stashed changes
     paymentStatus: {
       type: String,
       enum: [
