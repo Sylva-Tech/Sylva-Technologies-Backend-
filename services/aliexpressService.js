@@ -119,7 +119,7 @@ const extractRecommendedProducts = (payload) => {
 
 const callDropshipApi = async (method, values, accessToken) => {
   requiredEnv();
-  if (!/^aliexpress\\.ds\\.[a-z.]+$/.test(String(method || ''))) {
+  if (!/^aliexpress\.ds\.[a-z.]+$/.test(String(method || ''))) {
     throw new Error('Unsupported AliExpress Dropshipping API method.');
   }
   if (!accessToken) {
@@ -147,7 +147,7 @@ const callDropshipApi = async (method, values, accessToken) => {
     signal: AbortSignal.timeout(20000),
   });
   const payload = await response.json().catch(() => ({}));
-  const wrapperKey = `${method.replace(/\\./g, '_')}_response`;
+  const wrapperKey = `${method.replace(/\./g, '_')}_response`;
   const wrapper = payload?.[wrapperKey] || payload;
   const result = wrapper?.result || wrapper?.resp_result?.result || wrapper?.data?.result;
 
