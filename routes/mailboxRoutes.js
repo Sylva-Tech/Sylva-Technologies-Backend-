@@ -480,6 +480,25 @@ router.post('/send', protect, adminOnly, sendLimiter, async (req, res) => {
   }
 });
 
+router.patch('/:id/read-status', protect, adminOnly, async (req, res) => {
+  try {
+    if (typeof req.body?.isRead !== 'boolean') {
+      return res.status(400).json({ success: false, message: 'isRead must be true or false.' });
+    }
+    const message = await MailboxMessage.findByIdAndUpdate(
+      req.params.id,
+      { $set: { isRead: req.body.isRead } },
+      { new: true, runValidators: true }
+    );
+    if (!message) return res.status(404).json({ success: false, message: 'Message not found.' });
+    return res.json({ success: true, message: 'Message read status updated.', isRead: message.isRead });
+  } catch (error) {
+    if (error.name === 'CastError') return res.status(400).json({ success: false, message: 'Invalid message identifier.' });
+    console.error('Mailbox read status update failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to update message read status.' });
+  }
+});
+
 router.patch('/:id/folder', protect, adminOnly, async (req, res) => {
   try {
     const folder = String(req.body?.folder || '');
