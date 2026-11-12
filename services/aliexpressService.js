@@ -3,6 +3,22 @@ const crypto = require('crypto');
 const API_BASE = 'https://api-sg.aliexpress.com/rest';
 const AUTH_BASE = 'https://api-sg.aliexpress.com/oauth/authorize';
 
+const getDropshipApiConfig = () => ({
+  configured: Boolean(process.env.ALIEXPRESS_DS_APP_KEY && process.env.ALIEXPRESS_DS_APP_SECRET),
+  appKeyConfigured: Boolean(process.env.ALIEXPRESS_DS_APP_KEY),
+  appSecretConfigured: Boolean(process.env.ALIEXPRESS_DS_APP_SECRET),
+});
+
+const requiredDropshipEnv = () => {
+  const missing = ['ALIEXPRESS_DS_APP_KEY', 'ALIEXPRESS_DS_APP_SECRET'].filter((key) => !process.env[key]);
+  if (missing.length) {
+    const error = new Error(`AliExpress Dropshipping gateway credentials are missing: ${missing.join(', ')}. Configure the TOP/Dropshipping credentials separately from the IOP OAuth credentials.`);
+    error.code = 'ALIEXPRESS_DS_API_CREDENTIALS_MISSING';
+    error.status = 503;
+    throw error;
+  }
+};
+
 const requiredEnv = () => {
   const missing = ['ALIEXPRESS_APP_KEY', 'ALIEXPRESS_APP_SECRET', 'ALIEXPRESS_REDIRECT_URI']
     .filter((key) => !process.env[key]);
@@ -117,8 +133,7 @@ const extractRecommendedProducts = (payload) => {
   return [];
 };
 
-const signTopRequest = (params) => {
-  const secret = process.env.ALIEXPRESS_APP_SECRET;
+const signTopRequest = (params, secret = process.env.ALIEXPRESS_DS_APP_SECRET) => {
   const payload = Object.keys(params)
     .filter((key) => key !== 'sign')
     .sort()
@@ -128,7 +143,7 @@ const signTopRequest = (params) => {
 };
 
 const callDropshipApi = async (method, values, accessToken) => {
-  requiredEnv();
+  requiredDropshipEnv();
   if (!/^aliexpress\.ds\.[a-z.]+$/.test(String(method || ''))) {
     throw new Error('Unsupported AliExpress Dropshipping API method.');
   }
@@ -139,7 +154,7 @@ const callDropshipApi = async (method, values, accessToken) => {
   }
 
   const params = {
-    app_key: process.env.ALIEXPRESS_APP_KEY,
+    app_key: process.env.ALIEXPRESS_DS_APP_KEY,
     method,
     timestamp: formatAliExpressTimestamp(),
     sign_method: 'hmac',
@@ -148,7 +163,7 @@ const callDropshipApi = async (method, values, accessToken) => {
     session: accessToken,
     ...values,
   };
-  params.sign = signTopRequest(params);
+  params.sign = signTopRequest(params, process.env.ALIEXPRESS_DS_APP_SECRET);
 
   const response = await fetch(DROPSHIP_API_BASE, {
     method: 'POST',
@@ -164,9 +179,15 @@ const callDropshipApi = async (method, values, accessToken) => {
   if (!response.ok || payload?.error_response || wrapper?.error_response || !result) {
     const providerError = payload?.error_response || wrapper?.error_response;
     const reason = providerError?.sub_msg || providerError?.msg || wrapper?.rsp_msg || payload?.message;
-    const error = new Error(reason || 'AliExpress rejected the product catalogue request. Check the Dropshipping API permissions and account eligibility.');
-    error.code = providerError?.sub_code || 'ALIEXPRESS_CATALOG_API_ERROR';
-    error.status = response.status || 502;
+    const providerCode = String(providerError?.sub_code || providerError?.code || '');
+    const isUnknownAppKey = providerCode.toLowerCase() === 'isv.appkey-not-exists';
+    const error = new Error(isUnknownAppKey
+      ? 'AliExpress TOP gateway does not recognize the configured Dropshipping App Key. Confirm that ALIEXPRESS_DS_APP_KEY and ALIEXPRESS_DS_APP_SECRET belong to an application provisioned for the legacy Dropshipping/TOP API; IOP OAuth credentials are not assumed to be interchangeable.'
+      : (reason || 'AliExpress rejected the product catalogue request. Check the Dropshipping API permissions and account eligibility.'));
+    error.code = isUnknownAppKey ? 'ALIEXPRESS_DS_APP_KEY_NOT_REGISTERED' : (providerCode || 'ALIEXPRESS_CATALOG_API_ERROR');
+    error.providerCode = providerCode || null;
+    error.requestId = providerError?.request_id || providerError?.requestId || payload?.request_id || null;
+    error.status = isUnknownAppKey ? 502 : (response.status || 502);
     throw error;
   }
 
@@ -178,4 +199,4 @@ const fetchRecommendedFeed = async (values, accessToken) => {
   return { ...response, products: extractRecommendedProducts(response.raw) };
 };
 
-module.exports = { buildAuthorizationUrl, exchangeAuthorizationCode, refreshAccessToken, encryptSecret, decryptSecret, formatAliExpressTimestamp, extractRecommendedProducts, callDropshipApi, fetchRecommendedFeed };
+module.exports = { buildAuthorizationUrl, exchangeAuthorizationCode, refreshAccessToken, encryptSecret, decryptSecret, formatAliExpressTimestamp, extractRecommendedProducts, getDropshipApiConfig, requiredDropshipEnv, callDropshipApi, fetchRecommendedFeed };
