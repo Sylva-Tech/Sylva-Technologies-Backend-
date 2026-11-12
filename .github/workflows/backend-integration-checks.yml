@@ -29,3 +29,6 @@ jobs:
 
       - name: Load Express application and registered routers
         run: node -e "require('./app'); console.log('Express application loaded successfully')"
+
+      - name: Run backend unit tests
+        run: npm test
