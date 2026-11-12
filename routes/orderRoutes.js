@@ -199,8 +199,6 @@ const applySellerSettlement = async (order) => {
     const settlementReference = `order:${order.orderNumber}`;
     const sellerCountry = String(seller.sellerProfile?.country || 'KE').toUpperCase();
     if ((seller.wallet?.transactions || []).some((tx) => tx.reference === settlementReference)) continue;
-    const orderCurrency = String(order.currency || 'KES').toUpperCase();
-    const now = new Date();
 
     if (sellerCountry !== 'KE') {
       // Current checkout accepts KES payments. Never silently mix KES into a USD wallet:
@@ -277,13 +275,9 @@ const applySellerSettlement = async (order) => {
         updatedAt: now,
       });
       seller.wallet = wallet;
- ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     }
-    const orderCurrency = String(order.currency || 'KES').toUpperCase();
-    const now = new Date();
 
 
->>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     await seller.save();
 
     settledCount += 1;
@@ -354,7 +348,6 @@ const holdSellerProceedsInPlatformWallet = async (order) => {
       held += 1;
       continue;
     }
-    const now = new Date();
     const updated = await AdminWallet.findOneAndUpdate(
       {
         key: 'platform',
@@ -423,7 +416,6 @@ const releaseSellerProceedsFromPlatformWallet = async (order) => {
     if (!hold || hold.status !== 'pending') {
       throw new Error('Pending seller proceeds hold is missing for order ' + order.orderNumber + ', seller ' + seller.sellerId + '.');
     }
-    const now = new Date();
     const updated = await AdminWallet.findOneAndUpdate(
       {
         key: 'platform',
