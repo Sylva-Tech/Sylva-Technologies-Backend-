@@ -5,6 +5,7 @@ const Order = require('../models/Order');
 const User = require('../models/User');
 const Product = require('../models/Product');
 const AdminWallet = require('../models/AdminWallet');
+const { reconcilePaidAliExpressOrders } = require('../services/aliexpressFulfillmentService');
 const { getQuote: getShippingQuote } = require('./shippingRoutes');
 
 const {
@@ -745,6 +746,15 @@ const confirmPaidOrder = async (order, transaction) => {
     // Idempotently ensure seller proceeds are held even if a prior notification or
     // callback failed after payment was marked paid.
     await holdSellerProceedsInPlatformWallet(order);
+    // Queue AliExpress line items immediately after verified payment. This only
+    // creates idempotent fulfilment records; it never places supplier purchases.
+    try {
+      await reconcilePaidAliExpressOrders({ orderId: order._id, limit: 1 });
+    } catch (fulfillmentError) {
+      console.error('[AliExpress fulfilment] paid order queueing failed:', {
+        orderId: String(order._id), message: fulfillmentError.message,
+      });
+    }
     if (newlyConfirmed) await sendPaidOrderEmails(order);
   }
   return order;
