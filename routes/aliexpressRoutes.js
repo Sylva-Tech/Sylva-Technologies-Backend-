@@ -155,17 +155,16 @@ router.get('/callback', async (req, res) => {
 
   try {
     const stateHash = crypto.createHash('sha256').update(state).digest('hex');
-    // Read by the unique hash, then compare the Date in JavaScript. This avoids
-    // Mongoose casting the MongoDB $gt operator object as a Date in production.
-    const stateRecord = await AliExpressOAuthState.findOne({ stateHash });
+    // Atomically consume the state so concurrent/replayed callbacks cannot both
+    // exchange the same authorization code. Validate Date values in JS rather
+    // than passing a MongoDB operator object through Mongoose Date casting.
+    const stateRecord = await AliExpressOAuthState.findOneAndDelete({ stateHash });
     const stateExpiresAt = stateRecord?.expiresAt instanceof Date
       ? stateRecord.expiresAt.getTime()
       : Number.NaN;
     if (!stateRecord || !Number.isFinite(stateExpiresAt) || stateExpiresAt <= Date.now()) {
-      if (stateRecord) await AliExpressOAuthState.deleteOne({ _id: stateRecord._id });
       return res.status(400).send('This AliExpress authorization session is invalid or expired. Return to Sylva Admin and try again.');
     }
-    await AliExpressOAuthState.deleteOne({ _id: stateRecord._id });
 
     const token = await exchangeAuthorizationCode(code);
     await AliExpressConnection.findOneAndUpdate(
