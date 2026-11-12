@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { isBuyerPlatform, normalizeProduct } = require('../routes/aliexpressBuyerApiRoutes');
+const { getDropshipApiConfig, requiredDropshipEnv } = require('../services/aliexpressService');
 
 test('AliExpress buyer platform detection accepts buyerApp identifiers only', () => {
   assert.equal(isBuyerPlatform('buyerApp'), true);
@@ -38,4 +39,20 @@ test('AliExpress catalogue normalizer rejects non-HTTPS and untrusted image URLs
   });
   assert.equal(normalized.productUrl, '');
   assert.equal(normalized.imageUrl, '');
+});
+
+
+test('Dropshipping TOP credentials are configured independently from IOP OAuth credentials', () => {
+  const previousKey = process.env.ALIEXPRESS_DS_APP_KEY;
+  const previousSecret = process.env.ALIEXPRESS_DS_APP_SECRET;
+  delete process.env.ALIEXPRESS_DS_APP_KEY;
+  delete process.env.ALIEXPRESS_DS_APP_SECRET;
+  assert.deepEqual(getDropshipApiConfig(), { configured: false, appKeyConfigured: false, appSecretConfigured: false });
+  assert.throws(requiredDropshipEnv, (error) => error.code === 'ALIEXPRESS_DS_API_CREDENTIALS_MISSING' && error.status === 503);
+  process.env.ALIEXPRESS_DS_APP_KEY = 'test-top-key';
+  process.env.ALIEXPRESS_DS_APP_SECRET = 'test-top-secret';
+  assert.deepEqual(getDropshipApiConfig(), { configured: true, appKeyConfigured: true, appSecretConfigured: true });
+  assert.doesNotThrow(requiredDropshipEnv);
+  if (previousKey === undefined) delete process.env.ALIEXPRESS_DS_APP_KEY; else process.env.ALIEXPRESS_DS_APP_KEY = previousKey;
+  if (previousSecret === undefined) delete process.env.ALIEXPRESS_DS_APP_SECRET; else process.env.ALIEXPRESS_DS_APP_SECRET = previousSecret;
 });
