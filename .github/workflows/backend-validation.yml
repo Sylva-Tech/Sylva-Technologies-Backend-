@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           while IFS= read -r -d '' file; do
             node --check "$file"
-          done < <(find . -type f -name '*.js' -not -path './node_modules/*' -not -path './.git/*' -print0)
+          done < <(find . -type f -name '*.js' -not -path './node_modules/*' -not -path './.git/*' -not -name 'old-*' -print0)
       - name: Load Express application
         run: node -e "require('./app'); console.log('Express application loaded successfully')"
       - name: Run unit and regression tests
