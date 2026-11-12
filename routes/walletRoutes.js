@@ -7,7 +7,6 @@ const Order = require('../models/Order');
 const Product = require('../models/Product');
 const AdminWallet = require('../models/AdminWallet');
 const { sendMail } = require('../services/emailService');
- Stashed changes
 
 const {
   protect,
@@ -1186,7 +1185,6 @@ router.get(
         ],
       })
           .select('name email phone role sellerProfile wallet usdWallet')
- Stashed changes
           .lean();
 
       const pendingPayouts =
