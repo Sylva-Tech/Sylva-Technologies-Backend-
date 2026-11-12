@@ -11,7 +11,6 @@ const { getQuote: getShippingQuote } = require('./shippingRoutes');
 
 const {
 
- Stashed changes
   protect,
   adminOnly,
   requireVerified,
@@ -285,7 +284,6 @@ const applySellerSettlement = async (order) => {
     const orderCurrency = String(order.currency || 'KES').toUpperCase();
     const now = new Date();
 
- Stashed changes
 
 >>>>>>> ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
     await seller.save();
@@ -770,7 +768,6 @@ const restoreOrderStock = async (order) => {
   }
 };
 
- Stashed changes
 /*
 |--------------------------------------------------------------------------
 | GET ALL ORDERS - ADMIN
@@ -907,7 +904,6 @@ router.get('/:id/delivery-evidence', protect, async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
- Stashed changes
 | GET MY ORDERS - CUSTOMER
 |--------------------------------------------------------------------------
 */
@@ -1672,7 +1668,6 @@ const createOrderFromRequest = async ({
       });
     }
 
- Stashed changes
     if (!customerDetails?.fullName) {
       return res.status(400).json({
         success: false,
@@ -2331,7 +2326,6 @@ if (paymentMethod === 'PayPal') {
     if (paymentMethod === 'Wallet' && populatedOrder.paymentStatus === 'Paid') {
       await sendPaidOrderEmails(populatedOrder);
     }
- Stashed changes
 
     /*
     |--------------------------------------------------------------------------
@@ -2351,7 +2345,6 @@ if (paymentMethod === 'PayPal') {
   mpesaPayment,
 });
 
- Stashed changes
   } catch (error) {
     console.error(
       'Create order error:',
@@ -2792,7 +2785,6 @@ router.post('/:id/cancel', protect, async (req, res) => {
   }
 });
 
- Stashed changes
 /*
 |--------------------------------------------------------------------------
 | UPDATE ORDER STATUS - ADMIN
@@ -2863,7 +2855,6 @@ router.patch(
       }
 
       if (
- Stashed changes
         previousStatus === status
       ) {
         const unchangedOrder =
@@ -3075,7 +3066,6 @@ router.patch(
         });
       }
 
- Stashed changes
       const isFirstPaymentConfirmation =
         paymentStatus === 'Paid' &&
         order.paymentStatus !== 'Paid';
