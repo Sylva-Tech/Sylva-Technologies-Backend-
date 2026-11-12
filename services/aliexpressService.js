@@ -50,7 +50,7 @@ const callDropshipApi = async (method, values, accessToken) => {
   if (hasError) {
     const message = error.msg || error.message || error.sub_msg || 'AliExpress Dropshipping API request failed.';
     const failure = new Error(String(message).slice(0, 240));
-    failure.status = response.status || 502;
+    failure.status = response.ok ? 502 : response.status;
     failure.code = String(errorCode || 'ALIEXPRESS_API_ERROR');
     throw failure;
   }
@@ -108,7 +108,7 @@ const callTokenApi = async (apiPath, values) => {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || (payload.code && String(payload.code) !== '0') || payload.error_response) {
     const error = new Error(payload.message || payload.error_message || 'AliExpress token request failed.');
-    error.status = response.status || 502;
+    error.status = response.ok ? 502 : response.status;
     throw error;
   }
   const data = payload.data || payload;
