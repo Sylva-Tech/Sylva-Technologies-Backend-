@@ -22,6 +22,7 @@ The integration currently calls the documented Dropshipper recommendation-feed m
 - Required feed field: `feed_name`
 - Other feed inputs: `country`, `target_currency`, `target_language`, `page_size`, `page_no`, and optional `category_id`
 - Maximum page size: 50
+- TOP request signature: `sign_method=hmac` (HMAC-MD5), with all request parameters sorted and concatenated as specified by the TOP signature guide.
 - Response products are upserted into `AliExpressCatalogProduct`, keyed by the AliExpress product ID.
 
 The default feed name is `DS bestseller`; it is a documented example, not a guarantee that every application has permission to use that feed.
@@ -41,4 +42,5 @@ Official references:
 - Seller OAuth flow: https://developer.alibaba.com/docs/doc.htm?articleId=120687&docType=1&treeId=727
 - API permission groups: https://developer.alibaba.com/docs/doc.htm?articleId=120676&docType=1&treeId=727
 - Dropshipping recommendation feed API: https://developer.alibaba.com/docs/api.htm?apiId=60366
+- TOP signature algorithm: https://developer.alibaba.com/docs/doc.htm?articleId=122464&docType=1&treeId=846
 - Dropshipping integration guide (marked deprecated): https://developer.alibaba.com/docs/doc.htm?articleId=120418&docType=1&treeId=762
