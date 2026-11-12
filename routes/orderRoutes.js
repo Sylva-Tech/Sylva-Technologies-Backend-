@@ -1,8 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const axios = require('axios');
-
-const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Product = require('../models/Product');
