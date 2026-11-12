@@ -10,7 +10,7 @@ const replySchema = new mongoose.Schema({
 const schema = new mongoose.Schema({
   providerMessageId: { type: String, default: undefined },
   source: { type: String, enum: ['email', 'website'], default: 'email', index: true },
-  folder: { type: String, enum: ['inbox', 'archive', 'trash'], default: 'inbox', index: true },
+  folder: { type: String, enum: ['inbox', 'archive', 'spam', 'trash'], default: 'inbox', index: true },
   from: { type: String, required: true, trim: true, lowercase: true, index: true },
   to: [{ type: String, trim: true, lowercase: true }],
   name: { type: String, default: '', trim: true },
