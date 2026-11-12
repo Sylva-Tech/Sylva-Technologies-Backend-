@@ -1,0 +1,27 @@
+name: Backend integration checks
+
+on:
+  push:
+    branches: [main, "integration/**"]
+  pull_request:
+
+jobs:
+  backend-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find . -type f -name '*.js' -not -path './node_modules/*' -not -path './.git/*' -print0)
