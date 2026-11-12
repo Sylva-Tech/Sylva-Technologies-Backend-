@@ -9,7 +9,7 @@
     "seed": "node scripts/seed.js",
     "restore:sample": "node scripts/restoreSampleProducts.js",
     "seed:admin": "node scripts/seedAdmin.js",
-    "test": "echo \"No tests configured yet\""
+    "test": "node --test"
   },
   "keywords": [
     "express",
@@ -33,7 +33,9 @@
     "mongoose-sequence": "^6.0.1",
     "multer": "^2.4.0",
     "nodemailer": "^10.0.10",
-    "resend": "^6.31.0"
+    "resend": "^6.31.0",
+    "axios": "^1.20.0",
+    "mailparser": "^3.14.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
