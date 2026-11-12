@@ -67,13 +67,14 @@ test('AliExpress feed request is signed and uses the connected account token', a
     assert.equal(captured.url, 'https://eco.taobao.com/router/rest');
     const params = Object.fromEntries(new URLSearchParams(captured.body));
     assert.equal(params.method, 'aliexpress.ds.recommend.feed.get');
+    assert.equal(params.sign_method, 'hmac');
     assert.equal(params.session, 'unit-test-access-token');
     assert.match(params.timestamp, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
     const suppliedSign = params.sign;
     delete params.sign;
     const payload = Object.keys(params).sort().map((key) => key + params[key]).join('');
-    const expectedSign = crypto.createHmac('sha256', appSecret)
-      .update('aliexpress.ds.recommend.feed.get' + payload, 'utf8')
+    const expectedSign = crypto.createHmac('md5', appSecret)
+      .update(payload, 'utf8')
       .digest('hex')
       .toUpperCase();
     assert.equal(suppliedSign, expectedSign);
