@@ -35,6 +35,8 @@ The admin endpoint is `POST /api/aliexpress/catalog/sync`. The review list is `G
 
 OAuth connection alone does not prove that catalogue APIs are enabled. The AliExpress Open Platform documentation says API permission groups must be Active or separately requested. The Dropshipping documentation also states that Dropshipping APIs are limited to accounts enrolled in the Dropshipping Center.
 
+The existing connection flow in this repository is the newer Seller Center OAuth flow (`account_platform: seller_center`). The legacy AE-Dropshipper feed method uses a Dropshipper buyer-account session. Do not pass the Seller Center token to that legacy method. The catalogue endpoint is therefore intentionally disabled (HTTP 409) until the AliExpress app type, buyer authorization flow, and active DS API permission are confirmed. A separate DS authorization flow must be implemented if the application is a Dropshipping app.
+
 The published Dropshipping integration guide is marked deprecated. Before relying on live product sync, verify in the AliExpress application console that the app has an active permission for `aliexpress.ds.recommend.feed.get` and that the authorising account is eligible for the Dropshipping Center. If AliExpress rejects the method, the admin page displays the provider error; do not work around this with undocumented scraping or a different account's credentials.
 
 Official references:
