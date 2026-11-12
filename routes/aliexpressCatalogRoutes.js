@@ -5,7 +5,7 @@ const AliExpressConnection = require('../models/AliExpressConnection');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
 const { callDropshipApi, decryptSecret, encryptSecret, refreshAccessToken } = require('../services/aliexpressService');
-const { isTechProduct } = require('../utils/aliexpressTechCatalog');
+const { isTechProduct, isTechCategory } = require('../utils/aliexpressTechCatalog');
 
 const router = express.Router();
 router.use(protect, adminOnly);
@@ -176,7 +176,7 @@ router.post('/import', async (req, res) => {
     if (existing) return res.status(409).json({ success: false, message: 'This AliExpress product has already been imported into Sylva.', data: { productId: existing._id, name: existing.name, isActive: existing.isActive } });
 
     const category = await Category.findOne({ _id: categoryId, isActive: mongoose.trusted({ $ne: false }) }).lean();
-    if (!category || !isTechProduct(category.name)) {
+    if (!category || !isTechCategory(category.name)) {
       return res.status(400).json({ success: false, message: 'AliExpress imports can only be assigned to an active technology category in Sylva.' });
     }
 
