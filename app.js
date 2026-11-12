@@ -18,10 +18,12 @@ const adminRoutes = require('./routes/adminRoutes');
 const walletRoutes = require('./routes/walletRoutes');
 const sponsorshipRoutes = require('./routes/sponsorshipRoutes');
 const adminWalletRoutes = require('./routes/adminWalletRoutes');
- Stashed changes
 const sellerManagementRoutes = require('./routes/sellerManagementRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const shippingRoutes = require('./routes/shippingRoutes');
+const mailboxRoutes = require('./routes/mailboxRoutes');
+const supportInboxRoutes = require('./routes/supportInboxRoutes');
+const aliexpressRoutes = require('./routes/aliexpressRoutes');
 const {
   cloudflareOriginGuard,
   financialRateLimit,
@@ -219,7 +221,6 @@ app.use(
         req.rawBody = Buffer.from(buffer);
       }
     },
- Stashed changes
   })
 );
 
@@ -405,7 +406,6 @@ app.use('/api/sponsorship', sponsorshipRoutes);
 
 app.use('/api/admin-wallet', adminWalletRoutes);
 
- Stashed changes
 app.use(
   '/api/seller-management',
   sellerManagementRoutes
@@ -414,6 +414,13 @@ app.use(
   '/api/notifications',
   notificationRoutes
 );
+
+// Administrative mail endpoints. Both routers enforce protect + adminOnly internally.
+app.use('/api/mailbox', mailboxRoutes);
+app.use('/api/support-inbox', supportInboxRoutes);
+
+// AliExpress OAuth and supplier connection endpoints.
+app.use('/api/aliexpress', aliexpressRoutes);
 
 /*
 |--------------------------------------------------------------------------
