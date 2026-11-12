@@ -9,7 +9,7 @@ const { callDropshipApi, decryptSecret, encryptSecret, refreshAccessToken } = re
 const router = express.Router();
 router.use(protect, adminOnly);
 
-const TECH_TERMS = /\b(laptop|notebook|desktop|computer|pc|macbook|chromebook|smartphone|iphone|android|mobile phone|tablet|ipad|router|modem|switch|network|wifi|wi-fi|ethernet|server|nas|ssd|hdd|hard drive|flash drive|usb|memory card|ram|memory|motherboard|processor|cpu|gpu|graphics card|monitor|display|projector|printer|scanner|keyboard|mouse|webcam|headset|headphone|earbud|speaker|microphone|soundbar|camera|cctv|security camera|surveillance|power bank|charger|charging cable|adapter|hub|dock|computer case|pc case|cooling fan|ups|uninterruptible power|smartwatch|wearable|electronics|electronic accessory|gaming console|game controller|joystick|graphics tablet|drawing tablet)\b/i;
+const TECH_TERMS = /\b(laptop|notebook|desktop|computer|pc|macbook|mac|chromebook|smartphone|iphone|android|mobile phone|tablet|ipad|router|modem|switch|network|wifi|wi-fi|ethernet|server|nas|ssd|hdd|hard drive|flash drive|usb|memory card|ram|memory|motherboard|processor|cpu|gpu|graphics card|monitor|display|projector|printer|scanner|keyboard|mouse|webcam|headset|headphone|earphone|earbud|speaker|microphone|soundbar|camera|cctv|security camera|surveillance|power bank|charger|charging cable|adapter|hub|dock|computer case|pc case|cooling fan|ups|uninterruptible power|smartwatch|smart watch|wearable|television|tv|electronics|electronic accessory|gaming console|game controller|joystick|graphics tablet|drawing tablet)\b/i;
 const NON_TECH_TERMS = /\b(dress|clothing|fashion|jewelry|jewellery|cosmetic|makeup|skincare|perfume|sofa|furniture|curtain|bedding|kitchenware|cookware|toy|doll|pet food|dog clothes|cat clothes|garden tool|plant pot|carpet|rug|wall art|wedding decor)\b/i;
 
 const isTechProduct = (value) => TECH_TERMS.test(String(value || '')) && !NON_TECH_TERMS.test(String(value || ''));
@@ -200,7 +200,7 @@ router.post('/import', async (req, res) => {
     if (!Number.isFinite(supplierPrice) || supplierPrice <= 0) {
       return res.status(422).json({ success: false, message: 'AliExpress did not return a usable supplier price. Product was not imported.' });
     }
-    const currency = String(findValue(detail, ['target_sale_price_currency', 'currency', 'target_currency']) || 'USD').toUpperCase();
+    const currency = String(findValue(payload, ['target_sale_price_currency', 'currency', 'target_currency']) || 'USD').toUpperCase();
     if (currency !== 'USD') return res.status(422).json({ success: false, message: 'AliExpress returned an unexpected supplier currency. Product was not imported.' });
 
     const imageValue = findValue(payload, ['product_main_image_url', 'itemMainPic', 'main_image_url', 'image_url']);
