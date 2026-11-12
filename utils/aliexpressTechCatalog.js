@@ -2,7 +2,7 @@ const TECH_TERMS = /\b(laptops?|notebooks?|desktops?|computers?|pcs?|macbooks?|m
 
 const NON_TECH_TERMS = /\b(dress|clothing|fashion|jewelry|jewellery|cosmetic|makeup|skincare|perfume|sofa|furniture|curtain|bedding|kitchenware|cookware|toy|doll|pet food|dog clothes|cat clothes|garden tool|plant pot|carpet|rug|wall art|wedding decor)\b/i;
 
-const TECH_CATEGORY_TERMS = /\b(computer|laptop|desktop|phone|mobile|tablet|network|electronic|printer|monitor|storage|camera|audio|gaming|smart|security|power|protection|ups|office equipment)\b/i;
+const TECH_CATEGORY_TERMS = /\b(computers?|laptops?|desktops?|phones?|mobiles?|tablets?|networks?|electronics?|printers?|monitors?|storage|cameras?|audio|gaming|smart|security|power|protection|ups|office equipment)\b/i;
 
 const isTechProduct = (value) => TECH_TERMS.test(String(value || '')) && !NON_TECH_TERMS.test(String(value || ''));
 const isTechCategory = (value) => TECH_CATEGORY_TERMS.test(String(value || ''));
