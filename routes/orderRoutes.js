@@ -199,6 +199,8 @@ const applySellerSettlement = async (order) => {
     const settlementReference = `order:${order.orderNumber}`;
     const sellerCountry = String(seller.sellerProfile?.country || 'KE').toUpperCase();
     if ((seller.wallet?.transactions || []).some((tx) => tx.reference === settlementReference)) continue;
+    const orderCurrency = String(order.currency || 'KES').toUpperCase();
+    const now = new Date();
 
     if (sellerCountry !== 'KE') {
       // Current checkout accepts KES payments. Never silently mix KES into a USD wallet:
