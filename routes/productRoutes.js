@@ -17,8 +17,7 @@ const uploadProductImage = require('../utils/uploadProductImage');
 const { sendSalesNotificationEmail } = require('../services/emailService');
 
 const router = express.Router();
-
-const ALIEXPRESS_TECH_CATEGORY = /\b(computer|laptop|desktop|phone|mobile|tablet|network|electronic|printer|monitor|storage|camera|audio|gaming|smart|security|power|protection|ups|office equipment)\b/i;
+const { isTechCategory } = require('../utils/aliexpressTechCatalog');
 
 /*
  * Maximum number of product images allowed.
@@ -2762,7 +2761,7 @@ if (
 
       if (product.source === 'aliexpress') {
         const supplierCategory = await Category.findById(product.category).select('name').lean();
-        if (!supplierCategory || !ALIEXPRESS_TECH_CATEGORY.test(supplierCategory.name || '')) {
+        if (!supplierCategory || !isTechCategory(supplierCategory.name || '')) {
           return res.status(400).json({ success: false, message: 'AliExpress products must remain in a technology category.' });
         }
         if (product.isActive && (!(Number(product.price) > 0) || !(Number(product.stock) > 0))) {
