@@ -23,5 +23,6 @@ jobs:
         run: |
           set -euo pipefail
           while IFS= read -r -d '' file; do
+            echo "Checking $file"
             node --check "$file"
           done < <(find . -type f -name '*.js' -not -path './node_modules/*' -not -path './.git/*' -not -name 'old-*' -print0)
