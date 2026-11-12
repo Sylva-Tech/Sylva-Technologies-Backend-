@@ -37,7 +37,7 @@ const callTokenApi = async (apiPath, values) => {
   requiredEnv();
   const params = {
     app_key: process.env.ALIEXPRESS_APP_KEY,
-    timestamp: new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14),
+    timestamp: String(Date.now()),
     sign_method: 'sha256',
     ...values,
   };
