@@ -4,6 +4,7 @@ const rateLimit = require('express-rate-limit');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const AliExpressConnection = require('../models/AliExpressConnection');
 const AliExpressOAuthState = require('../models/AliExpressOAuthState');
+const { isAliExpressOAuthStateValid } = require('../services/aliexpressOAuthState');
 const AliExpressCatalogProduct = require('../models/AliExpressCatalogProduct');
 const {
   buildAuthorizationUrl,
@@ -159,10 +160,7 @@ router.get('/callback', async (req, res) => {
     // exchange the same authorization code. Validate Date values in JS rather
     // than passing a MongoDB operator object through Mongoose Date casting.
     const stateRecord = await AliExpressOAuthState.findOneAndDelete({ stateHash });
-    const stateExpiresAt = stateRecord?.expiresAt instanceof Date
-      ? stateRecord.expiresAt.getTime()
-      : Number.NaN;
-    if (!stateRecord || !Number.isFinite(stateExpiresAt) || stateExpiresAt <= Date.now()) {
+    if (!stateRecord || !isAliExpressOAuthStateValid(stateRecord.expiresAt)) {
       return res.status(400).send('This AliExpress authorization session is invalid or expired. Return to Sylva Admin and try again.');
     }
 
