@@ -119,8 +119,8 @@ router.get('/status', protect, adminOnly, async (req, res) => {
         accessTokenExpiresAt: connection?.accessTokenExpiresAt || null,
         lastError: connection?.lastError || '',
         supplierOrderingEnabled: false,
-        catalogSyncEnabled: connection?.status === 'connected',
-        catalogSyncReason: 'Supplier feed sync requires the AliExpress Dropshipping API permission group and an account enrolled in the Dropshipping Center. The first sync verifies live access.',
+        catalogSyncEnabled: false,
+        catalogSyncReason: 'The saved connection uses Seller Center OAuth. The legacy Dropshipping feed API requires a Dropshipper buyer-account session and Dropshipping Center enrollment. Live sync stays disabled until the app type and correct authorization flow are verified.',
       },
     });
   } catch (error) {
@@ -244,6 +244,11 @@ router.get('/catalog/products', protect, adminOnly, async (req, res) => {
 
 router.post('/catalog/sync', protect, adminOnly, connectLimiter, async (req, res) => {
   try {
+    return res.status(409).json({
+      success: false,
+      code: 'ALIEXPRESS_DS_AUTH_FLOW_NOT_VERIFIED',
+      message: 'Supplier feed sync is intentionally disabled. This connection is Seller Center OAuth, while the legacy Dropshipping feed API requires a Dropshipper buyer-account session and Dropshipping Center enrollment. Confirm the AliExpress app type and active DS permissions before enabling a separate authorization flow.',
+    });
     const feedName = String(req.body?.feedName || 'DS bestseller').trim().slice(0, 100);
     const country = String(req.body?.country || 'KE').trim().toUpperCase();
     const targetCurrency = String(req.body?.targetCurrency || 'USD').trim().toUpperCase();
