@@ -44,7 +44,7 @@ const productSchema = new mongoose.Schema(
       index: true,
     },
 
-    aliexpressProductId: { type: String, default: '', trim: true },
+    aliexpressProductId: { type: String, trim: true },
     aliexpressProductUrl: { type: String, default: '', trim: true },
     aliexpressSupplierPrice: { type: Number, default: 0, min: 0 },
     aliexpressSupplierCurrency: { type: String, default: 'USD', trim: true },
