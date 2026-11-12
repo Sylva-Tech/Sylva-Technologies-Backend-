@@ -84,4 +84,88 @@ const decryptSecret = (value) => {
   return Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]).toString('utf8');
 };
 
-module.exports = { buildAuthorizationUrl, exchangeAuthorizationCode, refreshAccessToken, encryptSecret, decryptSecret };
+
+const formatAliExpressTimestamp = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day} ${value.hour}:${value.minute}:${value.second}`;
+};
+
+// The Dropshipper product APIs use the TOP-compatible router documented by
+// AliExpress. The OAuth exchange above remains on the api-sg /rest endpoint.
+const DROPSHIP_API_BASE = 'https://eco.taobao.com/router/rest';
+
+const extractRecommendedProducts = (payload) => {
+  const wrapper = payload?.aliexpress_ds_recommend_feed_get_response || payload;
+  const result = wrapper?.result || wrapper?.resp_result?.result || wrapper?.data?.result;
+  const collection = result?.products;
+  if (Array.isArray(collection)) return collection;
+  if (Array.isArray(collection?.integer)) return collection.integer;
+  if (Array.isArray(collection?.product)) return collection.product;
+  if (collection && typeof collection === 'object') {
+    return Object.values(collection).flatMap((value) => Array.isArray(value) ? value : value && typeof value === 'object' ? [value] : []);
+  }
+  return [];
+};
+
+const callDropshipApi = async (method, values, accessToken) => {
+  requiredEnv();
+  if (!/^aliexpress\\.ds\\.[a-z.]+$/.test(String(method || ''))) {
+    throw new Error('Unsupported AliExpress Dropshipping API method.');
+  }
+  if (!accessToken) {
+    const error = new Error('AliExpress authorization is missing. Re-authorize the connected account.');
+    error.code = 'ALIEXPRESS_TOKEN_MISSING';
+    throw error;
+  }
+
+  const params = {
+    app_key: process.env.ALIEXPRESS_APP_KEY,
+    method,
+    timestamp: formatAliExpressTimestamp(),
+    sign_method: 'sha256',
+    format: 'json',
+    v: '2.0',
+    session: accessToken,
+    ...values,
+  };
+  params.sign = signRequest(method, params);
+
+  const response = await fetch(DROPSHIP_API_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8', Accept: 'application/json' },
+    body: new URLSearchParams(params),
+    signal: AbortSignal.timeout(20000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  const wrapperKey = `${method.replace(/\\./g, '_')}_response`;
+  const wrapper = payload?.[wrapperKey] || payload;
+  const result = wrapper?.result || wrapper?.resp_result?.result || wrapper?.data?.result;
+
+  if (!response.ok || payload?.error_response || wrapper?.error_response || !result) {
+    const providerError = payload?.error_response || wrapper?.error_response;
+    const reason = providerError?.sub_msg || providerError?.msg || wrapper?.rsp_msg || payload?.message;
+    const error = new Error(reason || 'AliExpress rejected the product catalogue request. Check the Dropshipping API permissions and account eligibility.');
+    error.code = providerError?.sub_code || 'ALIEXPRESS_CATALOG_API_ERROR';
+    error.status = response.status || 502;
+    throw error;
+  }
+
+  return { result, raw: payload };
+};
+
+const fetchRecommendedFeed = async (values, accessToken) => {
+  const response = await callDropshipApi('aliexpress.ds.recommend.feed.get', values, accessToken);
+  return { ...response, products: extractRecommendedProducts(response.raw) };
+};
+
+module.exports = { buildAuthorizationUrl, exchangeAuthorizationCode, refreshAccessToken, encryptSecret, decryptSecret, formatAliExpressTimestamp, extractRecommendedProducts, callDropshipApi, fetchRecommendedFeed };
