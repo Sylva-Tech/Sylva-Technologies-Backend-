@@ -914,6 +914,7 @@ router.post('/seller/import', protect, approvedSellerOnly, async (req, res) => {
           description: String(row.description || row.shortDescription || '').trim(),
           shortDescription: String(row.shortDescription || '').trim(),
           seller: req.user._id,
+          source: 'seller',
           price,
           oldPrice,
           discount: calculateDiscount(oldPrice, price),
@@ -1230,6 +1231,8 @@ router.post(
 
           seller:
             req.user._id,
+
+          source: 'seller',
 
           price:
             numericPrice,
