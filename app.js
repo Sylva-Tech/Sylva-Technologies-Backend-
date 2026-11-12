@@ -22,6 +22,9 @@ const adminWalletRoutes = require('./routes/adminWalletRoutes');
 const sellerManagementRoutes = require('./routes/sellerManagementRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const shippingRoutes = require('./routes/shippingRoutes');
+const mailboxRoutes = require('./routes/mailboxRoutes');
+const supportInboxRoutes = require('./routes/supportInboxRoutes');
+const aliexpressRoutes = require('./routes/aliexpressRoutes');
 const {
   cloudflareOriginGuard,
   financialRateLimit,
@@ -414,6 +417,13 @@ app.use(
   '/api/notifications',
   notificationRoutes
 );
+
+// Administrative mail endpoints. Both routers enforce protect + adminOnly internally.
+app.use('/api/mailbox', mailboxRoutes);
+app.use('/api/support-inbox', supportInboxRoutes);
+
+// AliExpress OAuth and supplier connection endpoints.
+app.use('/api/aliexpress', aliexpressRoutes);
 
 /*
 |--------------------------------------------------------------------------
