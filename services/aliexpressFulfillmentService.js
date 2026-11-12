@@ -1,13 +1,19 @@
+const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const AliExpressCatalogProduct = require('../models/AliExpressCatalogProduct');
 const AliExpressFulfillment = require('../models/AliExpressFulfillment');
 
+const buildFulfillmentIdempotencyKey = (orderId, itemId) => {
+  if (!orderId || !itemId) throw new Error('Order and order item identifiers are required.');
+  return String(orderId) + ':' + String(itemId);
+};
+
 const reconcilePaidAliExpressOrders = async ({ limit = 100 } = {}) => {
   const safeLimit = Math.min(250, Math.max(1, Number(limit) || 100));
   const orders = await Order.find({
     paymentStatus: 'Paid',
-    status: { $ne: 'Cancelled' },
+    status: mongoose.trusted({ $ne: 'Cancelled' }),
   })
     .sort({ paidAt: 1, _id: 1 })
     .limit(safeLimit)
@@ -19,7 +25,7 @@ const reconcilePaidAliExpressOrders = async ({ limit = 100 } = {}) => {
   ))];
   if (!productIds.length) return { scannedOrders: orders.length, queued: 0, existing: 0 };
 
-  const products = await Product.find({ _id: { $in: productIds } })
+  const products = await Product.find({ _id: mongoose.trusted({ $in: productIds }) })
     .select('_id source seller')
     .lean();
   const eligibleProductIds = products
@@ -28,7 +34,7 @@ const reconcilePaidAliExpressOrders = async ({ limit = 100 } = {}) => {
 
   if (!eligibleProductIds.length) return { scannedOrders: orders.length, queued: 0, existing: 0 };
 
-  const catalog = await AliExpressCatalogProduct.find({ importedProduct: { $in: eligibleProductIds } })
+  const catalog = await AliExpressCatalogProduct.find({ importedProduct: mongoose.trusted({ $in: eligibleProductIds }) })
     .select('_id importedProduct providerProductId supplierPrice supplierCurrency')
     .lean();
   const catalogByProduct = new Map(catalog.map((item) => [String(item.importedProduct), item]));
@@ -40,7 +46,7 @@ const reconcilePaidAliExpressOrders = async ({ limit = 100 } = {}) => {
       const productId = String(item.product || '');
       const supplier = catalogByProduct.get(productId);
       if (!supplier) continue;
-      const idempotencyKey = String(order._id) + ':' + String(item._id);
+      const idempotencyKey = buildFulfillmentIdempotencyKey(order._id, item._id);
       try {
         await AliExpressFulfillment.create({
           idempotencyKey,
@@ -69,4 +75,4 @@ const reconcilePaidAliExpressOrders = async ({ limit = 100 } = {}) => {
   return { scannedOrders: orders.length, queued, existing };
 };
 
-module.exports = { reconcilePaidAliExpressOrders };
+module.exports = { buildFulfillmentIdempotencyKey, reconcilePaidAliExpressOrders };
