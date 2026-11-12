@@ -23,7 +23,7 @@ const escapeHtml = (s = '') => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;'
 
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
-    const allowedFolders = ['inbox', 'archive', 'trash'];
+    const allowedFolders = ['inbox', 'archive', 'spam', 'trash'];
     const folder = allowedFolders.includes(req.query.folder) ? req.query.folder : 'inbox';
     const folderQuery = folder === 'inbox'
       ? { $or: [{ folder: 'inbox' }, { folder: mongoose.trusted({ $exists: false }) }] }
@@ -40,7 +40,7 @@ router.patch('/:id/folder', protect, adminOnly, async (req, res) => {
   try {
     const folder = String(req.body?.folder || '');
     if (!['inbox', 'archive', 'trash'].includes(folder)) {
-      return res.status(400).json({ success: false, message: 'Choose Inbox, Archive, or Trash.' });
+      return res.status(400).json({ success: false, message: 'Choose Inbox, Archive, Spam, or Trash.' });
     }
     const message = await SupportMessage.findByIdAndUpdate(
       req.params.id,
