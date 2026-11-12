@@ -12,7 +12,6 @@ const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
 const cloudinary = require('../config/cloudinary');
 const { checkPinById } = require('../services/kraPinCheckerService');
 const { protect } = require('../middleware/authMiddleware');
- Stashed changes
 
 const {
   sendVerificationCodeAndLinkEmail,
