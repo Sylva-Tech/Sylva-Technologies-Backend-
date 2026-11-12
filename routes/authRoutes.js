@@ -12,7 +12,6 @@ const uploadBufferToCloudinary = require('../utils/uploadToCloudinary');
 const cloudinary = require('../config/cloudinary');
 const { checkPinById } = require('../services/kraPinCheckerService');
 const { protect } = require('../middleware/authMiddleware');
- Stashed changes
 
 const {
   sendVerificationCodeAndLinkEmail,
@@ -395,7 +394,6 @@ router.post(
       }
       if (!idFront || !idBack || !taxDocumentFile) {
         return res.status(400).json({ success: false, message: 'Upload the front and back of your ID and your country-issued tax document.' });
- ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
       }
 
       const existingUser = await User.findOne({ email });
@@ -443,7 +441,6 @@ router.post(
           mpesaPhone: phone,
           kraPin: country === 'KE' ? taxIdentifier : '',
           taxIdentifier,
- ea9c2fef04fd18b460cbcb05949c34ae5be45a1b
           taxDocument: taxUpload.public_id,
           kraPinDocument: taxUpload.public_id,
           applicationDate: now,

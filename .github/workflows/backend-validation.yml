@@ -1,0 +1,43 @@
+name: Backend validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "integration/**"
+
+permissions:
+  contents: read
+
+jobs:
+  backend-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find . -type f -name '*.js' -not -path './node_modules/*' -not -path './.git/*' -not -name 'old-*' -print0)
+      - name: Load Express application
+        run: node -e "require('./app'); console.log('Express application loaded successfully')"
+      - name: Run unit and regression tests
+        run: npm test
+      - name: Report production dependency audit
+        shell: bash
+        run: |
+          npm audit --omit=dev --json > npm-audit-production.json || true
+          node -e "const r=require('./npm-audit-production.json'); const v=r.metadata?.vulnerabilities || {}; console.log('Production dependency vulnerabilities:', JSON.stringify(v)); for (const [name, item] of Object.entries(r.vulnerabilities || {})) console.log(name + ': ' + item.severity + ', direct=' + item.isDirect + ', range=' + item.range + ', fix=' + JSON.stringify(item.fixAvailable)); if ((v.total || 0) > 0) process.exit(1);"
+          npm audit --json > npm-audit-all.json || true
+          node -e "const r=require('./npm-audit-all.json'); console.log('All dependency vulnerabilities:', JSON.stringify(r.metadata?.vulnerabilities || {})); for (const [name, item] of Object.entries(r.vulnerabilities || {})) console.log(name + ': ' + item.severity + ', direct=' + item.isDirect + ', range=' + item.range + ', fix=' + JSON.stringify(item.fixAvailable));"

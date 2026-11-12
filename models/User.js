@@ -118,7 +118,6 @@ const userSchema = new mongoose.Schema(
       },
     ],
 
- Stashed changes
     address: {
       type: String,
       default: '',
