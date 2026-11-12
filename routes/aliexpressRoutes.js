@@ -36,8 +36,8 @@ router.get('/status', protect, adminOnly, async (req, res) => {
         accessTokenExpiresAt: connection?.accessTokenExpiresAt || null,
         lastError: connection?.lastError || '',
         supplierOrderingEnabled: false,
-        catalogSyncEnabled: false,
-        catalogSyncReason: 'Product-query API permissions and response mapping have not yet been verified for this AliExpress application.',
+        catalogSyncEnabled: connection?.status === 'connected',
+        catalogSyncReason: 'Technology-only Dropshipping product search is available after OAuth authorization. Supplier ordering remains disabled until its complete lifecycle is implemented and tested.',
       },
     });
   } catch (error) {
