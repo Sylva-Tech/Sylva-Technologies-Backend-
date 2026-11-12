@@ -44,6 +44,12 @@ const productSchema = new mongoose.Schema(
       index: true,
     },
 
+    aliexpressProductId: { type: String, default: '', trim: true },
+    aliexpressProductUrl: { type: String, default: '', trim: true },
+    aliexpressSupplierPrice: { type: Number, default: 0, min: 0 },
+    aliexpressSupplierCurrency: { type: String, default: 'USD', trim: true },
+    aliexpressSyncedAt: { type: Date, default: null },
+
     brand: {
       type: String,
       required: [
@@ -357,6 +363,8 @@ productSchema.index({
   category: 1,
   brand: 1,
 });
+
+productSchema.index({ aliexpressProductId: 1 }, { unique: true, sparse: true });
 
 productSchema.index({
   name: 'text',
