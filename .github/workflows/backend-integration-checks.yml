@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Apply non-breaking dependency security fixes
-        run: npm audit fix
+        run: npm audit fix --omit=dev
       - name: Verify clean lockfile installation
         run: npm ci
       - name: Check JavaScript syntax
