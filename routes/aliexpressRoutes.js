@@ -36,6 +36,8 @@ router.get('/status', protect, adminOnly, async (req, res) => {
         accessTokenExpiresAt: connection?.accessTokenExpiresAt || null,
         lastError: connection?.lastError || '',
         supplierOrderingEnabled: false,
+        catalogSyncEnabled: false,
+        catalogSyncReason: 'Product-query API permissions and response mapping have not yet been verified for this AliExpress application.',
       },
     });
   } catch (error) {
