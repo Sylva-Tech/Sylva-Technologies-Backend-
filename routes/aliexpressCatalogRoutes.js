@@ -25,6 +25,16 @@ const walk = (value, visit, depth = 0) => {
   return undefined;
 };
 
+const findNode = (value, keys) => {
+  const wanted = new Set(keys.map((key) => key.toLowerCase()));
+  return walk(value, (node) => {
+    for (const [key, item] of Object.entries(node)) {
+      if (wanted.has(key.toLowerCase()) && item !== undefined && item !== null) return item;
+    }
+    return undefined;
+  });
+};
+
 const findValue = (value, keys) => {
   const wanted = new Set(keys.map((key) => key.toLowerCase()));
   return walk(value, (node) => {
@@ -194,7 +204,7 @@ router.post('/import', async (req, res) => {
     if (currency !== 'USD') return res.status(422).json({ success: false, message: 'AliExpress returned an unexpected supplier currency. Product was not imported.' });
 
     const imageValue = findValue(detail, ['product_main_image_url', 'itemMainPic', 'main_image_url', 'image_url']);
-    const imageList = findValue(detail, ['image_urls', 'product_images']);
+    const imageList = findNode(detail, ['image_urls', 'product_images', 'product_images_list']);
     const images = [];
     if (typeof imageValue === 'string') images.push(imageValue.startsWith('//') ? \`https:\${imageValue}\` : imageValue);
     if (Array.isArray(imageList)) {
