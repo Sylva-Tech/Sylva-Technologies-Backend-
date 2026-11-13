@@ -135,7 +135,11 @@ const createJwt = (user) => {
     },
     secret,
     {
-      expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+      // Administrator sessions are deliberately short-lived. Customer/seller
+      // sessions retain the configured lifetime for normal storefront use.
+      expiresIn: user.role === 'admin'
+        ? (process.env.ADMIN_JWT_EXPIRES_IN || '30m')
+        : (process.env.JWT_EXPIRES_IN || '7d'),
     }
   );
 };
