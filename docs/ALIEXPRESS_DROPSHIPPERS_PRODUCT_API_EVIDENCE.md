@@ -153,3 +153,16 @@ The full first-party specification for `aliexpress.ds.feedname.get` is now captu
 - Obtain the full current `aliexpress.ds.recommend.feed.get` specification before relying on it for recommended feed discovery.
 
 No API call, token change, environment change, supplier order, payment, production change or deployment was performed as part of this documentation update.
+
+
+## aliexpress.ds.recommend.feed.get — legacy documentation discovery (13 November 2026)
+
+A documentation search for the exact method name surfaced an indexed Alibaba Open Platform/TOP reference for `aliexpress.ds.recommend.feed.get`. The reference is explicitly categorized under **“Dropshipping (deprecated)”** and specifies the legacy `https://eco.taobao.com/router/rest` gateway with TOP common parameters. It lists method parameters such as `country`, `target_currency`, `target_language`, `page_size`, `sort`, `page_no`, `category_id`, and `feed_name`.
+
+This is useful historical evidence that the method existed, but it is **not** a current DropShippers IOP contract. Do not call it through the current `https://api-sg.aliexpress.com/sync` IOP adapter by copying these old parameters, and do not revive the deprecated `eco.taobao.com/router/rest` transport. The signed-in Open Platform search result supplied by the user still exposes only the `aliexpress.ds.feedname.get` document (API results: 0); its FAQ references `aliexpress.ds.recommend.feed.get`, but does not provide a current method specification.
+
+Current decision:
+- Keep `aliexpress.ds.recommend.feed.get` out of the production catalogue-sync path.
+- Continue with the current first-party documented `aliexpress.ds.feedname.get` -> `aliexpress.ds.feed.itemids.get` -> `aliexpress.ds.product.get` path, after verifying the IOP SDK wire protocol and App ID method entitlement.
+- Do not infer that the QPS listing (1000) proves method access.
+- No live API request, credentials, production settings, supplier writes, deployment, or merge was performed from this discovery.
