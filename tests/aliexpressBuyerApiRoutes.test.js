@@ -51,6 +51,6 @@ test('deprecated TOP Dropshipping credentials cannot enable catalogue access', (
     reason: getDropshipApiConfig().reason,
   });
   assert.throws(requiredDropshipEnv, (error) =>
-    error.code === 'ALIEXPRESS_LEGACY_API_DISABLED' && error.status === 503 &&
+    error.code === 'ALIEXPRESS_CATALOG_API_NOT_VERIFIED' && error.status === 503 &&
     /deprecated/.test(error.message));
 });
