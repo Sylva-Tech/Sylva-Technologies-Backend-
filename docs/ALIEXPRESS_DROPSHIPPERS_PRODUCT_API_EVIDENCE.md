@@ -98,3 +98,58 @@ QPS is only a rate ceiling; it does not prove method access for App ID 40465. Sy
 - A successful read-only API response using the existing buyerApp token.
 
 No credentials, token values, environment variables, production settings, deployments, supplier orders, or payments were changed for this evidence update.
+
+
+## aliexpress.ds.feedname.get — full first-party specification supplied (13 November 2026)
+
+Documentation page latest update: 2025-03-03 10:02:58.
+
+Description: fetch feed names for the DropShippers business. The page describes a feed name as a list of item IDs.
+
+### Request
+
+The displayed request-parameter table contains one optional parameter:
+- `app_signature` (String, optional), described as “API signature”.
+
+The Java and PHP examples both add `app_signature` with the placeholder value `your_feedname`. This is ambiguous: the table calls it an API signature, while the demo placeholder looks like a feed name. Do not infer that the parameter is a feed-name filter, do not pass a made-up value, and do not handcraft an app signature. First test the documented method with the parameter omitted, or verify the parameter semantics from the official IOP SDK / full method reference before supplying it.
+
+### Response
+
+The successful example returns:
+- `aliexpress_ds_feedname_get_response.resp_result.resp_code`: numeric status (example 200).
+- `resp_msg`: status text (example “Call succeeds”).
+- `result.current_record_count`: number of records in this response.
+- `result.promos.promo[]`: feed collection entries:
+  - `promo_name`: feed name, e.g. `AEB_ ComputerAccessories_EG`.
+  - `promo_desc`: feed description.
+  - `product_num`: number of products in that feed.
+- `request_id`: provider request identifier.
+
+The example shows 176 current records and two sample promo entries. Those values are documentation examples, not a live result or a promise of Kenya-relevant feeds.
+
+### Protocol and transport
+
+- Java example: `IopClient("https://api-sg.aliexpress.com", appkey, appSecret)`, method `aliexpress.ds.feedname.get`, and `client.execute(request, accessToken, Protocol.TOP)`.
+- PHP example: `https://api-sg.aliexpress.com/sync`, IOP request `aliexpress.ds.feedname.get`, then execute with the access token.
+
+This is consistent with the Product API and Feed Item IDs pages: use the current IOP SDK / Protocol.TOP method contract and the documented `/sync` transport for the PHP example. It is not a reason to revive the old `eco.taobao.com/router/rest` gateway.
+
+### Relationship to feed discovery
+
+The method page's common issues say feed names can be obtained through `aliexpress.ds.recommend.feed.get`; the method itself is described as fetching feed names. Keep these methods distinct:
+1. `aliexpress.ds.recommend.feed.get` is documented as a way to obtain recommended feed names.
+2. `aliexpress.ds.feedname.get` returns the feed collection structure shown above.
+3. `aliexpress.ds.feed.itemids.get` takes a `feed_name` and returns product IDs with a one-minute pagination cursor.
+4. `aliexpress.ds.product.get` retrieves full detail for each selected product ID.
+
+The FAQ says custom feed collections may require business-team customization, and a newly supplied feed name can take time to become effective. The category FAQ also warns that the category ID returned by Product API is a subcategory ID.
+
+### Updated verification status
+
+The full first-party specification for `aliexpress.ds.feedname.get` is now captured. The previous “full feedname page not supplied” item is resolved. Remaining blockers are unchanged:
+- Verify the exact IOP SDK Protocol.TOP wire signing/common parameters and /sync transport implementation against a trusted SDK source.
+- Verify App ID 40465's method-level entitlement for these DropShippers calls.
+- Perform one harmless read-only product-detail request using the existing buyerApp token before enabling catalogue sync.
+- Obtain the full current `aliexpress.ds.recommend.feed.get` specification before relying on it for recommended feed discovery.
+
+No API call, token change, environment change, supplier order, payment, production change or deployment was performed as part of this documentation update.
