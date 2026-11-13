@@ -56,3 +56,14 @@ test('Dropshipping TOP credentials are configured independently from IOP OAuth c
   if (previousKey === undefined) delete process.env.ALIEXPRESS_DS_APP_KEY; else process.env.ALIEXPRESS_DS_APP_KEY = previousKey;
   if (previousSecret === undefined) delete process.env.ALIEXPRESS_DS_APP_SECRET; else process.env.ALIEXPRESS_DS_APP_SECRET = previousSecret;
 });
+
+
+test('legacy Dropshipping catalogue calls stay disabled until AliExpress confirms support', () => {
+  const previous = process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED;
+  process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED = 'false';
+  assert.notEqual(process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED, 'true');
+  process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED = 'true';
+  assert.equal(process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED, 'true');
+  if (previous === undefined) delete process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED;
+  else process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED = previous;
+});
