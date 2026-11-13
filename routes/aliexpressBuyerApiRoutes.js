@@ -134,7 +134,7 @@ router.get('/status', protect, adminOnly, async (req, res) => {
           ? 'IOP OAuth configuration is incomplete. Check the existing AliExpress App ID 40465 credentials and exact callback URL.'
           : !connected
             ? 'The existing AliExpress IOP application is not connected. Complete OAuth using the existing App ID 40465.'
-            : 'OAuth is connected, but no supported supplier-catalogue API method and permission have been verified for App ID 40465. The legacy TOP Dropshipping API is deprecated and its previous live request returned isv.appkey-not-exists. Obtain written confirmation of the supported IOP catalogue API and permission from AliExpress before enabling sync. Do not create a second AppKey.',
+            : 'OAuth is connected for App ID 40465, but catalogue access is not yet verified. Public documentation exposes legacy Dropshipping methods on the deprecated TOP gateway, while separate community implementations describe a different /sync protocol. Neither establishes that this app is entitled to call a supported current catalogue API. Keep live sync disabled until the exact method, gateway, signature and app permission are verified with a successful read-only API test. Reuse the existing App Key; do not create another one.',
         supplierOrderingEnabled: false,
         supplierOrderingReason: 'Supplier order placement and payment remain disabled until AliExpress confirms supported production APIs and Sylva verifies the complete supplier payment, duplicate-order, cancellation and tracking lifecycle.',
         apiGeneration: 'iop-oauth-connected-catalogue-api-unverified',
