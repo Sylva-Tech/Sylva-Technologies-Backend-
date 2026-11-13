@@ -203,3 +203,37 @@ test('legacy TOP credentials cannot enable write methods or bypass the read-only
     );
   });
 });
+
+test('Protocol.TOP adapter signs and permits both documented feed discovery methods', () => {
+  for (const [apiName, businessParams] of [
+    ['aliexpress.ds.feedname.get', {}],
+    ['aliexpress.ds.feed.itemids.get', { feed_name: 'DS bestseller', page_size: 20, search_id: 'cursor-1' }],
+  ]) {
+    const request = buildTopProtocolRequest({
+      apiName,
+      businessParams,
+      accessToken: 'buyer-access-token',
+      timestamp: 1794512645000,
+      appKey: 'test-app-key',
+      appSecret: 'test-app-secret',
+    });
+    const url = new URL(request.url);
+    assert.equal(url.searchParams.get('method'), apiName);
+    assert.equal(url.searchParams.get('session'), 'buyer-access-token');
+    assert.equal(url.pathname, '/sync');
+    assert.equal(request.options, undefined);
+    const signed = { ...request.commonParams, ...request.businessParams };
+    const canonical = Object.keys(signed).sort().map((key) => key + signed[key]).join('');
+    const expected = crypto.createHmac('sha256', 'test-app-secret').update(canonical, 'utf8').digest('hex').toUpperCase();
+    assert.equal(url.searchParams.get('sign'), expected);
+  }
+  const itemRequest = buildTopProtocolRequest({
+    apiName: 'aliexpress.ds.feed.itemids.get',
+    businessParams: { feed_name: 'DS bestseller', page_size: 20, search_id: 'cursor-1' },
+    accessToken: 'buyer-access-token',
+    timestamp: 1794512645000,
+    appKey: 'test-app-key',
+    appSecret: 'test-app-secret',
+  });
+  assert.equal(itemRequest.body, 'feed_name=DS+bestseller&page_size=20&search_id=cursor-1');
+});
