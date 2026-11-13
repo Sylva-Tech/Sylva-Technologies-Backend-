@@ -2,13 +2,13 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const AliExpressConnection = require('../models/AliExpressConnection');
-const AliExpressCatalogProduct = require('../models/AliExpressCatalogProduct');
 const {
+  getDropshipApiConfig,
+  requiredDropshipEnv,
+  callDropshipApi,
   decryptSecret,
   encryptSecret,
   refreshAccessToken,
-  fetchRecommendedFeed,
-  getDropshipApiConfig,
 } = require('../services/aliexpressService');
 
 const router = express.Router();
@@ -23,94 +23,58 @@ const limiter = rateLimit({
 
 const isBuyerPlatform = (value) => ['buyerapp', 'buyer_app', 'buyer'].includes(String(value || '').toLowerCase());
 
-async function getBuyerConnection() {
-  const connection = await AliExpressConnection.findOne({ provider: 'aliexpress' })
-    .select('+accessTokenEncrypted +refreshTokenEncrypted');
-  if (!connection || connection.status !== 'connected' || !connection.accessTokenEncrypted) {
-    const error = new Error('Connect the AliExpress buyer account before using Dropshipping APIs.');
+const getUsableBuyerToken = async (connection) => {
+  const expiresAt = connection.accessTokenExpiresAt ? new Date(connection.accessTokenExpiresAt).getTime() : 0;
+  const needsRefresh = !connection.accessTokenEncrypted || !expiresAt || expiresAt <= Date.now() + 60000;
+  if (!needsRefresh) return decryptSecret(connection.accessTokenEncrypted);
+
+  if (!connection.refreshTokenEncrypted) {
+    const error = new Error('The AliExpress access token is missing or expired. Re-authorize the existing buyerApp account.');
+    error.code = 'ALIEXPRESS_TOKEN_EXPIRED';
     error.status = 409;
-    error.code = 'ALIEXPRESS_BUYER_NOT_CONNECTED';
-    throw error;
-  }
-  if (!isBuyerPlatform(connection.accountPlatform)) {
-    const error = new Error('The saved OAuth session is not identified as an AliExpress buyerApp session. Re-authorize the Dropshipping buyer account; Seller Center credentials must not be reused for buyer APIs.');
-    error.status = 409;
-    error.code = 'ALIEXPRESS_BUYER_AUTH_REQUIRED';
     throw error;
   }
 
-  let accessToken = decryptSecret(connection.accessTokenEncrypted);
-  if (connection.accessTokenExpiresAt && connection.accessTokenExpiresAt.getTime() <= Date.now() + 5 * 60 * 1000) {
-    if (!connection.refreshTokenEncrypted) {
-      const error = new Error('The buyer access token is expired. Re-authorize the AliExpress buyer account.');
-      error.status = 409;
-      error.code = 'ALIEXPRESS_BUYER_TOKEN_EXPIRED';
-      throw error;
-    }
-    const refreshed = await refreshAccessToken(decryptSecret(connection.refreshTokenEncrypted));
-    accessToken = refreshed.access_token;
-    connection.accessTokenEncrypted = encryptSecret(refreshed.access_token);
-    if (refreshed.refresh_token) connection.refreshTokenEncrypted = encryptSecret(refreshed.refresh_token);
-    if (refreshed.expires_in) connection.accessTokenExpiresAt = new Date(Date.now() + Number(refreshed.expires_in) * 1000);
-    if (refreshed.refresh_expires_in) connection.refreshTokenExpiresAt = new Date(Date.now() + Number(refreshed.refresh_expires_in) * 1000);
-    await connection.save();
+  const currentRefreshToken = decryptSecret(connection.refreshTokenEncrypted);
+  const token = await refreshAccessToken(currentRefreshToken);
+  connection.accessTokenEncrypted = encryptSecret(token.access_token);
+  if (token.refresh_token) connection.refreshTokenEncrypted = encryptSecret(token.refresh_token);
+  connection.accessTokenExpiresAt = token.expires_in
+    ? new Date(Date.now() + Number(token.expires_in) * 1000) : null;
+  if (token.refresh_expires_in) {
+    connection.refreshTokenExpiresAt = new Date(Date.now() + Number(token.refresh_expires_in) * 1000);
   }
-  return { connection, accessToken };
-}
+  await connection.save();
+  return token.access_token;
+};
 
-function numberOrNull(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const n = Number(String(value).replace(/[^0-9.]/g, ''));
-  return Number.isFinite(n) && n >= 0 ? n : null;
-}
+const getMethodEnvelope = (payload, method) => payload?.[`${method.split('.').join('_')}_response`] || payload || {};
+const countImages = (result) => {
+  const multimedia = result?.ae_multimedia_info_dto || {};
+  const images = multimedia.image_urls || multimedia.image_url_list || multimedia.image_urls_list;
+  return Array.isArray(images) ? images.length : 0;
+};
 
-function safeUrl(value, domains) {
-  try {
-    const url = new URL(String(value || ''));
-    if (url.protocol !== 'https:' || !domains.some((domain) => url.hostname === domain || url.hostname.endsWith('.' + domain))) return '';
-    return url.toString().slice(0, 2000);
-  } catch { return ''; }
-}
-
-function normalizeProduct(item) {
-  const providerProductId = String(item?.product_id || '').trim();
-  const title = String(item?.product_title || '').trim().slice(0, 500);
-  if (!providerProductId || !title) return null;
-  const imageUrls = [item.product_main_image_url, ...(Array.isArray(item.product_small_image_urls) ? item.product_small_image_urls : [])]
-    .map((url) => safeUrl(url, ['alicdn.com', 'aliexpress.com', 'aliexpress-media.com']))
-    .filter(Boolean).slice(0, 12);
-  return {
-    providerProductId,
-    title,
-    productUrl: safeUrl(item.product_detail_url, ['aliexpress.com']),
-    imageUrl: imageUrls[0] || '',
-    imageUrls,
-    supplierPrice: numberOrNull(item.sale_price || item.original_price),
-    supplierCurrency: String(item.sale_price_currency || item.original_price_currency || 'USD').toUpperCase().slice(0, 3),
-    targetSalePrice: numberOrNull(item.target_sale_price),
-    targetCurrency: String(item.target_sale_price_currency || 'USD').toUpperCase().slice(0, 3),
-    originalPrice: numberOrNull(item.original_price),
-    discount: String(item.discount || '').slice(0, 40),
-    categoryId: String(item.second_level_category_id || item.first_level_category_id || '').slice(0, 80),
-    categoryName: String(item.second_level_category_name || item.first_level_category_name || '').slice(0, 200),
-    sellerId: String(item.seller_id || '').slice(0, 100),
-    latestVolume: numberOrNull(item.lastest_volume),
-    shippingDays: numberOrNull(item.ship_to_days),
-    sourcePayload: item,
-    syncedAt: new Date(),
-  };
-}
-
-// This router is mounted before the older Seller Center routes so the
-// buyer-account Dropshipping API has its own explicit authorization boundary.
 router.get('/status', protect, adminOnly, async (req, res) => {
   try {
     const connection = await AliExpressConnection.findOne({ provider: 'aliexpress' }).lean();
     const configured = Boolean(process.env.ALIEXPRESS_APP_KEY && process.env.ALIEXPRESS_APP_SECRET &&
       process.env.ALIEXPRESS_REDIRECT_URI && /^[a-f0-9]{64}$/i.test(process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY || ''));
     const connected = connection?.status === 'connected';
-    const buyerAuthorized = connected && isBuyerPlatform(connection?.accountPlatform);
+    const buyerAuthorized = Boolean(connected && isBuyerPlatform(connection?.accountPlatform));
     const dropshipApi = getDropshipApiConfig();
+    const methodVerified = Boolean(connection?.catalogMethodEntitlementVerifiedAt);
+    const productTestSucceeded = Boolean(connection?.catalogReadOnlyProductTestAt);
+    const catalogSyncReason = !configured
+      ? 'IOP OAuth configuration is incomplete. Check the existing AliExpress App ID 40465 credentials and callback URL.'
+      : !connected
+        ? 'The existing AliExpress IOP application is not connected. Complete OAuth using the existing App ID 40465.'
+        : !buyerAuthorized
+          ? 'The saved OAuth session is not identified as buyerApp. Re-authorize the existing Dropshipping buyer account.'
+          : !productTestSucceeded
+            ? dropshipApi.reason
+            : 'The read-only product test succeeded. Feed discovery, feed pagination and product import still require separate verification before catalogue sync can be enabled.';
+
     return res.json({
       success: true,
       data: {
@@ -124,20 +88,30 @@ router.get('/status', protect, adminOnly, async (req, res) => {
         accessTokenExpiresAt: connection?.accessTokenExpiresAt || null,
         lastError: connection?.lastError || '',
         buyerAuthorized,
-        dropshipApiConfigured: false,
+        dropshipApiConfigured: dropshipApi.configured,
         legacyDropshipApiDeprecated: true,
         legacyDropshipApiProviderConfirmed: false,
-        iopOAuthConnected: Boolean(configured && connected),
-        iopCatalogApiVerified: false,
+        iopOAuthConnected: Boolean(configured && connected && buyerAuthorized),
+        iopCatalogApiVerified: productTestSucceeded,
         catalogSyncEnabled: false,
-        catalogSyncReason: !configured
-          ? 'IOP OAuth configuration is incomplete. Check the existing AliExpress App ID 40465 credentials and exact callback URL.'
-          : !connected
-            ? 'The existing AliExpress IOP application is not connected. Complete OAuth using the existing App ID 40465.'
-            : 'OAuth is connected for App ID 40465. The current DropShippers Product API page documents aliexpress.ds.product.get through an IOP client using Protocol.TOP, with the PHP example specifying https://api-sg.aliexpress.com/sync. Product and feed-item request/response fields are now documented, but the exact wire signing/common parameters and the application method entitlement still need verification. Run one read-only product test with the existing buyerApp token before enabling sync. Reuse the existing App Key; do not create another one.',
+        catalogSyncReason,
+        catalogVerification: {
+          protocol: dropshipApi.protocol,
+          endpoint: dropshipApi.endpoint,
+          sdkReference: dropshipApi.sdkReference,
+          wireContractVerified: dropshipApi.wireContractVerified,
+          methodEntitlementVerified: methodVerified,
+          readOnlyProductTestSucceeded: productTestSucceeded,
+          protocolVerifiedAt: connection?.catalogProtocolVerifiedAt || null,
+          methodEntitlementVerifiedAt: connection?.catalogMethodEntitlementVerifiedAt || null,
+          readOnlyProductTestAt: connection?.catalogReadOnlyProductTestAt || null,
+          lastTestProductId: connection?.catalogLastTestProductId || '',
+          lastTestProductTitle: connection?.catalogLastTestProductTitle || '',
+          lastTestError: connection?.catalogLastTestError || '',
+        },
         supplierOrderingEnabled: false,
-        supplierOrderingReason: 'Supplier order placement and payment remain disabled until AliExpress confirms supported production APIs and Sylva verifies the complete supplier payment, duplicate-order, cancellation and tracking lifecycle.',
-        apiGeneration: 'iop-oauth-connected-catalogue-api-unverified',
+        supplierOrderingReason: 'Supplier order placement and payment remain disabled until product sourcing, supplier payment, duplicate-order handling, cancellation and tracking are independently verified.',
+        apiGeneration: 'iop-protocol-top-sdk-verified-product-entitlement-pending',
         dropshipGateway: null,
       },
     });
@@ -146,65 +120,114 @@ router.get('/status', protect, adminOnly, async (req, res) => {
   }
 });
 
-router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
+// Admin-only, read-only proof of method access. This endpoint never creates an
+// order, purchases a product, imports a listing or publishes storefront data.
+router.post('/catalog/test-product', protect, adminOnly, limiter, async (req, res) => {
+  let connection;
   try {
-    return res.status(503).json({
-      success: false,
-      code: 'ALIEXPRESS_CATALOG_API_NOT_PROVISIONED',
-      message: 'Catalogue sync is paused. The current DropShippers guide documents the product method via IOP Protocol.TOP and the /sync endpoint, but Sylva has not yet verified the exact wire signing/common parameters or a successful read-only call with existing App ID 40465. The previous deprecated eco.taobao.com/router/rest attempt returned isv.appkey-not-exists and must not be reused. Verify the current method against the existing buyerApp token before enabling sync. Do not create another AppKey.',
-    });
-    const { accessToken } = await getBuyerConnection();
-    const feedName = String(req.body?.feedName || 'DS bestseller').trim().slice(0, 100);
-    const country = String(req.body?.country || 'KE').trim().toUpperCase();
-    const currency = String(req.body?.targetCurrency || 'USD').trim().toUpperCase();
-    const language = String(req.body?.targetLanguage || 'EN').trim().toUpperCase();
-    const pageSize = Math.max(1, Math.min(50, Number.parseInt(req.body?.pageSize, 10) || 20));
-    const pageNo = Math.max(1, Math.min(1000, Number.parseInt(req.body?.pageNo, 10) || 1));
-    const sort = String(req.body?.sort || 'volumeDesc').trim();
-    const currencies = new Set(['USD', 'GBP', 'CAD', 'EUR', 'UAH', 'MXN', 'TRY', 'RUB', 'BRL', 'AUD', 'INR', 'JPY', 'IDR', 'SEK', 'KRW']);
-    const languages = new Set(['EN', 'RU', 'PT', 'ES', 'FR', 'ID', 'IT', 'TH', 'JA', 'AR', 'VI', 'TR', 'DE', 'HE', 'KO', 'NL', 'PL', 'MX', 'CL', 'IN']);
-    const sorts = new Set(['priceAsc', 'priceDesc', 'volumeAsc', 'volumeDesc', 'discountAsc', 'discountDesc', 'DSRratingAsc', 'DSRratingDesc']);
-    if (!feedName || !/^[A-Z]{2}$/.test(country) || !currencies.has(currency) || !languages.has(language) || !sorts.has(sort)) {
-      return res.status(400).json({ success: false, message: 'Invalid feed parameters. Check country, currency, language and sort.' });
+    requiredDropshipEnv();
+    const productId = String(req.body?.product_id || '').trim();
+    const shipToCountry = String(req.body?.ship_to_country || 'KE').trim().toUpperCase();
+    const targetCurrency = String(req.body?.target_currency || 'USD').trim().toUpperCase();
+    const targetLanguage = String(req.body?.target_language || 'en_US').trim();
+
+    if (!/^\d{1,30}$/.test(productId)) {
+      return res.status(400).json({ success: false, code: 'ALIEXPRESS_PRODUCT_ID_INVALID', message: 'Enter a valid numeric AliExpress product ID.' });
     }
-    const values = { feed_name: feedName, country, target_currency: currency, target_language: language, page_size: pageSize, page_no: pageNo, sort };
-    if (req.body?.categoryId) values.category_id = String(req.body.categoryId).trim().slice(0, 80);
-    const response = await fetchRecommendedFeed(values, accessToken);
-    const products = response.products.map(normalizeProduct).filter(Boolean);
-    if (products.length) {
-      await AliExpressCatalogProduct.bulkWrite(products.map((product) => ({
-        updateOne: {
-          filter: { providerProductId: product.providerProductId },
-          update: { $set: product, $setOnInsert: { status: 'pending' } },
-          upsert: true,
-        },
-      })), { ordered: false });
+    if (!/^[A-Z]{2}$/.test(shipToCountry)) {
+      return res.status(400).json({ success: false, code: 'ALIEXPRESS_COUNTRY_INVALID', message: 'Ship-to country must be a two-letter country code such as KE.' });
     }
+    if (!/^[A-Z]{3}$/.test(targetCurrency)) {
+      return res.status(400).json({ success: false, code: 'ALIEXPRESS_CURRENCY_INVALID', message: 'Target currency must be a three-letter currency code.' });
+    }
+
+    connection = await AliExpressConnection.findOne({ provider: 'aliexpress' })
+      .select('+accessTokenEncrypted +refreshTokenEncrypted');
+    if (!connection || connection.status !== 'connected') {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_NOT_CONNECTED', message: 'Connect the existing AliExpress account before testing catalogue access.' });
+    }
+    if (!isBuyerPlatform(connection.accountPlatform)) {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_BUYERAPP_REQUIRED', message: 'The connected AliExpress authorization is not identified as buyerApp. Re-authorize the existing DropShippers account.' });
+    }
+
+    const accessToken = await getUsableBuyerToken(connection);
+    const payload = await callDropshipApi('aliexpress.ds.product.get', {
+      product_id: productId,
+      ship_to_country: shipToCountry,
+      target_currency: targetCurrency,
+      target_language: targetLanguage,
+    }, accessToken);
+
+    const envelope = getMethodEnvelope(payload, 'aliexpress.ds.product.get');
+    const result = envelope.result || envelope.resp_result?.result;
+    const baseInfo = result?.ae_item_base_info_dto;
+    if (!result || !baseInfo || !(baseInfo.product_id || baseInfo.subject)) {
+      const error = new Error(String(envelope.rsp_msg || envelope.resp_result?.resp_msg || 'AliExpress accepted the request but did not return the expected product detail structure.'));
+      error.code = 'ALIEXPRESS_PRODUCT_RESPONSE_INCOMPLETE';
+      error.status = 502;
+      throw error;
+    }
+
+    const productTitle = String(baseInfo.subject || '').slice(0, 300);
+    const skuCount = Array.isArray(result.ae_item_sku_info_dtos) ? result.ae_item_sku_info_dtos.length : 0;
+    const now = new Date();
+    connection.catalogProtocolVerifiedAt = connection.catalogProtocolVerifiedAt || now;
+    connection.catalogMethodEntitlementVerifiedAt = now;
+    connection.catalogReadOnlyProductTestAt = now;
+    connection.catalogLastTestProductId = productId;
+    connection.catalogLastTestProductTitle = productTitle;
+    connection.catalogLastTestError = '';
+    await connection.save();
+
     return res.json({
       success: true,
-      message: products.length
-        ? 'AliExpress returned products. They are saved in the private review queue and have not been published.'
-        : 'AliExpress accepted the request but returned no products for this feed/page.',
-      syncedCount: products.length,
-      products,
-      provider: 'AliExpress',
-      apiMethod: 'aliexpress.ds.recommend.feed.get',
-      apiGeneration: 'legacy-top-dropshipping-deprecated',
-      warning: 'This legacy API is documented as deprecated. Confirm current production support with AliExpress before relying on it for ongoing operations.',
+      message: 'AliExpress returned product detail through the official IOP Protocol.TOP /sync request. The read-only API test succeeded.',
+      verification: {
+        protocol: 'IOP Protocol.TOP',
+        endpoint: 'https://api-sg.aliexpress.com/sync',
+        method: 'aliexpress.ds.product.get',
+        methodEntitlementVerified: true,
+        readOnlyProductTestSucceeded: true,
+        testedAt: now,
+      },
+      product: {
+        productId: String(baseInfo.product_id || productId),
+        title: productTitle,
+        currency: String(baseInfo.currency_code || targetCurrency),
+        categoryId: baseInfo.category_id == null ? null : String(baseInfo.category_id),
+        productStatus: String(baseInfo.product_status_type || ''),
+        rating: String(baseInfo.avg_evaluation_rating || ''),
+        reviewCount: String(baseInfo.evaluation_count || ''),
+        skuCount,
+        imageCount: countImages(result),
+        shipToCountry,
+      },
+      catalogueSyncEnabled: false,
+      nextStep: 'The product-detail method is verified. Feed-name discovery and feed-item pagination must be tested separately before catalogue import is enabled.',
     });
   } catch (error) {
+    if (connection) {
+      connection.catalogLastTestError = String(error.message || 'AliExpress product test failed.').slice(0, 500);
+      await connection.save().catch(() => {});
+    }
     const status = Number(error.status) >= 400 && Number(error.status) < 600 ? Number(error.status) : 502;
-    console.error('[AliExpress live catalogue sync]', error.code || 'API_ERROR', error.message);
     return res.status(status).json({
       success: false,
-      code: error.code || 'ALIEXPRESS_LIVE_SYNC_FAILED',
-      message: error.message || 'AliExpress catalogue synchronization failed.',
-      providerCode: error.providerCode || null,
-      providerRequestId: error.requestId || error.request_id || null,
+      code: error.code || 'ALIEXPRESS_PRODUCT_TEST_FAILED',
+      message: error.message || 'AliExpress read-only product test failed.',
+      ...(error.aliexpressCode ? { aliexpressCode: error.aliexpressCode } : {}),
     });
   }
 });
 
+router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
+  return res.status(503).json({
+    success: false,
+    code: 'ALIEXPRESS_CATALOG_PIPELINE_NOT_VERIFIED',
+    message: 'The read-only product-detail method can now be tested using /catalog/test-product. Full catalogue sync remains disabled until feed-name discovery, feed-item pagination, product normalization and private review-queue import are separately tested.',
+  });
+});
+
 module.exports = router;
 module.exports.isBuyerPlatform = isBuyerPlatform;
-module.exports.normalizeProduct = normalizeProduct;
+module.exports.getUsableBuyerToken = getUsableBuyerToken;
