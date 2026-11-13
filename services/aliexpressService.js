@@ -193,7 +193,7 @@ const callDropshipApi = async (apiName, businessParams, accessToken) => {
     error.aliexpressCode = String(detail.code || detail.error_code || '');
     throw error;
   }
-  const envelope = payload[`${apiName.replace(/\\./g, '_')}_response`] || payload;
+  const envelope = payload[`${apiName.split('.').join('_')}_response`] || payload;
   const methodCode = envelope.rsp_code ?? envelope.resp_result?.resp_code;
   const methodRet = envelope.ret;
   if (methodRet === false || (methodCode !== undefined && ![200, '200', 0, '0'].includes(methodCode))) {
