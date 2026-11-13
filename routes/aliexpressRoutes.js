@@ -183,7 +183,17 @@ router.get('/callback', async (req, res) => {
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
-    return res.redirect(`${(process.env.FRONTEND_URL || 'https://www.sylvatechnologies.co.ke').replace(/\/$/, '')}/admin/aliexpress?connected=1`);
+    const frontendBase = new URL(process.env.FRONTEND_URL || 'https://www.sylvatechnologies.co.ke');
+    // The apex and www hosts have separate browser localStorage. Always return
+    // the OAuth flow to the canonical storefront origin that holds the admin JWT.
+    if (frontendBase.hostname.toLowerCase() === 'sylvatechnologies.co.ke') {
+      frontendBase.hostname = 'www.sylvatechnologies.co.ke';
+    }
+    frontendBase.protocol = 'https:';
+    frontendBase.pathname = `${frontendBase.pathname.replace(/\/$/, '')}/admin/aliexpress`;
+    frontendBase.search = '?connected=1';
+    frontendBase.hash = '';
+    return res.redirect(frontendBase.toString());
   } catch (error) {
     console.error('AliExpress OAuth callback failed:', error.message);
     await AliExpressConnection.findOneAndUpdate(
