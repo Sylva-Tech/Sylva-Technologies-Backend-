@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const API_BASE = 'https://api-sg.aliexpress.com/rest';
 const AUTH_BASE = 'https://api-sg.aliexpress.com/oauth/authorize';
 
-const LEGACY_DROPSHIP_DISABLED_REASON = 'The legacy AliExpress TOP Dropshipping API is deprecated and this application has not received written confirmation that App ID 40465 is provisioned for it. Use only a currently supported API explicitly granted to this app.';
+const LEGACY_DROPSHIP_DISABLED_REASON = 'The current DropShippers Product API documentation specifies an IOP client call using Protocol.TOP and the api-sg /sync method endpoint. The exact wire signing/common parameters and App ID 40465 method entitlement have not yet been verified. The deprecated eco.taobao.com/router/rest transport remains disabled.';
 
 const getDropshipApiConfig = () => ({
   configured: false,
@@ -15,7 +15,7 @@ const getDropshipApiConfig = () => ({
 
 const requiredDropshipEnv = () => {
   const error = new Error(LEGACY_DROPSHIP_DISABLED_REASON);
-  error.code = 'ALIEXPRESS_LEGACY_API_DISABLED';
+  error.code = 'ALIEXPRESS_CATALOG_API_NOT_VERIFIED';
   error.status = 503;
   throw error;
 };
@@ -144,9 +144,9 @@ const signTopRequest = (params, secret = process.env.ALIEXPRESS_DS_APP_SECRET) =
 };
 
 const callDropshipApi = async (method, values, accessToken) => {
-  // Fail closed permanently for the deprecated TOP gateway. An environment
-  // flag or manually copied credentials must never reactivate an unsupported
-  // protocol; a supported IOP adapter must be implemented from provider docs.
+  // Fail closed until the current IOP Protocol.TOP /sync wire contract and
+  // this app's method entitlement are verified. Never fall back to the old
+  // deprecated eco.taobao.com/router/rest gateway.
   requiredDropshipEnv();
   if (!/^aliexpress\.ds\.[a-z.]+$/.test(String(method || ''))) {
     throw new Error('Unsupported AliExpress Dropshipping API method.');

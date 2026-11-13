@@ -116,3 +116,143 @@ Only after receiving written confirmation and the current API specification:
 - Open Platform API permission request process: https://developer.alibaba.com/docs/doc.htm?articleId=120676&docType=1&treeId=727
 - Open Platform application categories: https://developer.alibaba.com/docs/doc.htm?articleId=120674&docType=1&treeId=727
 - Deprecated legacy Dropshipping documentation: https://developer.alibaba.com/docs/doc.htm?articleId=120418&docType=1&treeId=762
+
+
+## Independent API research update (13 November 2026)
+
+This section records public technical evidence gathered independently of AliExpress support. It is deliberately separated from provider-confirmed capability.
+
+### Evidence matrix
+
+| Evidence | What it establishes | What it does not establish |
+| --- | --- | --- |
+| Official AliExpress/Alibaba API reference for `aliexpress.ds.product.get` | The method exists in the public AE-Dropshipper catalogue and its displayed request gateway is `https://eco.taobao.com/router/rest`, with TOP parameters such as `method`, `session`, `v` and `sign`. | It does not establish that this deprecated TOP route is supported for App ID 40465. |
+| Official legacy Dropshipping guide | The documentation tree is explicitly labelled **Dropshipping (deprecated)**. | It cannot be treated as a current IOP REST contract. |
+| Official IOP developer guide | The overseas IOP REST base is `https://api-sg.aliexpress.com/rest`; the IOP request signing model is path-prefixed HMAC-SHA256. | It does not list the new DropShippers menu's product/feed/search methods as IOP REST paths. |
+| Third-party 2026/2025 implementation notes | A separate implementation reports `aliexpress.ds.text.search`, `aliexpress.ds.image.search`, and `aliexpress.ds.product.get` using `https://api-sg.aliexpress.com/sync` and TOP-style method parameters/signing. | It is not an AliExpress source and cannot prove current provider support, method entitlement, or compatibility with this app's OAuth tokens. |
+
+### Important protocol distinction
+
+Do not confuse these three URLs/protocols:
+
+- IOP OAuth and REST base: `https://api-sg.aliexpress.com/rest`.
+- Third-party reported Dropship sync endpoint: `https://api-sg.aliexpress.com/sync` (unverified for Sylva; do not call from production).
+- Legacy documented TOP router: `https://eco.taobao.com/router/rest` (deprecated and previously returned `isv.appkey-not-exists` for the attempted Sylva request).
+
+A method name appearing in the console navigation, a valid OAuth token, or a third-party implementation is not proof that the method is enabled for App ID 40465.
+
+### Candidate read-only methods discovered
+
+The third-party implementation describes:
+
+- `aliexpress.ds.text.search`: keyword search with `keyword`, `countryCode`, `currency`, `local`, optional `page_size`, `page_index` and `sort`.
+- `aliexpress.ds.image.search`: image-based search using multipart image bytes.
+- `aliexpress.ds.product.get`: product detail lookup by product ID and ship-to country.
+
+The console navigation separately showed:
+
+- `aliexpress.ds.product.get`
+- `aliexpress.ds.feed.itemids.get`
+- `aliexpress.ds.feedname.get`
+- Search API, Freight API, Order API, Payment and Webhook sections.
+
+The console's visible navigation and third-party notes do not supply the full authoritative request schema for the new feed methods. In particular, do not infer that `feed.itemids.get` and `feedname.get` use the same protocol as the third-party `/sync` implementation.
+
+### Next engineering action
+
+Use the API test facility in the existing AliExpress app console (App ID 40465) against the exact method shown in the new DropShippers API Developer documentation. The first test should be read-only and should capture:
+
+1. The exact API method name and documentation page.
+2. The endpoint URL/path shown by that page.
+3. The exact required parameter names and signature method.
+4. The API test result, including provider error code and request ID (redact tokens, signatures and secrets).
+5. The permission group shown for the method.
+
+If the console test succeeds, implement that exact contract in a dedicated adapter and add mocked signing/response tests. If the API test returns an entitlement error, retain the current fail-closed state and use the provider error code to identify the missing permission. Do not switch to the third-party `/sync` protocol or the deprecated TOP router as a workaround.
+
+### Research references
+
+- Official AE-Dropshipper method listing and legacy TOP gateway: https://developer.alibaba.com/docs/api.htm?apiId=60452
+- Official deprecated Dropshipping guide: https://developer.alibaba.com/docs/doc.htm?articleId=120418&docType=1&treeId=762
+- Official IOP endpoint documentation: https://developer.alibaba.com/docs/doc.htm?articleId=120689&docType=1&treeId=727
+- Third-party Dropship API implementation notes (non-authoritative): https://github.com/wuTims/shopping-assistant/blob/main/docs/aliexpress-api.md
+- Third-party IOP/TOP protocol distinction notes (non-authoritative): https://github.com/minijy/aliexpress-open-platform-skill/blob/main/references/onboarding-auth.md
+
+
+## New DropShippers API QPS page supplied by the application owner (13 November 2026)
+
+The Sylva owner supplied the contents of the **openservice.aliexpress.com → Developer Guide → DropShippers API Developer → Quick Start → API QPS** page. The page reports a latest update of **2024-08-19 18:03:47** and explicitly lists these method quotas:
+
+| Method | Published QPS |
+| --- | ---: |
+| `aliexpress.ds.product.get` | 500 |
+| `aliexpress.trade.buy.placeorder` | 150 |
+| `aliexpress.ds.order.create` | 150 |
+| `aliexpress.trade.ds.order.get` | 1,000 |
+| `aliexpress.ds.freight.query` | 350 |
+| `aliexpress.ds.image.search` | 15 |
+| `aliexpress.ds.order.tracking.get` | 100 |
+| `aliexpress.ds.address.get` | 4 |
+| `aliexpress.ds.category.get` | 1,000 |
+| `aliexpress.ds.feed.itemids.get` | 3 |
+| `aliexpress.ds.feedname.get` | 1,000 |
+| `aliexpress.ds.recommend.feed.get` | 1,000 |
+
+The QPS page is useful first-party evidence that AliExpress's DropShippers Developer Guide advertises these method names and published quotas. It is stronger than an undocumented third-party method list. It is not, by itself, a request specification or proof that App ID 40465 has per-method authorization.
+
+### Updated interpretation: do not conflate documentation sections
+
+There are at least two documentation surfaces that must be kept distinct:
+
+1. The **openservice DropShippers API Developer** guide visible to the owner, with Authentication, Product API, Payment, Freight API, Order API, Search API, Webhook and the QPS inventory above.
+2. The separately indexed older Alibaba TOP API reference, whose legacy Dropshipping section is marked deprecated and whose `aliexpress.ds.product.get` page documents the old `eco.taobao.com/router/rest` gateway.
+
+The older TOP reference must not be used to assume that the newer DropShippers guide uses the same gateway, request format, signing rules or authorization token semantics. Conversely, the QPS list alone does not prove that the newer guide uses IOP `/rest` or a specific `/sync` route.
+
+### Candidate API integration inventory (from the owner's QPS page)
+
+Catalogue discovery:
+- `aliexpress.ds.feedname.get` (feed names)
+- `aliexpress.ds.feed.itemids.get` (feed item IDs)
+- `aliexpress.ds.recommend.feed.get` (recommended feed)
+- `aliexpress.ds.category.get` (categories)
+- `aliexpress.ds.image.search` (image search)
+- `aliexpress.ds.product.get` (product details)
+
+Shipping and order lifecycle (not to be activated yet):
+- `aliexpress.ds.freight.query`
+- `aliexpress.ds.address.get`
+- `aliexpress.ds.order.create`
+- `aliexpress.trade.buy.placeorder`
+- `aliexpress.trade.ds.order.get`
+- `aliexpress.ds.order.tracking.get`
+
+The published quotas must be enforced per method if/when the API is enabled. In particular, feed item ID retrieval is limited to 3 QPS and address retrieval to 4 QPS according to the supplied page. Use conservative throttling below those published ceilings and retry only idempotent reads with bounded backoff.
+
+### What is still needed to implement a real catalogue client
+
+Read the **Authentication** page and individual **Product API**, **Search API** and **Freight API** method pages in the same openservice guide. Capture their exact:
+- Base URL and path / gateway.
+- Signature algorithm, canonical parameter ordering, encoding and timestamp format.
+- Whether the access token is passed as `session`, `access_token`, or another field.
+- Exact input fields and required nested JSON parameter names.
+- Response envelope, pagination, product SKU/image/price structure and error format.
+- Whether the API test console can invoke each method for App ID 40465.
+
+Implement the read-only catalogue path first, using the existing OAuth identity and encrypted token storage. Add per-method QPS throttles and contract fixtures. Keep the existing fail-closed behavior until the exact method passes a read-only call with the existing App ID 40465. Do not create a new AppKey, do not call a third-party protocol guess, and do not activate order placement/payment methods.
+
+### First-party reference supplied by the owner
+
+- AliExpress Open Service: https://openservice.aliexpress.com/
+- Developer Guide → DropShippers API Developer → Quick Start → API QPS (latest update displayed: 2024-08-19 18:03:47).
+
+
+## Current Product API contract update (13 November 2026)
+
+The signed-in Open Platform console's current DropShippers Product API pages have now been inspected. See [ALIEXPRESS_DROPSHIPPERS_PRODUCT_API_EVIDENCE.md](./ALIEXPRESS_DROPSHIPPERS_PRODUCT_API_EVIDENCE.md) for the complete field inventory and evidence.
+
+Important correction to the earlier research summary: the current DropShippers method page itself demonstrates an IOP client call with Protocol.TOP. Its Java sample initializes IopClient at https://api-sg.aliexpress.com and calls aliexpress.ds.product.get with the existing OAuth access token; its PHP sample specifies https://api-sg.aliexpress.com/sync for the method request. This is distinct from the old deprecated eco.taobao.com/router/rest transport and must not be conflated with it.
+
+The product method requires ship_to_country and product_id, and returns base product data, SKU/stock/prices, attributes, images, package information, store ratings and logistics estimates. The feed-item method requires feed_name, allows page_size up to 200, and returns a search_id cursor valid for one minute. The feed-name method is listed in the console but its complete method page remains to be inspected.
+
+Implementation remains gated on verifying the exact current IOP SDK Protocol.TOP wire signing/common parameters and one harmless read-only call using the existing App ID 40465 and buyerApp token. Do not use the old eco.taobao router, do not restore separate legacy TOP credentials, and do not enable supplier order/payment writes. Existing customer M-Pesa/PayPal and seller/admin wallet flows are untouched.

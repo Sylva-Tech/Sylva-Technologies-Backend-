@@ -32,7 +32,7 @@ test('deprecated TOP catalogue transport fails closed without making a network r
     const { fetchRecommendedFeed } = require('../services/aliexpressService');
     await assert.rejects(
       fetchRecommendedFeed({ feed_name: 'DS bestseller' }, 'test-buyer-token'),
-      (error) => error.code === 'ALIEXPRESS_LEGACY_API_DISABLED' && error.status === 503 &&
+      (error) => error.code === 'ALIEXPRESS_CATALOG_API_NOT_VERIFIED' && error.status === 503 &&
         /deprecated/.test(error.message),
     );
     assert.equal(requestCount, 0);
@@ -96,7 +96,7 @@ test('deprecated TOP AppKey errors cannot be bypassed by legacy configuration', 
     const { fetchRecommendedFeed } = require('../services/aliexpressService');
     await assert.rejects(
       fetchRecommendedFeed({ feed_name: 'DS bestseller' }, 'test-buyer-token'),
-      (error) => error.code === 'ALIEXPRESS_LEGACY_API_DISABLED' && error.status === 503,
+      (error) => error.code === 'ALIEXPRESS_CATALOG_API_NOT_VERIFIED' && error.status === 503,
     );
   } finally {
     if (previous === undefined) delete process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED;
