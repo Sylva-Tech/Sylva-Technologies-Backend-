@@ -124,24 +124,21 @@ router.get('/status', protect, adminOnly, async (req, res) => {
         accessTokenExpiresAt: connection?.accessTokenExpiresAt || null,
         lastError: connection?.lastError || '',
         buyerAuthorized,
-        dropshipApiConfigured: dropshipApi.configured,
+        dropshipApiConfigured: false,
         legacyDropshipApiDeprecated: true,
-        legacyDropshipApiProviderConfirmed: process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED === 'true',
-        catalogSyncEnabled: Boolean(configured && buyerAuthorized && dropshipApi.configured &&
-          process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED === 'true'),
+        legacyDropshipApiProviderConfirmed: false,
+        iopOAuthConnected: Boolean(configured && connected),
+        iopCatalogApiVerified: false,
+        catalogSyncEnabled: false,
         catalogSyncReason: !configured
-          ? 'IOP OAuth configuration is incomplete. Check the AliExpress OAuth environment variables.'
-          : !buyerAuthorized
-            ? 'A connected buyerApp session is required. Seller Center OAuth cannot be used for Dropshipping buyer APIs.'
-            : process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED !== 'true'
-              ? 'AliExpress documents this legacy Dropshipping API as deprecated, and the previous live request returned isv.appkey-not-exists. Obtain written confirmation of current API support and AppKey provisioning from AliExpress before enabling catalogue calls. Do not create a second AppKey.'
-              : !dropshipApi.configured
-                ? 'Configure the AliExpress-confirmed Dropshipping gateway credentials on the backend.'
-                : 'AliExpress has confirmed the legacy gateway for this application. A successful live catalogue response is still required to verify access.',
+          ? 'IOP OAuth configuration is incomplete. Check the existing AliExpress App ID 40465 credentials and exact callback URL.'
+          : !connected
+            ? 'The existing AliExpress IOP application is not connected. Complete OAuth using the existing App ID 40465.'
+            : 'OAuth is connected, but no supported supplier-catalogue API method and permission have been verified for App ID 40465. The legacy TOP Dropshipping API is deprecated and its previous live request returned isv.appkey-not-exists. Obtain written confirmation of the supported IOP catalogue API and permission from AliExpress before enabling sync. Do not create a second AppKey.',
         supplierOrderingEnabled: false,
-        supplierOrderingReason: 'Supplier order placement and payment remain disabled until current production API support, supplier payment flow, and duplicate-order safeguards are verified.',
-        apiGeneration: 'legacy-top-dropshipping-deprecated',
-        dropshipGateway: 'https://eco.taobao.com/router/rest',
+        supplierOrderingReason: 'Supplier order placement and payment remain disabled until AliExpress confirms supported production APIs and Sylva verifies the complete supplier payment, duplicate-order, cancellation and tracking lifecycle.',
+        apiGeneration: 'iop-oauth-connected-catalogue-api-unverified',
+        dropshipGateway: null,
       },
     });
   } catch (error) {
@@ -151,20 +148,11 @@ router.get('/status', protect, adminOnly, async (req, res) => {
 
 router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
   try {
-    if (process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED !== 'true') {
-      return res.status(503).json({
-        success: false,
-        code: 'ALIEXPRESS_LEGACY_DROPSHIP_API_UNVERIFIED',
-        message: 'AliExpress currently documents the legacy Dropshipping/TOP API as deprecated, and the previous live request returned isv.appkey-not-exists. Catalogue calls are paused until AliExpress confirms the supported replacement or explicitly provisions this AppKey for the legacy gateway.',
-      });
-    }
-    if (!getDropshipApiConfig().configured) {
-      return res.status(503).json({
-        success: false,
-        code: 'ALIEXPRESS_DS_API_CREDENTIALS_MISSING',
-        message: 'Configure ALIEXPRESS_DS_APP_KEY and ALIEXPRESS_DS_APP_SECRET on the backend. These must be the credentials provisioned for the Dropshipping/TOP API; do not paste secrets into the frontend or chat.',
-      });
-    }
+    return res.status(503).json({
+      success: false,
+      code: 'ALIEXPRESS_CATALOG_API_NOT_PROVISIONED',
+      message: 'Catalogue sync is paused. OAuth connectivity does not grant supplier-catalogue access. The legacy TOP Dropshipping API is deprecated and returned isv.appkey-not-exists for this app. Obtain written confirmation of the supported IOP catalogue method and active API permission for existing App ID 40465 before implementing or enabling catalogue calls. Do not create another AppKey.',
+    });
     const { accessToken } = await getBuyerConnection();
     const feedName = String(req.body?.feedName || 'DS bestseller').trim().slice(0, 100);
     const country = String(req.body?.country || 'KE').trim().toUpperCase();
