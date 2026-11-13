@@ -30,11 +30,15 @@ Sign in to the Open Platform using the account that owns the existing Sylva Tech
    - public/supplier product search or recommended supplier feed;
    - supplier product detail, SKU, price and inventory;
    - shipping-to-country availability and shipping-cost quote.
-5. Apply for the group that explicitly documents supplier/dropshipper catalogue access, if it is available. In the application reason, describe Sylva as a Kenya-focused ecommerce retailer that needs read-only supplier product discovery, product details, SKU/price/stock and Kenya shipping information for manual admin review. Do not request supplier order placement yet.
-6. If no such permission group or method is listed, open an AliExpress support ticket against App ID 40465 and request written confirmation of the supported replacement for the deprecated TOP Dropshipping APIs, including the exact method names, REST host/path, signing/authentication requirements, required buyer authorization context, permission group, and whether Kenya is a supported ship-to country.
-7. Do not change credentials or try the legacy TOP gateway while awaiting the answer.
+5. **Do not click Apply for AliExpress-dropship while it is already Active.** AliExpress defines Active as available to the app by default or already applied.
+6. If the **AliExpress-dropship** row/name does not open, use the documented alternative: open the Open Platform **API Reference** from the documentation navigation (or the console's API Reference/API List), search the exact API method names, and record each method's category, gateway, authentication type and permission requirement. Do not treat the non-responsive row as evidence that the permission is missing.
+7. If API Reference also fails to load, use the Open Platform **Support Center / feedback** route from the console or documentation and submit the request below. Include App ID 40465 and a screenshot of the Active group row, but never include the App Secret, access token, refresh token or authorization code.
+8. Request written confirmation of the currently supported IOP replacement for the deprecated TOP Dropshipping APIs. Ask AliExpress to identify the exact read-only supplier catalogue search/feed, product detail, SKU/price/stock and Kenya shipping methods; the exact REST host/path; signing/authentication requirements; buyer authorization context; required permission group; and whether App ID 40465 is provisioned for those methods.
+9. Do not change credentials, create another AppKey, or try the legacy TOP gateway while awaiting the answer.
 
-AliExpress's documented permission workflow is to open App Overview, inspect API Permission Groups, open the relevant group to view its API list, and use Apply to request the permission. A group must be Active before the application can invoke its APIs.
+**Permission assignment for Sylva:** the existing `AliExpress-dropship` group is already Active, so no additional group application is indicated by the status. No individual API method can safely be assigned in backend code until the API Reference or AliExpress support confirms its exact current method name and permission mapping. The legacy Dropshipping pages are explicitly deprecated and are not a valid source for assigning a new IOP method.
+
+AliExpress's documented permission workflow says Active means the group is available to the app by default or has been applied; the group name normally opens its API list, and API Reference is the documented alternative. Apply is for a group that requires a separate request—not an already Active group.
 
 ## Backend environment
 
