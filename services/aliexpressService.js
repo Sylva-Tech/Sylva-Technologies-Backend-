@@ -3,18 +3,23 @@ const crypto = require('crypto');
 const API_BASE = 'https://api-sg.aliexpress.com/rest';
 const AUTH_BASE = 'https://api-sg.aliexpress.com/oauth/authorize';
 
-const LEGACY_DROPSHIP_DISABLED_REASON = 'The current DropShippers Product API documentation specifies an IOP client call using Protocol.TOP and the api-sg /sync method endpoint. The exact wire signing/common parameters and App ID 40465 method entitlement have not yet been verified. The deprecated eco.taobao.com/router/rest transport remains disabled.';
+const CATALOG_NOT_VERIFIED_REASON = 'The current DropShippers Product API page documents IOP Protocol.TOP and the /sync request example. The official general IOP signing guide documents HMAC-SHA256, but the exact Protocol.TOP common-parameter/wire contract and App ID 40465 method entitlement have not yet been independently verified. No catalogue request is sent until those checks and a read-only product test succeed.';
 
 const getDropshipApiConfig = () => ({
   configured: false,
   appKeyConfigured: false,
   appSecretConfigured: false,
   supported: false,
-  reason: LEGACY_DROPSHIP_DISABLED_REASON,
+  protocol: 'IOP Protocol.TOP',
+  endpoint: 'https://api-sg.aliexpress.com/sync',
+  wireContractVerified: false,
+  methodEntitlementVerified: false,
+  readOnlyProductTestSucceeded: false,
+  reason: CATALOG_NOT_VERIFIED_REASON,
 });
 
 const requiredDropshipEnv = () => {
-  const error = new Error(LEGACY_DROPSHIP_DISABLED_REASON);
+  const error = new Error(CATALOG_NOT_VERIFIED_REASON);
   error.code = 'ALIEXPRESS_CATALOG_API_NOT_VERIFIED';
   error.status = 503;
   throw error;
@@ -101,106 +106,19 @@ const decryptSecret = (value) => {
   return Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]).toString('utf8');
 };
 
+// Do not implement a guessed Protocol.TOP signer or fall back to the deprecated
+// eco.taobao.com/router/rest gateway. This guard intentionally blocks all
+// catalogue methods until the current SDK wire contract and app entitlement
+// are verified against a read-only product request.
+const callDropshipApi = async () => requiredDropshipEnv();
 
-const formatAliExpressTimestamp = (date = new Date()) => {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(date);
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${value.year}-${value.month}-${value.day} ${value.hour}:${value.minute}:${value.second}`;
+module.exports = {
+  buildAuthorizationUrl,
+  exchangeAuthorizationCode,
+  refreshAccessToken,
+  encryptSecret,
+  decryptSecret,
+  getDropshipApiConfig,
+  requiredDropshipEnv,
+  callDropshipApi,
 };
-
-// The Dropshipper product APIs use the TOP-compatible router documented by
-// AliExpress. The OAuth exchange above remains on the api-sg /rest endpoint.
-const DROPSHIP_API_BASE = 'https://eco.taobao.com/router/rest';
-
-const extractRecommendedProducts = (payload) => {
-  const wrapper = payload?.aliexpress_ds_recommend_feed_get_response || payload;
-  const result = wrapper?.result || wrapper?.resp_result?.result || wrapper?.data?.result;
-  const collection = result?.products;
-  if (Array.isArray(collection)) return collection;
-  if (Array.isArray(collection?.integer)) return collection.integer;
-  if (Array.isArray(collection?.product)) return collection.product;
-  if (collection && typeof collection === 'object') {
-    return Object.values(collection).flatMap((value) => Array.isArray(value) ? value : value && typeof value === 'object' ? [value] : []);
-  }
-  return [];
-};
-
-const signTopRequest = (params, secret = process.env.ALIEXPRESS_DS_APP_SECRET) => {
-  const payload = Object.keys(params)
-    .filter((key) => key !== 'sign')
-    .sort()
-    .map((key) => `${key}${params[key]}`)
-    .join('');
-  return crypto.createHmac('md5', secret).update(payload, 'utf8').digest('hex').toUpperCase();
-};
-
-const callDropshipApi = async (method, values, accessToken) => {
-  // Fail closed until the current IOP Protocol.TOP /sync wire contract and
-  // this app's method entitlement are verified. Never fall back to the old
-  // deprecated eco.taobao.com/router/rest gateway.
-  requiredDropshipEnv();
-  if (!/^aliexpress\.ds\.[a-z.]+$/.test(String(method || ''))) {
-    throw new Error('Unsupported AliExpress Dropshipping API method.');
-  }
-  if (!accessToken) {
-    const error = new Error('AliExpress authorization is missing. Re-authorize the connected account.');
-    error.code = 'ALIEXPRESS_TOKEN_MISSING';
-    throw error;
-  }
-
-  const params = {
-    app_key: process.env.ALIEXPRESS_DS_APP_KEY,
-    method,
-    timestamp: formatAliExpressTimestamp(),
-    sign_method: 'hmac',
-    format: 'json',
-    v: '2.0',
-    session: accessToken,
-    ...values,
-  };
-  params.sign = signTopRequest(params, process.env.ALIEXPRESS_DS_APP_SECRET);
-
-  const response = await fetch(DROPSHIP_API_BASE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8', Accept: 'application/json' },
-    body: new URLSearchParams(params),
-    signal: AbortSignal.timeout(20000),
-  });
-  const payload = await response.json().catch(() => ({}));
-  const wrapperKey = `${method.replace(/\./g, '_')}_response`;
-  const wrapper = payload?.[wrapperKey] || payload;
-  const result = wrapper?.result || wrapper?.resp_result?.result || wrapper?.data?.result;
-
-  if (!response.ok || payload?.error_response || wrapper?.error_response || !result) {
-    const providerError = payload?.error_response || wrapper?.error_response;
-    const reason = providerError?.sub_msg || providerError?.msg || wrapper?.rsp_msg || payload?.message;
-    const providerCode = String(providerError?.sub_code || providerError?.code || '');
-    const isUnknownAppKey = providerCode.toLowerCase() === 'isv.appkey-not-exists';
-    const error = new Error(isUnknownAppKey
-      ? 'AliExpress TOP gateway does not recognize the configured Dropshipping App Key. Confirm that ALIEXPRESS_DS_APP_KEY and ALIEXPRESS_DS_APP_SECRET belong to an application provisioned for the legacy Dropshipping/TOP API; IOP OAuth credentials are not assumed to be interchangeable.'
-      : (reason || 'AliExpress rejected the product catalogue request. Check the Dropshipping API permissions and account eligibility.'));
-    error.code = isUnknownAppKey ? 'ALIEXPRESS_DS_APP_KEY_NOT_REGISTERED' : (providerCode || 'ALIEXPRESS_CATALOG_API_ERROR');
-    error.providerCode = providerCode || null;
-    error.requestId = providerError?.request_id || providerError?.requestId || payload?.request_id || null;
-    error.status = isUnknownAppKey ? 502 : (response.status || 502);
-    throw error;
-  }
-
-  return { result, raw: payload };
-};
-
-const fetchRecommendedFeed = async (values, accessToken) => {
-  const response = await callDropshipApi('aliexpress.ds.recommend.feed.get', values, accessToken);
-  return { ...response, products: extractRecommendedProducts(response.raw) };
-};
-
-module.exports = { buildAuthorizationUrl, exchangeAuthorizationCode, refreshAccessToken, encryptSecret, decryptSecret, formatAliExpressTimestamp, extractRecommendedProducts, getDropshipApiConfig, requiredDropshipEnv, callDropshipApi, fetchRecommendedFeed };
