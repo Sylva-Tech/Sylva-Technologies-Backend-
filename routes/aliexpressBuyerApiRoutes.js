@@ -12,7 +12,6 @@ const {
 } = require('../services/aliexpressService');
 
 const router = express.Router();
-router.use(protect, adminOnly);
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -104,7 +103,7 @@ function normalizeProduct(item) {
 
 // This router is mounted before the older Seller Center routes so the
 // buyer-account Dropshipping API has its own explicit authorization boundary.
-router.get('/status', async (req, res) => {
+router.get('/status', protect, adminOnly, async (req, res) => {
   try {
     const connection = await AliExpressConnection.findOne({ provider: 'aliexpress' }).lean();
     const configured = Boolean(process.env.ALIEXPRESS_APP_KEY && process.env.ALIEXPRESS_APP_SECRET &&
@@ -126,14 +125,19 @@ router.get('/status', async (req, res) => {
         lastError: connection?.lastError || '',
         buyerAuthorized,
         dropshipApiConfigured: dropshipApi.configured,
-        catalogSyncEnabled: Boolean(configured && buyerAuthorized && dropshipApi.configured),
+        legacyDropshipApiDeprecated: true,
+        legacyDropshipApiProviderConfirmed: process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED === 'true',
+        catalogSyncEnabled: Boolean(configured && buyerAuthorized && dropshipApi.configured &&
+          process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED === 'true'),
         catalogSyncReason: !configured
           ? 'IOP OAuth configuration is incomplete. Check the AliExpress OAuth environment variables.'
           : !buyerAuthorized
             ? 'A connected buyerApp session is required. Seller Center OAuth cannot be used for Dropshipping buyer APIs.'
-            : !dropshipApi.configured
-              ? 'The Dropshipping TOP gateway requires its own ALIEXPRESS_DS_APP_KEY and ALIEXPRESS_DS_APP_SECRET settings. The IOP OAuth key/secret are deliberately not reused.'
-              : 'Buyer authorization and separate Dropshipping gateway credentials are configured. Live provider acceptance still needs to be verified by a successful catalogue request.',
+            : process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED !== 'true'
+              ? 'AliExpress documents this legacy Dropshipping API as deprecated, and the previous live request returned isv.appkey-not-exists. Obtain written confirmation of current API support and AppKey provisioning from AliExpress before enabling catalogue calls. Do not create a second AppKey.'
+              : !dropshipApi.configured
+                ? 'Configure the AliExpress-confirmed Dropshipping gateway credentials on the backend.'
+                : 'AliExpress has confirmed the legacy gateway for this application. A successful live catalogue response is still required to verify access.',
         supplierOrderingEnabled: false,
         supplierOrderingReason: 'Supplier order placement and payment remain disabled until current production API support, supplier payment flow, and duplicate-order safeguards are verified.',
         apiGeneration: 'legacy-top-dropshipping-deprecated',
@@ -145,8 +149,15 @@ router.get('/status', async (req, res) => {
   }
 });
 
-router.post('/catalog/sync', limiter, async (req, res) => {
+router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
   try {
+    if (process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED !== 'true') {
+      return res.status(503).json({
+        success: false,
+        code: 'ALIEXPRESS_LEGACY_DROPSHIP_API_UNVERIFIED',
+        message: 'AliExpress currently documents the legacy Dropshipping/TOP API as deprecated, and the previous live request returned isv.appkey-not-exists. Catalogue calls are paused until AliExpress confirms the supported replacement or explicitly provisions this AppKey for the legacy gateway.',
+      });
+    }
     if (!getDropshipApiConfig().configured) {
       return res.status(503).json({
         success: false,
