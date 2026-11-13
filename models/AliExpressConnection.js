@@ -18,6 +18,13 @@ const AliExpressConnectionSchema = new mongoose.Schema({
   catalogLastTestProductId: { type: String, default: '' },
   catalogLastTestProductTitle: { type: String, default: '' },
   catalogLastTestError: { type: String, default: '' },
+  catalogFeedNamesVerifiedAt: { type: Date, default: null },
+  catalogFeedItemIdsVerifiedAt: { type: Date, default: null },
+  catalogLastFeedName: { type: String, default: '' },
+  catalogLastFeedItemCount: { type: Number, default: 0 },
+  catalogLastFeedCursor: { type: String, default: '' },
+  catalogLastSyncAt: { type: Date, default: null },
+  catalogLastSyncCount: { type: Number, default: 0 },
 }, { timestamps: true });
 
 module.exports = mongoose.models.AliExpressConnection || mongoose.model('AliExpressConnection', AliExpressConnectionSchema);
