@@ -366,7 +366,12 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
         failures.push({ productId, reason: String(error.message || 'Product detail lookup failed.').slice(0, 180) });
       }
     }
-    if (operations.length) await AliExpressCatalogProduct.bulkWrite(operations, { ordered: false });
+    if (!operations.length) {
+      const error = new Error('Feed discovery and item-ID retrieval succeeded, but no product detail could be normalized. Catalogue sync is not marked successful.');
+      error.code = 'ALIEXPRESS_PRODUCT_DETAILS_NOT_VERIFIED';
+      throw error;
+    }
+    await AliExpressCatalogProduct.bulkWrite(operations, { ordered: false });
     const now = new Date();
     connection.catalogProtocolVerifiedAt = connection.catalogProtocolVerifiedAt || now;
     connection.catalogMethodEntitlementVerifiedAt = now;
