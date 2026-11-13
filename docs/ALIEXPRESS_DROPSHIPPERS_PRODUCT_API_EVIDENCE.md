@@ -204,3 +204,68 @@ The buyerApp Supplier Centre status now reports separate flags for:
 - successful read-only product test.
 
 All three remain false, and catalogue sync remains blocked with `ALIEXPRESS_CATALOG_API_NOT_VERIFIED`. Legacy credential environment variables cannot enable it. No live AliExpress catalogue call has been made by this code change. Supplier order placement, supplier payment, fulfilment writes, customer checkout and Sylva wallet accounting remain unchanged.
+
+
+## Generated official IOP Java SDK inspected (owner-uploaded SDK ZIP, 13 November 2026)
+
+The generated AliExpress IOP Java SDK source JAR supplied for the existing application was inspected. Relevant source files:
+
+- `com/global/iop/api/TopExecutor.java`
+- `com/global/iop/api/BaseExecutor.java`
+- `com/global/iop/util/IopUtils.java`
+- `com/global/iop/util/IopHashMap.java`
+- `com/global/iop/util/RequestContext.java`
+- `com/global/iop/util/Constants.java`
+- `com/aliexpress/open/request/AliexpressDsProductGetRequest.java`
+- `com/aliexpress/open/response/AliexpressDsProductGetResponse.java`
+- `com/aliexpress/open/domain/AliexpressDsProductGetAeItemQueryResultDTO.java`
+- `com/aliexpress/open/domain/AliexpressDsProductGetAeItemBaseInfoDTO.java`
+- `com/aliexpress/open/request/AliexpressDsFeednameGetRequest.java`
+- `com/aliexpress/open/request/AliexpressDsFeedItemidsGetRequest.java`
+
+### Exact Protocol.TOP contract from TopExecutor
+
+The SDK constructs these common parameters:
+
+- `app_key`: existing application App Key
+- `v`: `2.0`
+- `timestamp`: Java `Date(timestamp)`, serialized by `IopHashMap` as Unix epoch milliseconds
+- `method`: API method name
+- `format`: `json`
+- `session`: OAuth access token (not `access_token`)
+- `partner_id`: `iop-sdk-java-20181207`
+- `sign_method`: `sha256`
+- `simplify`: `true` by default
+
+The SDK forms the request URL as `<serverUrl>/sync?method=<apiName>`, then appends the encoded common parameters to the URL. Since `method` is also one of the common parameters, the generated SDK URL contains the method parameter twice. Business parameters are sent as an `application/x-www-form-urlencoded` POST body.
+
+The signature is HMAC-SHA256 with the app secret, uppercase hexadecimal output. `IopUtils.signApiRequest("", allParams, null, appSecret, "sha256")` sorts the keys in the merged common + business parameter map, concatenates each key and value, and signs the concatenated string. There is no API-name/path prefix in this TOP signer. The `sign` field itself is added only after the signature is calculated and is therefore not part of the signed map.
+
+The Node adapter now mirrors these generated SDK rules, but intentionally retains normal TLS certificate validation. The Java SDK's legacy `WebUtils` has SSL and hostname verification bypasses enabled by default; Sylva does not copy that unsafe behavior.
+
+### Generated Product API method contract
+
+The generated `AliexpressDsProductGetRequest` confirms these fields:
+- Required in the current documentation: `ship_to_country`, `product_id`
+- Optional generated fields: `target_currency`, `target_language`, `remove_personal_benefit`
+- Additional generated fields not shown in the supplied current method parameter table: `biz_model`, `province_code`, `city_code`. Sylva does not send these undocumented optional fields.
+
+The generated response confirms `result.ae_item_base_info_dto`, `result.ae_item_sku_info_dtos`, `result.ae_multimedia_info_dto`, logistics, package and store fields. The base DTO identifies `product_id`, `subject`, `currency_code`, `category_id`, `product_status_type`, `avg_evaluation_rating` and `evaluation_count`.
+
+The generated Feed API request classes confirm:
+- `aliexpress.ds.feedname.get` has the optional `app_signature` field.
+- `aliexpress.ds.feed.itemids.get` has `page_size`, `category_id`, `feed_name` and `search_id`. The generated SDK therefore includes optional `category_id` even though the supplied current parameter table did not list it. Sylva will not send it unless needed and confirmed by the current method contract.
+
+### Backend implementation and safety boundary
+
+The buyerApp backend now has an admin-only `POST /api/aliexpress/catalog/test-product` endpoint. It:
+- accepts a numeric product ID and ship-to country (default `KE`);
+- refreshes the existing encrypted buyerApp token when it is missing or near expiry;
+- calls only `aliexpress.ds.product.get` through the SDK-matched `/sync` TOP adapter;
+- validates the product response envelope and extracts a minimal product summary;
+- persists the time, product ID and title of a successful read-only verification;
+- never imports, publishes, purchases or places an order.
+
+The adapter allowlists only these read-only method names: `aliexpress.ds.product.get`, `aliexpress.ds.feedname.get` and `aliexpress.ds.feed.itemids.get`. Supplier write methods are rejected before network access. The current diagnostic endpoint invokes only product detail.
+
+The Supplier Centre status now reports the wire contract as verified from the generated SDK, separately from App ID method entitlement and a successful live product test. Catalogue sync remains disabled until feed discovery, pagination and private review-queue import are separately verified. Supplier ordering remains disabled. No live API request is represented as successful by CI tests; a real read-only request still must be run against App ID 40465 and a valid product ID.
