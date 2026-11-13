@@ -42,28 +42,15 @@ test('AliExpress catalogue normalizer rejects non-HTTPS and untrusted image URLs
 });
 
 
-test('Dropshipping TOP credentials are configured independently from IOP OAuth credentials', () => {
-  const previousKey = process.env.ALIEXPRESS_DS_APP_KEY;
-  const previousSecret = process.env.ALIEXPRESS_DS_APP_SECRET;
-  delete process.env.ALIEXPRESS_DS_APP_KEY;
-  delete process.env.ALIEXPRESS_DS_APP_SECRET;
-  assert.deepEqual(getDropshipApiConfig(), { configured: false, appKeyConfigured: false, appSecretConfigured: false });
-  assert.throws(requiredDropshipEnv, (error) => error.code === 'ALIEXPRESS_DS_API_CREDENTIALS_MISSING' && error.status === 503);
-  process.env.ALIEXPRESS_DS_APP_KEY = 'test-top-key';
-  process.env.ALIEXPRESS_DS_APP_SECRET = 'test-top-secret';
-  assert.deepEqual(getDropshipApiConfig(), { configured: true, appKeyConfigured: true, appSecretConfigured: true });
-  assert.doesNotThrow(requiredDropshipEnv);
-  if (previousKey === undefined) delete process.env.ALIEXPRESS_DS_APP_KEY; else process.env.ALIEXPRESS_DS_APP_KEY = previousKey;
-  if (previousSecret === undefined) delete process.env.ALIEXPRESS_DS_APP_SECRET; else process.env.ALIEXPRESS_DS_APP_SECRET = previousSecret;
-});
-
-
-test('legacy Dropshipping catalogue calls stay disabled until AliExpress confirms support', () => {
-  const previous = process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED;
-  process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED = 'false';
-  assert.notEqual(process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED, 'true');
-  process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED = 'true';
-  assert.equal(process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED, 'true');
-  if (previous === undefined) delete process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED;
-  else process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED = previous;
+test('deprecated TOP Dropshipping credentials cannot enable catalogue access', () => {
+  assert.deepEqual(getDropshipApiConfig(), {
+    configured: false,
+    appKeyConfigured: false,
+    appSecretConfigured: false,
+    supported: false,
+    reason: getDropshipApiConfig().reason,
+  });
+  assert.throws(requiredDropshipEnv, (error) =>
+    error.code === 'ALIEXPRESS_LEGACY_API_DISABLED' && error.status === 503 &&
+    /deprecated/.test(error.message));
 });
