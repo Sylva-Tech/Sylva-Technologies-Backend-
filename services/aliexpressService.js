@@ -3,20 +3,21 @@ const crypto = require('crypto');
 const API_BASE = 'https://api-sg.aliexpress.com/rest';
 const AUTH_BASE = 'https://api-sg.aliexpress.com/oauth/authorize';
 
+const LEGACY_DROPSHIP_DISABLED_REASON = 'The legacy AliExpress TOP Dropshipping API is deprecated and this application has not received written confirmation that App ID 40465 is provisioned for it. Use only a currently supported API explicitly granted to this app.';
+
 const getDropshipApiConfig = () => ({
-  configured: Boolean(process.env.ALIEXPRESS_DS_APP_KEY && process.env.ALIEXPRESS_DS_APP_SECRET),
-  appKeyConfigured: Boolean(process.env.ALIEXPRESS_DS_APP_KEY),
-  appSecretConfigured: Boolean(process.env.ALIEXPRESS_DS_APP_SECRET),
+  configured: false,
+  appKeyConfigured: false,
+  appSecretConfigured: false,
+  supported: false,
+  reason: LEGACY_DROPSHIP_DISABLED_REASON,
 });
 
 const requiredDropshipEnv = () => {
-  const missing = ['ALIEXPRESS_DS_APP_KEY', 'ALIEXPRESS_DS_APP_SECRET'].filter((key) => !process.env[key]);
-  if (missing.length) {
-    const error = new Error(`AliExpress Dropshipping gateway credentials are missing: ${missing.join(', ')}. Configure the TOP/Dropshipping credentials separately from the IOP OAuth credentials.`);
-    error.code = 'ALIEXPRESS_DS_API_CREDENTIALS_MISSING';
-    error.status = 503;
-    throw error;
-  }
+  const error = new Error(LEGACY_DROPSHIP_DISABLED_REASON);
+  error.code = 'ALIEXPRESS_LEGACY_API_DISABLED';
+  error.status = 503;
+  throw error;
 };
 
 const requiredEnv = () => {
@@ -143,6 +144,9 @@ const signTopRequest = (params, secret = process.env.ALIEXPRESS_DS_APP_SECRET) =
 };
 
 const callDropshipApi = async (method, values, accessToken) => {
+  // Fail closed permanently for the deprecated TOP gateway. An environment
+  // flag or manually copied credentials must never reactivate an unsupported
+  // protocol; a supported IOP adapter must be implemented from provider docs.
   requiredDropshipEnv();
   if (!/^aliexpress\.ds\.[a-z.]+$/.test(String(method || ''))) {
     throw new Error('Unsupported AliExpress Dropshipping API method.');
