@@ -11,6 +11,45 @@ Sylva uses the existing AliExpress Open Platform application (App ID 40465) and 
 - Admin status reports OAuth connectivity separately from supplier-catalogue API authorization.
 - Supplier catalogue sync and supplier ordering are disabled until AliExpress confirms a currently supported API method and grants the required API permission to this existing app.
 
+## Newly located DropShippers API Developer menu (13 November 2026)
+
+The Open Platform console navigation for the existing account now visibly exposes **DropShippers API Developer** with these sections:
+
+- **Quick Start** and **Authentication**.
+- **Product API**: `aliexpress.ds.product.get`, `aliexpress.ds.feed.itemids.get`, and `aliexpress.ds.feedname.get`.
+- **Payment**: `aliexpress.ds.member.benefit.get`.
+- **Freight API**, **Order API**, **Search API**, **Webhook**, **FAQ**, **Appendix**, and **Changelog For DropShip API**.
+
+This is a useful, concrete discovery and supersedes the earlier assumption that the Dropshipper documentation area was not visible. It does **not yet prove** that these methods are callable by App ID 40465: the screenshot shows the navigation/menu, not each method's full specification, assigned permission, request host/path, signature scheme, required parameters, or a successful live response. The menu displays a latest documentation update of 2024-03-29; confirm that the method pages still describe the currently supported production contract before enabling calls.
+
+### Method-by-method integration plan
+
+| Documentation entry | Intended Sylva use | Current implementation decision |
+| --- | --- | --- |
+| `aliexpress.ds.product.get` | Read product detail, SKU/variant and product attributes after a product ID is known | Candidate read-only detail method; do not call until its full current IOP request specification and App 40465 permission are verified |
+| `aliexpress.ds.feed.itemids.get` | Discover product IDs from a feed | Candidate feed discovery method; verify feed identifiers, pagination, country/currency support and response shape |
+| `aliexpress.ds.feedname.get` | List available feed names | Candidate feed metadata method; verify exact parameters and authorization |
+| Search API section | Search supplier products by keyword/category | Inspect the section for exact method names; do not infer or substitute affiliate search methods |
+| Freight API section | Quote delivery options/cost to Kenya (KE) | Inspect exact method and supported destination coverage before using shipping costs in checkout |
+| Order API section | Create and query supplier orders, cancellation and tracking | Keep supplier ordering disabled until all create/query/cancel/refund/tracking and idempotency requirements are verified |
+| `aliexpress.ds.member.benefit.get` (Payment section) | Retrieve member benefit/eligibility information, subject to its documented response | **Not a supplier payment/checkout method.** Do not use it to charge a supplier, fund an order, or move Sylva wallet balances |
+
+The Payment section currently exposes only the member-benefit method in the menu provided. Sylva must keep its customer payment collection (M-Pesa/PayPal), platform admin wallet, seller KES/USD wallets, and supplier-side payment lifecycle separate. No supplier payment API has been established by this menu entry.
+
+### Next documentation pages required before coding live calls
+
+Open each visible method/section in the DropShippers API Developer navigation and capture its full page, especially:
+
+1. **Authentication** and **Quick Start**: gateway/base URL, token type, signing algorithm, timestamp format, required headers/parameters, and whether the IOP buyerApp OAuth token from the existing app is accepted.
+2. **Product API** pages for all three named methods: exact input schema, output schema, pagination, image URLs, SKU/stock/prices, country/currency/language fields, and error codes.
+3. **Search API**: exact search method name and query/filter/page parameters.
+4. **Freight API**: exact freight quote method, destination country/postcode requirements, currency and shipping-service response.
+5. **Order API**: exact order creation, order detail, payment, cancellation/refund and tracking methods, plus idempotency and buyer authorization rules.
+6. **Payment**: the complete `aliexpress.ds.member.benefit.get` specification and an explicit confirmation from AliExpress whether a separate supplier-payment API exists and is enabled for App ID 40465.
+7. **Webhook**: event names, signature verification, retry policy and callback registration requirements.
+
+Do not paste secrets, access/refresh tokens, authorization codes, or signed request URLs into screenshots or tickets. Once these pages are available, record their exact specs here and implement only the verified methods in a dedicated IOP Dropship adapter. Keep catalogue sync in the private review queue and keep supplier ordering/payment disabled until separately proven.
+
 ## Why catalogue calls are blocked
 
 The legacy Dropshipping/TOP documentation is explicitly marked deprecated. The prior live request to the legacy TOP gateway returned `isv.appkey-not-exists`, while IOP OAuth token creation and refresh succeeded. These results establish that OAuth connectivity is working; they do not establish supplier-catalogue access.
