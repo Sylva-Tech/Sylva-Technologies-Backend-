@@ -1,49 +1,64 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+
 const {
-  formatAliExpressTimestamp,
-  extractRecommendedProducts,
+  getDropshipApiConfig,
+  requiredDropshipEnv,
+  callDropshipApi,
+  exchangeAuthorizationCode,
+  encryptSecret,
+  decryptSecret,
 } = require('../services/aliexpressService');
 
-test('AliExpress timestamps use the documented GMT+8 format', () => {
-  const timestamp = formatAliExpressTimestamp(new Date('2026-01-02T03:04:05.000Z'));
-  assert.match(timestamp, /^2026-01-02 11:04:05$/);
+test('current DropShippers Protocol.TOP evidence remains explicitly unverified', () => {
+  const config = getDropshipApiConfig();
+  assert.equal(config.configured, false);
+  assert.equal(config.supported, false);
+  assert.equal(config.protocol, 'IOP Protocol.TOP');
+  assert.equal(config.endpoint, 'https://api-sg.aliexpress.com/sync');
+  assert.equal(config.wireContractVerified, false);
+  assert.equal(config.methodEntitlementVerified, false);
+  assert.equal(config.readOnlyProductTestSucceeded, false);
 });
 
-test('AliExpress recommended feed parser handles the documented integer product collection', () => {
-  const products = [{ product_id: '1001', product_title: 'USB-C hub' }, { product_id: '1002', product_title: 'SSD enclosure' }];
-  const result = extractRecommendedProducts({
-    aliexpress_ds_recommend_feed_get_response: {
-      result: { products: { integer: products } },
-    },
-  });
-  assert.deepEqual(result, products);
-});
-
-test('AliExpress recommended feed parser safely handles an empty response', () => {
-  assert.deepEqual(extractRecommendedProducts({}), []);
-});
-
-test('deprecated TOP catalogue transport fails closed without making a network request', async () => {
+test('catalogue calls fail closed and never fall back to the deprecated TOP gateway', async () => {
   const previousFetch = global.fetch;
+  const previous = {
+    legacyKey: process.env.ALIEXPRESS_DS_APP_KEY,
+    legacySecret: process.env.ALIEXPRESS_DS_APP_SECRET,
+    legacyFlag: process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED,
+  };
   let requestCount = 0;
-  global.fetch = async () => { requestCount += 1; throw new Error('Unexpected legacy network request'); };
+  global.fetch = async () => {
+    requestCount += 1;
+    throw new Error('Unexpected AliExpress catalogue network request');
+  };
+  process.env.ALIEXPRESS_DS_APP_KEY = 'legacy-test-key';
+  process.env.ALIEXPRESS_DS_APP_SECRET = 'legacy-test-secret';
+  process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED = 'true';
+
   try {
-    const { fetchRecommendedFeed } = require('../services/aliexpressService');
     await assert.rejects(
-      fetchRecommendedFeed({ feed_name: 'DS bestseller' }, 'test-buyer-token'),
-      (error) => error.code === 'ALIEXPRESS_CATALOG_API_NOT_VERIFIED' && error.status === 503 &&
-        /deprecated/.test(error.message),
+      callDropshipApi('aliexpress.ds.product.get', { product_id: '1001', ship_to_country: 'KE' }, 'test-buyer-token'),
+      (error) => error.code === 'ALIEXPRESS_CATALOG_API_NOT_VERIFIED' &&
+        error.status === 503 && /Protocol.TOP/.test(error.message),
     );
     assert.equal(requestCount, 0);
+    assert.throws(requiredDropshipEnv, (error) =>
+      error.code === 'ALIEXPRESS_CATALOG_API_NOT_VERIFIED' && error.status === 503);
   } finally {
     global.fetch = previousFetch;
+    if (previous.legacyKey === undefined) delete process.env.ALIEXPRESS_DS_APP_KEY;
+    else process.env.ALIEXPRESS_DS_APP_KEY = previous.legacyKey;
+    if (previous.legacySecret === undefined) delete process.env.ALIEXPRESS_DS_APP_SECRET;
+    else process.env.ALIEXPRESS_DS_APP_SECRET = previous.legacySecret;
+    if (previous.legacyFlag === undefined) delete process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED;
+    else process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED = previous.legacyFlag;
   }
 });
 
-
-test('AliExpress IOP token exchange uses a millisecond epoch timestamp and path-prefixed signature', async () => {
-  const crypto = require('node:crypto');
+test('AliExpress IOP token exchange retains its existing REST endpoint and path-prefixed HMAC-SHA256 signature', async () => {
   const previous = {
     key: process.env.ALIEXPRESS_APP_KEY,
     secret: process.env.ALIEXPRESS_APP_SECRET,
@@ -65,7 +80,6 @@ test('AliExpress IOP token exchange uses a millisecond epoch timestamp and path-
   };
 
   try {
-    const { exchangeAuthorizationCode } = require('../services/aliexpressService');
     const result = await exchangeAuthorizationCode('test-authorization-code');
     assert.equal(captured.url, 'https://api-sg.aliexpress.com/rest/auth/token/create');
     const params = Object.fromEntries(new URLSearchParams(captured.body));
@@ -88,18 +102,15 @@ test('AliExpress IOP token exchange uses a millisecond epoch timestamp and path-
   }
 });
 
-
-test('deprecated TOP AppKey errors cannot be bypassed by legacy configuration', async () => {
-  const previous = process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED;
-  process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED = 'true';
+test('AliExpress OAuth tokens remain encrypted with authenticated AES-256-GCM storage', () => {
+  const previous = process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY;
+  process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY = 'd'.repeat(64);
   try {
-    const { fetchRecommendedFeed } = require('../services/aliexpressService');
-    await assert.rejects(
-      fetchRecommendedFeed({ feed_name: 'DS bestseller' }, 'test-buyer-token'),
-      (error) => error.code === 'ALIEXPRESS_CATALOG_API_NOT_VERIFIED' && error.status === 503,
-    );
+    const encrypted = encryptSecret('buyer-access-token');
+    assert.notEqual(encrypted, 'buyer-access-token');
+    assert.equal(decryptSecret(encrypted), 'buyer-access-token');
   } finally {
-    if (previous === undefined) delete process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED;
-    else process.env.ALIEXPRESS_LEGACY_DROPSHIP_API_CONFIRMED = previous;
+    if (previous === undefined) delete process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY;
+    else process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY = previous;
   }
 });
