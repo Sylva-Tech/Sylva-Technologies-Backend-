@@ -166,3 +166,41 @@ Current decision:
 - Continue with the current first-party documented `aliexpress.ds.feedname.get` -> `aliexpress.ds.feed.itemids.get` -> `aliexpress.ds.product.get` path, after verifying the IOP SDK wire protocol and App ID method entitlement.
 - Do not infer that the QPS listing (1000) proves method access.
 - No live API request, credentials, production settings, supplier writes, deployment, or merge was performed from this discovery.
+
+
+## Official general IOP signing and request-parameter evidence (13 November 2026)
+
+The public AliExpress Open Platform Developer's Guide pages were checked against the current Product API examples:
+
+- **Calling parameters** (document ID 120691, updated 2022-01-26): every IOP API request includes `app_key`, `timestamp`, `sign_method` and `sign`; `access_token` is conditional on the API's authorization requirements. The timestamp may be UTC ISO-8601 or epoch milliseconds, with a maximum 7,200-second clock difference.
+- **Signature algorithm** (document ID 120692, updated 2022-02-25): sort text parameters by ASCII parameter name, concatenate each name and value, prefix the API name/path, then calculate HMAC-SHA256 with the app secret and encode the digest as uppercase hexadecimal.
+- **API endpoint URLs** (document ID 120689): the general overseas IOP REST environment is `https://api-sg.aliexpress.com/rest`.
+- **Requests and responses** (document ID 120690): the general REST request includes the API path and sends common/business parameters in the request path, request parameters or JSON POST body.
+
+Official references:
+- https://developer.alibaba.com/docs/doc.htm?articleId=120691&docType=1&treeId=727
+- https://developer.alibaba.com/docs/doc.htm?articleId=120692&docType=1&treeId=727
+- https://developer.alibaba.com/docs/doc.htm?articleId=120689&docType=1&treeId=727
+- https://developer.alibaba.com/docs/doc.htm?articleId=120690&docType=1&treeId=727
+
+### Critical boundary: generic IOP REST is not yet a verified Protocol.TOP /sync wire contract
+
+These public guide pages establish the **general IOP REST** request parameters and HMAC-SHA256 signature model. The current DropShippers Product API page supplied from the signed-in console separately demonstrates `IopClient.execute(request, accessToken, Protocol.TOP)` and the PHP `/sync` endpoint. The general guide does not explicitly state that its REST common-parameter list and path-prefixed signer are byte-for-byte the implementation used by the SDK's `Protocol.TOP` mode.
+
+Therefore, Sylva must not simply transplant the general `/rest` request signer onto `/sync` or assume the TOP mode's system parameter names. The exact generated SDK implementation for App ID 40465 (or an authoritative Protocol.TOP sample) is still required to confirm:
+- the exact common parameters and whether the token field is `access_token`, `session` or another name;
+- the exact timestamp representation and `sign_method` value for Protocol.TOP;
+- whether the signature input prefixes the method name, path or another identifier;
+- whether any additional protocol/version/format parameters are mandatory;
+- the precise request encoding and response envelope for the DropShippers methods.
+
+### Backend verification changes
+
+The backend verification branch removes the unreachable legacy catalogue request implementation and both obsolete sync-route bodies. The old `eco.taobao.com/router/rest` URL, HMAC-MD5 signer, separate `ALIEXPRESS_DS_APP_KEY` / `ALIEXPRESS_DS_APP_SECRET` path and deprecated `aliexpress.ds.recommend.feed.get` call are no longer executable catalogue code. OAuth token exchange/refresh remains on the existing `/rest` path and retains its current signing and encrypted-token storage.
+
+The buyerApp Supplier Centre status now reports separate flags for:
+- protocol/wire contract verification;
+- method entitlement verification for App ID 40465;
+- successful read-only product test.
+
+All three remain false, and catalogue sync remains blocked with `ALIEXPRESS_CATALOG_API_NOT_VERIFIED`. Legacy credential environment variables cannot enable it. No live AliExpress catalogue call has been made by this code change. Supplier order placement, supplier payment, fulfilment writes, customer checkout and Sylva wallet accounting remain unchanged.
