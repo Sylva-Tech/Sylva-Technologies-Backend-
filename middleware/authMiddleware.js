@@ -61,6 +61,12 @@ const protect = async (req, res, next) => {
  * Require administrator privileges.
  */
 const adminOnly = (req, res, next) => {
+  // Administrative responses must never be cached by shared browsers or
+  // indexed by crawlers. Authorization still depends on the database user role.
+  res.set('Cache-Control', 'no-store, private');
+  res.set('Pragma', 'no-cache');
+  res.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+
   if (req.user && req.user.role === 'admin') {
     return next();
   }
