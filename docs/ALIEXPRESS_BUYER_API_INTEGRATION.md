@@ -116,3 +116,64 @@ Only after receiving written confirmation and the current API specification:
 - Open Platform API permission request process: https://developer.alibaba.com/docs/doc.htm?articleId=120676&docType=1&treeId=727
 - Open Platform application categories: https://developer.alibaba.com/docs/doc.htm?articleId=120674&docType=1&treeId=727
 - Deprecated legacy Dropshipping documentation: https://developer.alibaba.com/docs/doc.htm?articleId=120418&docType=1&treeId=762
+
+
+## Independent API research update (13 November 2026)
+
+This section records public technical evidence gathered independently of AliExpress support. It is deliberately separated from provider-confirmed capability.
+
+### Evidence matrix
+
+| Evidence | What it establishes | What it does not establish |
+| --- | --- | --- |
+| Official AliExpress/Alibaba API reference for `aliexpress.ds.product.get` | The method exists in the public AE-Dropshipper catalogue and its displayed request gateway is `https://eco.taobao.com/router/rest`, with TOP parameters such as `method`, `session`, `v` and `sign`. | It does not establish that this deprecated TOP route is supported for App ID 40465. |
+| Official legacy Dropshipping guide | The documentation tree is explicitly labelled **Dropshipping (deprecated)**. | It cannot be treated as a current IOP REST contract. |
+| Official IOP developer guide | The overseas IOP REST base is `https://api-sg.aliexpress.com/rest`; the IOP request signing model is path-prefixed HMAC-SHA256. | It does not list the new DropShippers menu's product/feed/search methods as IOP REST paths. |
+| Third-party 2026/2025 implementation notes | A separate implementation reports `aliexpress.ds.text.search`, `aliexpress.ds.image.search`, and `aliexpress.ds.product.get` using `https://api-sg.aliexpress.com/sync` and TOP-style method parameters/signing. | It is not an AliExpress source and cannot prove current provider support, method entitlement, or compatibility with this app's OAuth tokens. |
+
+### Important protocol distinction
+
+Do not confuse these three URLs/protocols:
+
+- IOP OAuth and REST base: `https://api-sg.aliexpress.com/rest`.
+- Third-party reported Dropship sync endpoint: `https://api-sg.aliexpress.com/sync` (unverified for Sylva; do not call from production).
+- Legacy documented TOP router: `https://eco.taobao.com/router/rest` (deprecated and previously returned `isv.appkey-not-exists` for the attempted Sylva request).
+
+A method name appearing in the console navigation, a valid OAuth token, or a third-party implementation is not proof that the method is enabled for App ID 40465.
+
+### Candidate read-only methods discovered
+
+The third-party implementation describes:
+
+- `aliexpress.ds.text.search`: keyword search with `keyword`, `countryCode`, `currency`, `local`, optional `page_size`, `page_index` and `sort`.
+- `aliexpress.ds.image.search`: image-based search using multipart image bytes.
+- `aliexpress.ds.product.get`: product detail lookup by product ID and ship-to country.
+
+The console navigation separately showed:
+
+- `aliexpress.ds.product.get`
+- `aliexpress.ds.feed.itemids.get`
+- `aliexpress.ds.feedname.get`
+- Search API, Freight API, Order API, Payment and Webhook sections.
+
+The console's visible navigation and third-party notes do not supply the full authoritative request schema for the new feed methods. In particular, do not infer that `feed.itemids.get` and `feedname.get` use the same protocol as the third-party `/sync` implementation.
+
+### Next engineering action
+
+Use the API test facility in the existing AliExpress app console (App ID 40465) against the exact method shown in the new DropShippers API Developer documentation. The first test should be read-only and should capture:
+
+1. The exact API method name and documentation page.
+2. The endpoint URL/path shown by that page.
+3. The exact required parameter names and signature method.
+4. The API test result, including provider error code and request ID (redact tokens, signatures and secrets).
+5. The permission group shown for the method.
+
+If the console test succeeds, implement that exact contract in a dedicated adapter and add mocked signing/response tests. If the API test returns an entitlement error, retain the current fail-closed state and use the provider error code to identify the missing permission. Do not switch to the third-party `/sync` protocol or the deprecated TOP router as a workaround.
+
+### Research references
+
+- Official AE-Dropshipper method listing and legacy TOP gateway: https://developer.alibaba.com/docs/api.htm?apiId=60452
+- Official deprecated Dropshipping guide: https://developer.alibaba.com/docs/doc.htm?articleId=120418&docType=1&treeId=762
+- Official IOP endpoint documentation: https://developer.alibaba.com/docs/doc.htm?articleId=120689&docType=1&treeId=727
+- Third-party Dropship API implementation notes (non-authoritative): https://github.com/wuTims/shopping-assistant/blob/main/docs/aliexpress-api.md
+- Third-party IOP/TOP protocol distinction notes (non-authoritative): https://github.com/minijy/aliexpress-open-platform-skill/blob/main/references/onboarding-auth.md
