@@ -134,7 +134,7 @@ router.get('/status', protect, adminOnly, async (req, res) => {
           ? 'IOP OAuth configuration is incomplete. Check the existing AliExpress App ID 40465 credentials and exact callback URL.'
           : !connected
             ? 'The existing AliExpress IOP application is not connected. Complete OAuth using the existing App ID 40465.'
-            : 'OAuth is connected for App ID 40465. The openservice DropShippers API QPS guide lists product, feed, category and image-search methods, but its QPS page does not specify request URLs, signing rules, parameter schemas or per-app entitlement. A separate older TOP reference is marked deprecated and must not be assumed to define the newer guide's protocol. Verify the Authentication and individual method specifications, then pass a read-only API test using the existing App ID before enabling catalogue sync. Reuse the existing App Key; do not create another one.',
+            : 'OAuth is connected for App ID 40465. The current DropShippers Product API page documents aliexpress.ds.product.get through an IOP client using Protocol.TOP, with the PHP example specifying https://api-sg.aliexpress.com/sync. Product and feed-item request/response fields are now documented, but the exact wire signing/common parameters and this app's method entitlement still need verification. Run one read-only product test with the existing buyerApp token before enabling sync. Reuse the existing App Key; do not create another one.',
         supplierOrderingEnabled: false,
         supplierOrderingReason: 'Supplier order placement and payment remain disabled until AliExpress confirms supported production APIs and Sylva verifies the complete supplier payment, duplicate-order, cancellation and tracking lifecycle.',
         apiGeneration: 'iop-oauth-connected-catalogue-api-unverified',
@@ -151,7 +151,7 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
     return res.status(503).json({
       success: false,
       code: 'ALIEXPRESS_CATALOG_API_NOT_PROVISIONED',
-      message: 'Catalogue sync is paused. OAuth connectivity does not grant supplier-catalogue access. The legacy TOP Dropshipping API is deprecated and returned isv.appkey-not-exists for this app. Obtain written confirmation of the supported IOP catalogue method and active API permission for existing App ID 40465 before implementing or enabling catalogue calls. Do not create another AppKey.',
+      message: 'Catalogue sync is paused. The current DropShippers guide documents the product method via IOP Protocol.TOP and the /sync endpoint, but Sylva has not yet verified the exact wire signing/common parameters or a successful read-only call with existing App ID 40465. The previous deprecated eco.taobao.com/router/rest attempt returned isv.appkey-not-exists and must not be reused. Verify the current method against the existing buyerApp token before enabling sync. Do not create another AppKey.',
     });
     const { accessToken } = await getBuyerConnection();
     const feedName = String(req.body?.feedName || 'DS bestseller').trim().slice(0, 100);
