@@ -245,3 +245,14 @@ Implement the read-only catalogue path first, using the existing OAuth identity 
 
 - AliExpress Open Service: https://openservice.aliexpress.com/
 - Developer Guide → DropShippers API Developer → Quick Start → API QPS (latest update displayed: 2024-08-19 18:03:47).
+
+
+## Current Product API contract update (13 November 2026)
+
+The signed-in Open Platform console's current DropShippers Product API pages have now been inspected. See [ALIEXPRESS_DROPSHIPPERS_PRODUCT_API_EVIDENCE.md](./ALIEXPRESS_DROPSHIPPERS_PRODUCT_API_EVIDENCE.md) for the complete field inventory and evidence.
+
+Important correction to the earlier research summary: the current DropShippers method page itself demonstrates an IOP client call with Protocol.TOP. Its Java sample initializes IopClient at https://api-sg.aliexpress.com and calls aliexpress.ds.product.get with the existing OAuth access token; its PHP sample specifies https://api-sg.aliexpress.com/sync for the method request. This is distinct from the old deprecated eco.taobao.com/router/rest transport and must not be conflated with it.
+
+The product method requires ship_to_country and product_id, and returns base product data, SKU/stock/prices, attributes, images, package information, store ratings and logistics estimates. The feed-item method requires feed_name, allows page_size up to 200, and returns a search_id cursor valid for one minute. The feed-name method is listed in the console but its complete method page remains to be inspected.
+
+Implementation remains gated on verifying the exact current IOP SDK Protocol.TOP wire signing/common parameters and one harmless read-only call using the existing App ID 40465 and buyerApp token. Do not use the old eco.taobao router, do not restore separate legacy TOP credentials, and do not enable supplier order/payment writes. Existing customer M-Pesa/PayPal and seller/admin wallet flows are untouched.
