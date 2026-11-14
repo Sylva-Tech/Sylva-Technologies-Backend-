@@ -12,6 +12,7 @@ const READ_ONLY_METHODS = new Set([
   'aliexpress.ds.feed.itemids.get',
   'aliexpress.trade.ds.order.get',
   'aliexpress.ds.order.tracking.get',
+  'aliexpress.ds.member.benefit.get',
 ]);
 
 const getDropshipApiConfig = () => ({
@@ -198,7 +199,7 @@ const callDropshipApi = async (apiName, businessParams, accessToken) => {
   const envelope = payload[`${apiName.split('.').join('_')}_response`] || payload;
   const methodCode = envelope.rsp_code ?? envelope.resp_result?.resp_code;
   const methodRet = envelope.ret;
-  if (methodRet === false || (methodCode !== undefined && ![200, '200', 0, '0'].includes(methodCode))) {
+  if (methodRet === false || (methodCode !== undefined && !['rsp_code', 200, '200', 0, '0'].includes(methodCode))) {
     const error = new Error(String(envelope.rsp_msg || envelope.resp_result?.resp_msg || 'AliExpress catalogue method returned an unsuccessful result.'));
     error.code = 'ALIEXPRESS_API_ERROR';
     error.status = 502;
