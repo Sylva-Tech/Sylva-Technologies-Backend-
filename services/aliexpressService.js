@@ -10,6 +10,8 @@ const READ_ONLY_METHODS = new Set([
   'aliexpress.ds.product.get',
   'aliexpress.ds.feedname.get',
   'aliexpress.ds.feed.itemids.get',
+  'aliexpress.trade.ds.order.get',
+  'aliexpress.ds.order.tracking.get',
 ]);
 
 const getDropshipApiConfig = () => ({
@@ -59,7 +61,7 @@ const signRequest = (params, secret) => {
 // Business parameters are sent in the form-encoded POST body.
 const buildTopProtocolRequest = ({ apiName, businessParams, accessToken, timestamp = Date.now(), appKey, appSecret }) => {
   if (!READ_ONLY_METHODS.has(apiName)) {
-    const error = new Error('Only documented read-only AliExpress catalogue methods are enabled.');
+    const error = new Error('Only approved read-only AliExpress catalogue and order-query methods are enabled.');
     error.code = 'ALIEXPRESS_METHOD_NOT_ALLOWED';
     error.status = 400;
     throw error;
