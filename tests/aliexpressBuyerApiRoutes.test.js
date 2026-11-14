@@ -67,3 +67,27 @@ test('Protocol.TOP adapter continues to block supplier order creation and automa
     }), (error) => error.code === 'ALIEXPRESS_METHOD_NOT_ALLOWED');
   }
 });
+
+
+test('Protocol.TOP adapter permits the documented read-only member-benefit lookup', () => {
+  const request = buildTopProtocolRequest({
+    apiName: 'aliexpress.ds.member.benefit.get',
+    businessParams: {},
+    accessToken: 'buyer-token',
+    timestamp: 1730000000000,
+    appKey: 'app-key',
+    appSecret: 'app-secret',
+  });
+  assert.match(request.url, /aliexpress\.ds\.member\.benefit\.get/);
+  assert.equal(request.body, '');
+});
+
+test('Protocol.TOP adapter continues to reject supplier order creation after enabling benefit lookup', () => {
+  assert.throws(() => buildTopProtocolRequest({
+    apiName: 'aliexpress.ds.order.create',
+    businessParams: { ds_extend_request: JSON.stringify({ payment: { try_to_pay: true } }) },
+    accessToken: 'buyer-token',
+    appKey: 'app-key',
+    appSecret: 'app-secret',
+  }), (error) => error.code === 'ALIEXPRESS_METHOD_NOT_ALLOWED');
+});
