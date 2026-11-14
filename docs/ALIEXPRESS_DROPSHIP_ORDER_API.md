@@ -47,3 +47,16 @@ The adapter now permits only these read-only methods:
 - `aliexpress.ds.order.tracking.get`
 
 The supplier write method `aliexpress.ds.order.create` remains blocked.
+
+
+## Read-only member benefit lookup: `aliexpress.ds.member.benefit.get`
+
+- Purpose: query benefits available to the connected AliExpress Dropshipper member account.
+- The supplied documentation shows no required business parameters.
+- The response can contain `result[]` entries with `code`, `title`, `canApply`, and `canBenefit`.
+- Boolean-like values may be returned as strings (for example, `"true"`).
+- The supplied example includes an `auto-pay` benefit. This only reports whether the account can apply for / already has that benefit; it does not initiate payment, charge a payment method, or authorize Sylva to pay for supplier orders.
+- Endpoint: `GET /api/aliexpress/payment/benefits` (admin-only; read-only).
+- Method entitlement must be verified against the existing AliExpress App ID 40465 and connected buyerApp account with a live call. OAuth success alone is not proof of permission.
+
+**Payment safety gate:** the member-benefit method is informational only. It does not enable automatic supplier payment. Supplier order creation and `try_to_pay` remain blocked until AliExpress confirms the account's Dropshipper authorization, payment permissions, payment method and complete order/payment lifecycle.
