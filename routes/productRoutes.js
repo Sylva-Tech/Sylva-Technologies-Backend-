@@ -1349,6 +1349,11 @@ router.post(
           keyFeatures:
             parseList(keyFeatures),
 
+          seoTitle: String(req.body.seoTitle || '').trim().slice(0, 60),
+          seoMetaDescription: String(req.body.seoMetaDescription || '').trim().slice(0, 155),
+          marketingTags: Array.isArray(req.body.marketingTags) ? req.body.marketingTags.map((tag) => String(tag).trim()).filter(Boolean).slice(0, 12) : [],
+          socialPromoCaption: String(req.body.socialPromoCaption || '').trim().slice(0, 1000),
+
           sellerNotes:
             sellerNotes || '',
 
