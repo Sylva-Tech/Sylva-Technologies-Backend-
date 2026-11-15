@@ -136,7 +136,7 @@ const generateAliExpressProductContent = async (product) => {
     error.providerCode = String(providerError.code || '').slice(0, 100);
     error.providerType = String(providerError.type || '').slice(0, 100);
     error.providerParam = String(providerError.param || '').slice(0, 100);
-    error.providerMessage = String(providerError.message || '').replace(/Bearer\\s+\\S+/gi, '[redacted]').slice(0, 240);
+    error.providerMessage = String(providerError.message || '').replace(/Bearer\s+\S+/gi, '[redacted]').slice(0, 240);
     error.status = response.status === 429 || response.status >= 500 ? 503 : 502;
     throw error;
   }
