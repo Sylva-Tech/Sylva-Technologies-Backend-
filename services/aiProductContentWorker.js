@@ -72,7 +72,14 @@ const processOnePendingProduct = async () => {
       claimed.aiContentDraft.nextAttemptAt = retry ? new Date(Date.now() + attempts * 60000) : null;
       claimed.aiContentDraft.processingAt = null;
       await claimed.save();
-      console.warn('[AI product enrichment] job did not complete:', error.code || 'AI_CONTENT_FAILED');
+      console.warn('[AI product enrichment] job did not complete:', JSON.stringify({
+        code: error.code || 'AI_CONTENT_FAILED',
+        providerStatus: error.providerStatus || null,
+        providerCode: error.providerCode || '',
+        providerType: error.providerType || '',
+        providerParam: error.providerParam || '',
+        providerMessage: error.providerMessage || '',
+      }));
     }
     return true;
   } finally {
