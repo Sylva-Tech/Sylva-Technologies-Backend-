@@ -818,6 +818,42 @@ router.post('/catalog/verify-feeds', protect, adminOnly, limiter, async (req, re
  * AliExpress listings stay in this private staging collection until an
  * authenticated Sylva administrator explicitly approves them.
  */
+router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
+  return res.set('Cache-Control', 'no-store, private').json({
+    success: true,
+    data: {
+      configured: Boolean(process.env.OPENAI_API_KEY),
+      model: String(process.env.OPENAI_MODEL || 'gpt-4o-mini'),
+      scope: 'product_content_only',
+      mayPublishProducts: false,
+      mayChangePricingOrStock: false,
+      mayAccessCustomerOrFinancialData: false,
+      supplierOrderingEnabled: false,
+    },
+  });
+});
+
+router.post('/catalog/review/:id/generate-content', protect, adminOnly, limiter, async (req, res) => {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(503).json({ success: false, code: 'AI_CONTENT_NOT_CONFIGURED', message: 'Add OPENAI_API_KEY to the backend environment before generating product content.' });
+    }
+    const record = await AliExpressCatalogProduct.findOne({ _id: req.params.id, status: 'pending' });
+    if (!record) return res.status(404).json({ success: false, message: 'Pending AliExpress catalogue product not found.' });
+    record.aiContentDraft = {
+      ...(record.aiContentDraft?.toObject?.() || record.aiContentDraft || {}),
+      status: 'pending',
+      attempts: 0,
+      lastError: '',
+      nextAttemptAt: null,
+    };
+    await record.save();
+    return res.json({ success: true, message: 'AI product-content generation queued. The product remains private and unpublished.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Unable to queue AI product-content generation.' });
+  }
+});
+
 router.get('/catalog/review-queue', protect, adminOnly, async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(100, Number.parseInt(req.query.limit, 10) || 50));
