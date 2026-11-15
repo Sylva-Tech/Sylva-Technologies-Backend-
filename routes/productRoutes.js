@@ -31,11 +31,11 @@ const PUBLIC_PRODUCT_FIELDS = [
 const PRIVATE_SPECIFICATION_KEY = /supplier|aliexpress|wholesale|purchase|cost|price|amount|margin|markup|profit|exchange|currency|source|raw|internal|secret|token|url|seller|store|shop|merchant|shippingprice/i;
 const PRIVATE_SPECIFICATION_VALUE = /https?:\/\/|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|aliexpress|supplier|wholesale|purchase price|cost price|profit margin|exchange rate/i;
 
-const PRIVATE_PUBLIC_COPY = /https?:\\/\\/|[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|aliexpress|supplier (?:price|cost|id|url|store)|wholesale price|purchase price|profit margin|exchange rate/i;
+const PRIVATE_PUBLIC_COPY = /https?:\/\/|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|aliexpress|supplier (?:price|cost|id|url|store)|wholesale price|purchase price|profit margin|exchange rate/i;
 const cleanPublicCopy = (value) => String(value || '')
-  .replace(/https?:\\/\\/\\S+/gi, '')
-  .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi, '')
-  .replace(/\\b(?:AliExpress|wholesale price|purchase price|profit margin|exchange rate)\\b/gi, '')
+  .replace(/https?:\/\/\S+/gi, '')
+  .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '')
+  .replace(/\b(?:AliExpress|wholesale price|purchase price|profit margin|exchange rate)\b/gi, '')
   .trim();
 
 const toPublicProduct = (value) => {
