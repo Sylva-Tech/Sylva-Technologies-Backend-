@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
  *
  * Older Product documents often have no code. A normal unique index treats
  * missing/null values as one indexed value, so the second such product fails
- * with E11000. We preserve uniqueness for real string codes only.
+ * with E11000. We preserve uniqueness for real, non-empty string codes only.
  *
  * This migration checks for duplicate non-empty codes before changing indexes.
  * It never edits or deletes product documents.
@@ -34,7 +34,7 @@ const migrateProductCodeIndex = async () => {
     );
   }
 
-  const indexes = await collection.indexes();
+  let indexes = await collection.indexes();
   const legacyIndex = indexes.find((index) =>
     index.name === 'code_1' &&
     index.key &&
@@ -47,16 +47,27 @@ const migrateProductCodeIndex = async () => {
     console.log('[MongoDB migration] Dropped legacy unique products.code_1 index.');
   }
 
-  const currentIndexes = await collection.indexes();
-  const partialIndexExists = currentIndexes.some((index) =>
-    index.name === 'code_unique_strings' &&
-    index.key &&
-    index.key.code === 1 &&
-    index.unique === true &&
-    index.partialFilterExpression?.code?.$type === 'string' && index.partialFilterExpression?.code?.$gt === ''
+  // A previous deployment may have created this same index name with the
+  // weaker { code: { $type: 'string' } } filter. MongoDB rejects creating an
+  // index with the same name but a different partial filter, so replace only
+  // that conflicting index before ensuring the intended definition exists.
+  indexes = await collection.indexes();
+  const namedIndex = indexes.find((index) => index.name === 'code_unique_strings');
+  const partialIndexIsCorrect = Boolean(
+    namedIndex &&
+    namedIndex.unique === true &&
+    namedIndex.key &&
+    namedIndex.key.code === 1 &&
+    namedIndex.partialFilterExpression?.code?.$type === 'string' &&
+    namedIndex.partialFilterExpression?.code?.$gt === ''
   );
 
-  if (!partialIndexExists) {
+  if (namedIndex && !partialIndexIsCorrect) {
+    await collection.dropIndex('code_unique_strings');
+    console.log('[MongoDB migration] Replacing incompatible code_unique_strings index.');
+  }
+
+  if (!partialIndexIsCorrect) {
     await collection.createIndex(
       { code: 1 },
       {
@@ -67,7 +78,7 @@ const migrateProductCodeIndex = async () => {
     );
   }
 
-  console.log('[MongoDB migration] Product code uniqueness now applies only to string codes.');
+  console.log('[MongoDB migration] Product code uniqueness now applies only to non-empty string codes.');
 };
 
 module.exports = migrateProductCodeIndex;
