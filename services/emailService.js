@@ -939,6 +939,7 @@ const sendOrderStatusUpdateEmail = async ({
   orderNumber,
   status,
   deliveryConfirmationLink = '',
+  trackingCode = '',
 }) => {
   const safeName = String(customerName || 'Customer').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const baseHtml = orderStatusUpdateTemplate({ customerName: safeName, orderNumber, status });
@@ -953,11 +954,19 @@ const sendOrderStatusUpdateEmail = async ({
     : baseHtml;
   const text = 'Hello ' + String(customerName || 'Customer') + ', your Sylva Technologies order ' + orderNumber + ' status is now ' + status + '.' +
     (deliveryConfirmationLink ? '\n\nWhen you physically receive the product, open this secure delivery form: ' + deliveryConfirmationLink + '\nDo not confirm before receiving the product.' : '');
+  const safeTrackingCode = String(trackingCode || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 100);
+  const trackingHtml = safeTrackingCode
+    ? '<p><strong>Tracking reference:</strong> ' + safeTrackingCode + '</p>'
+    : '';
+  const finalHtml = /<\/body>/i.test(html)
+    ? html.replace(/<\/body>/i, trackingHtml + '</body>')
+    : html + trackingHtml;
+  const finalText = text + (safeTrackingCode ? '\nTracking reference: ' + safeTrackingCode : '');
   return sendMail({
     to,
     subject: 'Order status update - ' + orderNumber,
-    html,
-    text,
+    html: finalHtml,
+    text: finalText,
     sender: 'orders',
   });
 };

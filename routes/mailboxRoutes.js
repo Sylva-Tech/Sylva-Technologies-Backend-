@@ -9,6 +9,7 @@ const ContactMessage = require('../models/ContactMessage');
 const { encryptAttachment, decryptAttachment, getKey } = require('../utils/mailAttachmentCrypto');
 const { encryptMessageContent, decryptMessageContent, getMessageKey } = require('../utils/mailMessageCrypto');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
+const { sendMail } = require('../services/emailService');
 
 const router = express.Router();
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -84,6 +85,48 @@ router.get('/', protect, adminOnly, async (req, res) => {
     console.error('Mailbox list failed:', e.message);
     return res.status(500).json({ success: false, message: 'Unable to load mailbox messages.' });
   }
+});
+
+
+router.get('/service-health', protect, adminOnly, async (req, res) => {
+  res.set('Cache-Control', 'no-store, private, max-age=0');
+  return res.json({
+    success: true,
+    provider: 'Resend',
+    service: 'Sylva Mail',
+    configured: Boolean(process.env.RESEND_API_KEY),
+    senderDomain: 'sylvatechnologies.co.ke',
+    canSendTest: Boolean(req.user?.email && process.env.RESEND_API_KEY),
+    checkedAt: new Date().toISOString(),
+  });
+});
+
+router.post('/service-health/test', protect, adminOnly, sendLimiter, async (req, res) => {
+  res.set('Cache-Control', 'no-store, private, max-age=0');
+  const recipient = String(req.user?.email || '').trim();
+  if (!recipient || !emailPattern.test(recipient)) {
+    return res.status(400).json({ success: false, message: 'Your administrator account must have a valid email address to receive a test message.' });
+  }
+  if (!process.env.RESEND_API_KEY) {
+    return res.status(503).json({ success: false, message: 'Sylva Mail is not configured on the backend.' });
+  }
+  let result;
+  try {
+    result = await sendMail({
+      to: recipient,
+      subject: 'Sylva Mail delivery test',
+      text: 'This is a test message from the Sylva Technologies administration dashboard. No customer or order data is included.',
+      html: '<p>This is a test message from the <strong>Sylva Technologies</strong> administration dashboard.</p><p>No customer or order data is included.</p>',
+      sender: 'admin',
+    });
+  } catch (error) {
+    console.warn('[Sylva Mail health test] send failed:', String(error.code || error.name || 'MAIL_SEND_FAILED').slice(0, 100));
+    return res.status(502).json({ success: false, message: 'Sylva Mail test message could not be sent. Check backend mail logs and provider configuration.' });
+  }
+  if (!result?.success) {
+    return res.status(502).json({ success: false, message: 'Sylva Mail test message could not be sent. Check backend mail logs and provider configuration.' });
+  }
+  return res.json({ success: true, message: 'Sylva Mail test message sent to your administrator email address.' });
 });
 
 router.get('/encryption-status', protect, adminOnly, async (req, res) => {

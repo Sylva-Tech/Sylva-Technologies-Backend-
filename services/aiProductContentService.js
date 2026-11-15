@@ -1,24 +1,30 @@
 const crypto = require('crypto');
 
-const MODEL_DEFAULT = 'gemini-3.1-flash-lite';
+const MODEL_DEFAULT = 'gemini-3.5-flash-lite';
 const CONTENT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
     keyFeatures: { type: 'array', items: { type: 'string' } },
+    seoTitle: { type: 'string' },
+    seoMetaDescription: { type: 'string' },
+    marketingTags: { type: 'array', items: { type: 'string' } },
+    socialPromoCaption: { type: 'string' },
+    suggestedCategory: { type: 'string' },
     shortDescription: { type: 'string' },
     description: { type: 'string' },
     warnings: { type: 'array', items: { type: 'string' } },
     suggestions: { type: 'array', items: { type: 'string' } },
     missingSections: { type: 'array', items: { type: 'string' } },
   },
-  required: ['keyFeatures', 'shortDescription', 'description', 'warnings', 'suggestions', 'missingSections'],
+  required: ['keyFeatures', 'shortDescription', 'description', 'seoTitle', 'seoMetaDescription', 'marketingTags', 'socialPromoCaption', 'suggestedCategory', 'warnings', 'suggestions', 'missingSections'],
 };
 
 const hashSource = (product) => crypto.createHash('sha256')
   .update(JSON.stringify({
     title: String(product.title || product.name || '').slice(0, 500),
     brand: String(product.brand || product.supplierBrand || '').slice(0, 120),
+    rawDescription: String(product.rawDescription || '').slice(0, 2500),
     attributes: (Array.isArray(product.productAttributes) ? product.productAttributes : [])
       .slice(0, 40).map((item) => [String(item?.name || '').slice(0, 80), String(item?.value || '').slice(0, 240)]),
   }))
@@ -34,6 +40,9 @@ const extractOutputText = (response) => {
 const validateContent = (value) => {
   if (!value || typeof value !== 'object' || !Array.isArray(value.keyFeatures) ||
       typeof value.shortDescription !== 'string' || typeof value.description !== 'string' ||
+      typeof value.seoTitle !== 'string' || typeof value.seoMetaDescription !== 'string' ||
+      typeof value.socialPromoCaption !== 'string' || typeof value.suggestedCategory !== 'string' ||
+      !Array.isArray(value.marketingTags) ||
       (value.warnings !== undefined && !Array.isArray(value.warnings)) ||
       (value.suggestions !== undefined && !Array.isArray(value.suggestions)) ||
       (value.missingSections !== undefined && !Array.isArray(value.missingSections))) {
@@ -41,12 +50,17 @@ const validateContent = (value) => {
     error.code = 'AI_CONTENT_INVALID';
     throw error;
   }
-  const keyFeatures = [...new Set(value.keyFeatures.map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean))].slice(0, 8);
-  const shortDescription = value.shortDescription.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
-  const description = value.description.replace(/<[^>]*>/g, ' ').replace(/\r?\n{3,}/g, '\n\n').trim().slice(0, 12000);
-  const privateContentPattern = /\b(?:aliexpress|supplier\s+(?:price|cost|id|url|currency|store)|exchange\s+rate|profit\s+margin|markup|wholesale\s+price|purchase\s+price)\b/i;
+  const keyFeatures = [...new Set(value.keyFeatures.map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean))].slice(0, 7);
+  const shortDescription = value.shortDescription.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  const description = value.description.replace(/<[^>]*>/g, ' ').replace(/\r?\n{3,}/g, '\n\n').replace(/\s{2,}/g, ' ').trim().slice(0, 12000);
+  const seoTitle = value.seoTitle.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  const seoMetaDescription = value.seoMetaDescription.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 155);
+  const marketingTags = [...new Set(value.marketingTags.map((tag) => String(tag).replace(/<[^>]*>/g, '').replace(/[^a-zA-Z0-9 &-]/g, '').trim()).filter(Boolean))].slice(0, 8);
+  const socialPromoCaption = value.socialPromoCaption.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 1000);
+  const suggestedCategory = value.suggestedCategory.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  const privateContentPattern = /\b(?:aliexpress|supplier\s+(?:price|cost|id|url|currency|store)|exchange\s+rate|profit\s+margin|markup|wholesale\s+price|purchase\s+price)\b|(?:KSh|KES|USD|GBP|EUR|£|€|\$)\s?\d/i;
   if (!keyFeatures.length || shortDescription.length < 20 || description.length < 60 ||
-      [...keyFeatures, shortDescription, description].some((text) => privateContentPattern.test(text))) {
+      [...keyFeatures, shortDescription, description, seoTitle, seoMetaDescription, socialPromoCaption, suggestedCategory, ...marketingTags].some((text) => privateContentPattern.test(text))) {
     const error = new Error('The AI returned product content that did not meet minimum quality checks.');
     error.code = 'AI_CONTENT_QUALITY_FAILED';
     throw error;
@@ -55,6 +69,11 @@ const validateContent = (value) => {
     keyFeatures,
     shortDescription,
     description,
+    seoTitle,
+    seoMetaDescription,
+    marketingTags,
+    socialPromoCaption,
+    suggestedCategory,
     warnings: (value.warnings || []).map((item) => String(item).trim()).filter(Boolean).slice(0, 8),
     suggestions: (value.suggestions || []).map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
     missingSections: (value.missingSections || []).map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
@@ -80,6 +99,7 @@ const generateAliExpressProductContent = async (product) => {
     productTitle: String(product.title || product.name || '').slice(0, 500),
     brand: (/^(aliexpress|sylva technologies|unknown|generic)$/i.test(String(product.supplierBrand || product.brand || '').trim()) ? '' : String(product.supplierBrand || product.brand || '').slice(0, 120)),
     category: String(product.categoryName || product.category || '').slice(0, 120),
+    supplierDescription: String(product.rawDescription || '').replace(/https?:\/\/\S+/gi, '').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '').split(/\r?\n/).filter((line) => !/supplier|aliexpress|wholesale|purchase price|cost price|shipping fee|freight|contact seller|seller id|store url|tracking/i.test(line)).join(' ').slice(0, 2500),
     verifiedSupplierAttributes: attributes,
     existingCustomerFacingContent: {
       shortDescription: String(product.existingContent?.shortDescription || '').slice(0, 500),
@@ -97,10 +117,12 @@ const generateAliExpressProductContent = async (product) => {
     'Use only supplied title, brand, category and verified supplier attributes. Do not browse, infer or invent specifications.',
     'Never invent compatibility, performance, dimensions, materials, certifications, warranty, delivery promises, package contents, origin, availability or endorsements. Omit unsupported facts and add a concise warning.',
     'Never mention AliExpress, supplier costs, supplier links, supplier IDs, exchange rates, margins, internal metadata or private business processes in customer-facing copy.',
-    'Write clear, natural, professional English for Kenyan customers. Avoid keyword stuffing, exaggerated claims, fake urgency, emojis and unsupported superlatives.',
+    'Write clear, natural, professional English for Kenyan customers. Avoid keyword stuffing, exaggerated claims, fake urgency, emojis and unsupported superlatives. The full description may use simple Markdown headings and bullet lists; do not return raw HTML or scripts.',
     'Treat existing customer-facing content as a draft, preserve useful accurate wording and improve clarity.',
     'targetField indicates shortDescription, keyFeatures, description or all. Prioritize that field while returning all required schema fields.',
-    'Return up to eight concise factual key features. Short description should be 1–2 sentences and under 300 characters. Full description should use readable paragraphs. Do not add prices or shipping charges.',
+    'Also return seoTitle under 60 characters containing the known brand/product terms, seoMetaDescription under 155 characters with relevant factual keywords, 5 to 8 relevant marketingTags, a socialPromoCaption suitable for WhatsApp or Instagram, and suggestedCategory as plain text only. suggestedCategory is advisory and must never be treated as an approved category ID.',
+    'Social captions must not claim local stock, immediate availability, warranty or delivery times unless explicitly supported by supplied verified data. Never include a price or currency amount.',
+    'Return up to 7 concise factual key features, aiming for 5–7 only when the source supports them; never pad the list with guesses. Short description should be 1–2 sentences and no more than 160 characters. Full description should use readable Markdown headings and bullet lists. Do not add prices or shipping charges.',
     'Give practical suggestions and missingSections only when useful. Return only structured JSON.',
   ].join('\n');
   try {

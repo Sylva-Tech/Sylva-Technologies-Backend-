@@ -979,6 +979,7 @@ router.post('/:id/delivery-confirmation-link', protect, async (req, res) => {
       orderNumber: order.orderNumber,
       status: 'Shipped',
       deliveryConfirmationLink,
+      trackingCode: order.trackingCode || order.trackingNumber || '',
     });
 
     if (!emailResult?.success) {
@@ -1227,6 +1228,7 @@ router.post('/seller/:id/fulfillment-status', protect, async (req, res) => {
         orderNumber: order.orderNumber,
         status: status + ' (' + storeName + ')',
         deliveryConfirmationLink,
+        trackingCode: order.trackingCode || order.trackingNumber || '',
       });
       if (!customerEmailResult?.success) console.error('[Seller fulfillment] customer status email failed:', customerEmailResult?.message || 'Unknown email error', { orderNumber: order.orderNumber, status });
     }
@@ -1452,6 +1454,7 @@ router.post('/confirm-delivery', async (req, res) => {
         customerName: order.customerName || order.customerDetails?.fullName || 'Customer',
         orderNumber: order.orderNumber,
         status: 'Delivered',
+        trackingCode: order.trackingCode || order.trackingNumber || '',
       });
       if (!statusEmail?.success) console.error('[Delivery confirmation] receipt email failed:', statusEmail?.message || 'Unknown email error', { orderNumber: order.orderNumber });
     }
@@ -2963,6 +2966,7 @@ router.patch(
           orderNumber: updated.orderNumber,
           status: updated.status,
           deliveryConfirmationLink,
+          trackingCode: updated.trackingCode || updated.trackingNumber || '',
         });
         if (!customerStatusEmail?.success) {
           console.error('[Order email] customer status update email failed:', customerStatusEmail?.message || 'Unknown email error', { orderNumber: updated.orderNumber, status });

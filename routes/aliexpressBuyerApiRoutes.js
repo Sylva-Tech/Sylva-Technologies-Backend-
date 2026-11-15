@@ -9,6 +9,7 @@ const Category = require('../models/Category');
 const AliExpressCatalogSettings = require('../models/AliExpressCatalogSettings');
 const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
 const { generateAliExpressProductContent } = require('../services/aiProductContentService');
+const { sendSalesNotificationEmail } = require('../services/emailService');
 const {
   getDropshipApiConfig,
   requiredDropshipEnv,
@@ -186,6 +187,7 @@ router.get('/status', protect, adminOnly, async (req, res) => {
           lastTestError: connection?.catalogLastTestError || '',
         },
         supplierOrderingEnabled: false,
+      outputFields: ['shortDescription', 'keyFeatures', 'description', 'seoTitle', 'seoMetaDescription', 'marketingTags', 'socialPromoCaption', 'suggestedCategory'],
         supplierOrderingReason: 'Supplier order placement and payment remain disabled until product sourcing, supplier payment, duplicate-order handling, cancellation and tracking are independently verified.',
         apiGeneration: 'iop-protocol-top-sdk-verified-product-entitlement-pending',
         dropshipGateway: null,
@@ -825,7 +827,7 @@ router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
     data: {
       configured: Boolean(process.env.GEMINI_API_KEY),
       provider: 'google_gemini',
-      model: String(process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite'),
+      model: String(process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'),
       scope: 'product_content_only',
       mayPublishProducts: false,
       mayChangePricingOrStock: false,
@@ -843,7 +845,8 @@ router.post('/catalog/review/:id/generate-content', protect, adminOnly, async (r
     if (record.status !== 'pending') return res.status(409).json({ success: false, message: 'Only products awaiting admin review can receive a content draft.' });
     const generated = await generateAliExpressProductContent({
       title: record.title, supplierBrand: record.supplierBrand,
-      categoryName: record.categoryName, productAttributes: record.productAttributes, targetField: 'all',
+      categoryName: record.categoryName, productAttributes: record.productAttributes,
+      rawDescription: record.sourcePayload?.description || record.sourcePayload?.detail || '', targetField: 'all',
     });
     record.aiContentDraft = {
       ...generated, attempts: Number(record.aiContentDraft?.attempts || 0),
@@ -975,15 +978,20 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       ? req.body.keyFeatures.map((item) => String(item).trim()).filter(Boolean).slice(0, 8)
       : (aiDraft?.keyFeatures?.length ? aiDraft.keyFeatures : keyFeatures);
     const approvedShortDescription = String(req.body?.shortDescription || aiDraft?.shortDescription || featureSummary || title).trim().slice(0, 500);
+    const seoTitle = String(req.body?.seoTitle ?? aiDraft?.seoTitle ?? title).trim().slice(0, 60);
+    const seoMetaDescription = String(req.body?.seoMetaDescription ?? aiDraft?.seoMetaDescription ?? approvedShortDescription).trim().slice(0, 155);
+    const marketingTags = (Array.isArray(req.body?.marketingTags) ? req.body.marketingTags : aiDraft?.marketingTags || []).map((tag) => String(tag).trim()).filter(Boolean).slice(0, 12);
+    const socialPromoCaption = String(req.body?.socialPromoCaption ?? aiDraft?.socialPromoCaption ?? '').trim().slice(0, 1000);
     const published = await Product.create({
       name: title, slug, sku, source: 'aliexpress', brand, category: category._id,
       description, shortDescription: approvedShortDescription,
       keyFeatures: approvedKeyFeatures,
+      seoTitle, seoMetaDescription, marketingTags, socialPromoCaption,
       price, oldPrice: Number(req.body?.oldPrice) > price ? Number(req.body.oldPrice) : 0,
       images, stock: approvedStock, condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
       seller: null, featured: false, flashSale: false, offer: false,
-      specifications: { ...publicSpecifications, supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierStoreName: record.supplierStoreName || '', supplierStoreUrl: record.supplierStoreUrl || '', supplierPrice: record.supplierPrice, supplierPriceKes, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: 8, shippingIncludedInMarkup: false, deliveryIncludedInMarkup: false, shippingHandledBy: 'AliExpress', deliveryCostChargedSeparately: true },
+      specifications: { ...publicSpecifications },
     });
 
     record.status = 'approved';
@@ -1239,6 +1247,20 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
           },
         });
       } catch (error) {
+    try {
+      await sendSalesNotificationEmail({
+        subject: 'AliExpress catalogue sync failed',
+        text: [
+          'An administrator-triggered AliExpress catalogue sync failed.',
+          'Stage: ' + String(stage || 'unknown').slice(0, 60),
+          'Error code: ' + String(error.code || 'ALIEXPRESS_CATALOG_SYNC_FAILED').slice(0, 100),
+          'Time: ' + new Date().toISOString(),
+          'The private review queue was not published by this failed sync.',
+        ].join('\n'),
+      });
+    } catch (notificationError) {
+      console.error('[AliExpress sync alert] could not send admin alert:', notificationError.message);
+    }
         failures.push({ productId, reason: String(error.message || 'Product detail lookup failed.').slice(0, 180) });
       }
     }
