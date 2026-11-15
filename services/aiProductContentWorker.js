@@ -16,10 +16,11 @@ const processOnePendingProduct = async () => {
         $or: [
           { 'aiContentDraft.nextAttemptAt': null },
           { 'aiContentDraft.nextAttemptAt': { $lte: now } },
+          { 'aiContentDraft.status': 'processing', 'aiContentDraft.processingAt': { $lte: new Date(now.getTime() - 10 * 60 * 1000) } },
         ],
       },
       {
-        $set: { 'aiContentDraft.status': 'processing', 'aiContentDraft.lastError': '' },
+        $set: { 'aiContentDraft.status': 'processing', 'aiContentDraft.lastError': '', 'aiContentDraft.processingAt': now },
         $inc: { 'aiContentDraft.attempts': 1 },
       },
       { new: true, sort: { syncedAt: 1 } }
@@ -38,6 +39,7 @@ const processOnePendingProduct = async () => {
         attempts: claimed.aiContentDraft.attempts,
         lastError: '',
         nextAttemptAt: null,
+        processingAt: null,
       };
       await claimed.save();
     } catch (error) {
@@ -46,6 +48,7 @@ const processOnePendingProduct = async () => {
       claimed.aiContentDraft.status = retry ? 'pending' : 'failed';
       claimed.aiContentDraft.lastError = String(error.code || 'AI_CONTENT_FAILED').slice(0, 240);
       claimed.aiContentDraft.nextAttemptAt = retry ? new Date(Date.now() + attempts * 60000) : null;
+      claimed.aiContentDraft.processingAt = null;
       await claimed.save();
       console.warn('[AI product enrichment] job did not complete:', error.code || 'AI_CONTENT_FAILED');
     }
