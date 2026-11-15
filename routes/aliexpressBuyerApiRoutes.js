@@ -76,11 +76,7 @@ router.post('/token/reveal', protect, adminOnly, tokenRevealLimiter, async (req,
 });
 
 const getMethodEnvelope = (payload, method) => payload?.[`${method.split('.').join('_')}_response`] || payload || {};
-const countImages = (result) => {
-  const multimedia = result?.ae_multimedia_info_dto || {};
-  const images = multimedia.image_urls || multimedia.image_url_list || multimedia.image_urls_list;
-  return Array.isArray(images) ? images.length : 0;
-};
+const countImages = (result) => collectAliExpressImageUrls(result || {}).length;
 
 router.get('/status', protect, adminOnly, async (req, res) => {
   try {
@@ -376,16 +372,84 @@ const getFeedItemIds = (payload) => {
   return { ids: [...ids], cursor };
 };
 
+const collectAliExpressImageUrls = (payload) => {
+  const urls = new Set();
+  const visited = new Set();
+  const imageKey = /(image|picture|photo|main_pic|product_pic|img)/i;
+
+  const addUrl = (candidate) => {
+    if (candidate == null) return;
+    if (typeof candidate === 'object') {
+      if (Array.isArray(candidate)) {
+        candidate.forEach(addUrl);
+        return;
+      }
+      for (const key of ['url', 'image_url', 'imageUrl', 'src', 'value', 'string']) {
+        if (candidate[key] != null) addUrl(candidate[key]);
+      }
+      return;
+    }
+    if (typeof candidate !== 'string') return;
+    let value = candidate.trim().replace(/&amp;/gi, '&').replace(/\\\//g, '/');
+    if (!value) return;
+    // Some IOP responses serialize image lists as JSON or delimited strings.
+    if ((value.startsWith('[') && value.endsWith(']')) ||
+        (value.startsWith('{') && value.endsWith('}'))) {
+      try { addUrl(JSON.parse(value)); return; } catch (_) {}
+    }
+    if (/[,;\n]/.test(value) && !/^https?:\/\//i.test(value)) {
+      value.split(/[,;\n]+/).forEach(addUrl);
+      return;
+    }
+    if (value.startsWith('//')) value = 'https:' + value;
+    value = value.replace(/^["']|["']$/g, '').trim();
+    if (/^https?:\/\//i.test(value) && value.length <= 2000) urls.add(value);
+  };
+
+  const visit = (node, parentKey = '', depth = 0) => {
+    if (node == null || depth > 14) return;
+    if (typeof node === 'string') {
+      if (imageKey.test(parentKey)) addUrl(node);
+      return;
+    }
+    if (typeof node !== 'object' || visited.has(node)) return;
+    visited.add(node);
+    if (Array.isArray(node)) {
+      node.forEach((item) => {
+        if (typeof item === 'string') addUrl(item);
+        else visit(item, parentKey, depth + 1);
+      });
+      return;
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (imageKey.test(key)) addUrl(value);
+      else if (value && typeof value === 'object') visit(value, key, depth + 1);
+    }
+  };
+
+  visit(payload);
+  return [...urls].slice(0, 20);
+};
+
 const normalizeAliExpressProduct = (payload, productId, currency) => {
   const envelope = getMethodEnvelope(payload, 'aliexpress.ds.product.get');
   const result = envelope.result || envelope.resp_result?.result;
   const base = result?.ae_item_base_info_dto;
   if (!base || !(base.product_id || base.subject)) return null;
-  const multimedia = result.ae_multimedia_info_dto || {};
-  const rawImages = multimedia.image_urls || multimedia.image_url_list || multimedia.image_urls_list || [];
-  const imageUrls = (Array.isArray(rawImages) ? rawImages : String(rawImages || '').split(','))
-    .map((item) => typeof item === 'string' ? item.trim() : String(item?.url || item?.image_url || '').trim())
-    .filter((url) => /^https?:\/\//i.test(url)).slice(0, 12);
+  const imageUrls = collectAliExpressImageUrls({
+    ae_multimedia_info_dto: result.ae_multimedia_info_dto,
+    ae_item_base_info_dto: base,
+    ae_item_sku_info_dtos: result.ae_item_sku_info_dtos,
+    product_images: result.product_images,
+    image_urls: result.image_urls,
+    image_url_list: result.image_url_list,
+    main_image: result.main_image,
+    product_main_pic: result.product_main_pic,
+    itemMainPic: result.itemMainPic,
+    product_main_image_url: result.product_main_image_url,
+    image_url: result.image_url,
+    image_list: result.image_list,
+  });
   const skuRows = Array.isArray(result.ae_item_sku_info_dtos) ? result.ae_item_sku_info_dtos : [];
   const candidatePrices = skuRows.map((sku) => Number(sku.sku_price || sku.offer_sale_price || sku.price))
     .filter((price) => Number.isFinite(price) && price > 0);
@@ -403,7 +467,13 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
     targetCurrency: String(currency || 'USD').toUpperCase().slice(0, 3),
     categoryId: String(base.category_id || ''),
     sellerId: String(result.ae_store_info?.store_id || ''),
-    sourcePayload: { productId: id, skuCount: skuRows.length, categoryId: String(base.category_id || '') },
+    sourcePayload: {
+      productId: id,
+      skuCount: skuRows.length,
+      categoryId: String(base.category_id || ''),
+      imageCount: imageUrls.length,
+      imageFieldPresent: Boolean(result.ae_multimedia_info_dto || base.image_url || base.image_urls),
+    },
   };
 };
 
@@ -455,7 +525,7 @@ router.post('/catalog/stage-product', protect, adminOnly, limiter, async (req, r
       message: 'Product details verified and added to Sylva’s private admin review queue. It is not published.',
       product: {
         _id: staged._id, providerProductId: staged.providerProductId, title: staged.title,
-        imageUrl: staged.imageUrl, imageUrls: staged.imageUrls, supplierPrice: staged.supplierPrice,
+        imageUrl: staged.imageUrl, imageUrls: staged.imageUrls, imageCount: staged.imageUrls?.length || 0, supplierPrice: staged.supplierPrice,
         supplierCurrency: staged.supplierCurrency, targetCurrency: staged.targetCurrency,
         productUrl: staged.productUrl, status: staged.status,
       },
@@ -799,6 +869,7 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
         failedProductDetails: failures.length,
       },
       imported: operations.length,
+      productsWithImages: operations.length - failures.filter((item) => item.reason === 'Product detail response did not contain usable product images.').length,
       failed: failures.slice(0, 10),
       nextSearchId: cursor || null,
       reviewQueueOnly: true,
