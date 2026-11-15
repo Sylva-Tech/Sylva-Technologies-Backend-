@@ -322,20 +322,51 @@ const getFeedNames = (payload) => {
 
 const getFeedItemIds = (payload) => {
   const envelope = getMethodEnvelope(payload, 'aliexpress.ds.feed.itemids.get');
-  const result = envelope.result || envelope.resp_result?.result || {};
-  // Live API Explorer response shape:
-  // aliexpress_ds_feed_itemids_get_response.result.products.number[]
-  // The array key is "number", not "product_ids" or "item_ids".
-  const documentedIds = result.products?.number;
-  const fallbackIds = findArray(envelope, (key, value) =>
-    /item.?ids?|product.?ids?/i.test(key) && value.length > 0);
-  const ids = Array.isArray(documentedIds) ? documentedIds : (fallbackIds || []);
-  const normalized = ids.map((item) => {
-    if (typeof item === 'string' || typeof item === 'number') return String(item);
-    return String(item?.product_id || item?.item_id || item?.productId || item?.itemId || '');
-  }).filter((id) => /^\d{1,30}$/.test(id));
-  const cursor = envelope.search_id || result.search_id || '';
-  return { ids: [...new Set(normalized)], cursor: String(cursor || '') };
+  const result = envelope.result || envelope.resp_result?.result || envelope;
+  const ids = new Set();
+  const seen = new Set();
+  let cursor = '';
+
+  const addId = (value) => {
+    if (typeof value === 'number' || typeof value === 'string') {
+      const candidate = String(value).trim();
+      if (/^\\d{1,30}$/.test(candidate)) ids.add(candidate);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    const candidate = value.product_id ?? value.item_id ?? value.productId ?? value.itemId ??
+      value.productIdStr ?? value.itemIdStr ?? value.id;
+    if (candidate !== undefined && candidate !== null) addId(candidate);
+  };
+
+  // IOP has returned feed IDs as products.number[], as well as wrapped
+  // response objects. Walk the response to tolerate both object/array and
+  // stringified-list serializations without treating totals as product IDs.
+  const visit = (node, depth = 0) => {
+    if (!node || typeof node !== 'object' || depth > 12 || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      node.forEach(addId);
+      return;
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (/^search_id$/i.test(key) && (typeof value === 'string' || typeof value === 'number')) {
+        cursor = String(value);
+      }
+      if (/^(number|product_ids|productIds|item_ids|itemIds|product_id_list|item_id_list)$/i.test(key)) {
+        if (Array.isArray(value)) value.forEach(addId);
+        else if (typeof value === 'string' && value.includes(',')) value.split(',').forEach(addId);
+        else if (value && typeof value === 'object') {
+          if (Array.isArray(value.number)) value.number.forEach(addId);
+          else addId(value);
+        } else addId(value);
+      }
+      if (value && typeof value === 'object') visit(value, depth + 1);
+    }
+  };
+  visit(result);
+  if (!ids.size) visit(envelope);
+  return { ids: [...ids], cursor };
 };
 
 const normalizeAliExpressProduct = (payload, productId, currency) => {
@@ -521,6 +552,70 @@ router.post('/catalog/review/:id/reject', protect, adminOnly, async (req, res) =
   } catch (error) {
     console.error('[AliExpress review rejection] failed:', error.message);
     return res.status(500).json({ success: false, message: 'Unable to reject this AliExpress product.' });
+  }
+});
+
+
+/* Read-only feed-item verification; does not fetch product details or import listings. */
+router.post('/catalog/verify-feed-items', protect, adminOnly, limiter, async (req, res) => {
+  let connection;
+  try {
+    requiredDropshipEnv();
+    connection = await AliExpressConnection.findOne({ provider: 'aliexpress' })
+      .select('+accessTokenEncrypted +refreshTokenEncrypted');
+    if (!connection || connection.status !== 'connected' || !isBuyerPlatform(connection.accountPlatform)) {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_BUYERAPP_REQUIRED', stage: 'connection', message: 'Connect the existing buyerApp account first.' });
+    }
+    const accessToken = await getUsableBuyerToken(connection);
+    const feedNameResponse = await callDropshipApi('aliexpress.ds.feedname.get', {}, accessToken);
+    const feedNames = getFeedNames(feedNameResponse);
+    const feedName = String(req.body?.feedName || connection.catalogLastFeedName || feedNames[0] || '').trim();
+    if (!feedName || !feedNames.includes(feedName)) {
+      return res.status(400).json({ success: false, code: 'ALIEXPRESS_FEED_NAME_INVALID', stage: 'feed_names', message: 'Select a feed returned by AliExpress.' });
+    }
+    const pageSize = Math.max(1, Math.min(50, Number.parseInt(req.body?.pageSize, 10) || 5));
+    const params = { feed_name: feedName, page_size: pageSize };
+    if (req.body?.searchId) params.search_id = String(req.body.searchId).slice(0, 300);
+    const payload = await callDropshipApi('aliexpress.ds.feed.itemids.get', params, accessToken);
+    const parsed = getFeedItemIds(payload);
+    if (!parsed.ids.length) {
+      const error = new Error('AliExpress responded, but no product IDs could be extracted from the feed-item response. No products were imported.');
+      error.code = 'ALIEXPRESS_FEED_ITEMS_EMPTY';
+      error.status = 502;
+      throw error;
+    }
+    const now = new Date();
+    connection.catalogFeedItemIdsVerifiedAt = now;
+    connection.catalogLastFeedName = feedName;
+    connection.catalogLastFeedItemCount = parsed.ids.length;
+    connection.catalogLastFeedCursor = parsed.cursor;
+    connection.catalogLastTestError = '';
+    await connection.save();
+    return res.json({
+      success: true,
+      message: 'AliExpress feed-item retrieval passed. Product IDs were verified only; no product details were fetched and nothing was imported or published.',
+      stage: 'feed_item_ids',
+      verification: { feedName, feedItemIdsMethod: 'passed', productIdsReturned: parsed.ids.length, verifiedAt: now, hasNextPage: Boolean(parsed.cursor) },
+      sampleProductIds: parsed.ids.slice(0, 5),
+      nextSearchId: parsed.cursor || null,
+      imported: 0,
+      reviewQueueOnly: true,
+      storefrontPublished: false,
+      supplierOrderingEnabled: false,
+    });
+  } catch (error) {
+    console.error('[AliExpress feed-item verification] failed:', {
+      code: error.code || 'ALIEXPRESS_FEED_ITEMS_FAILED',
+      aliexpressCode: error.aliexpressCode || '',
+      message: String(error.message || 'Unknown error').slice(0, 240),
+    });
+    const status = Number(error.status) >= 400 && Number(error.status) < 600 ? Number(error.status) : 502;
+    return res.status(status).json({
+      success: false, code: error.code || 'ALIEXPRESS_FEED_ITEMS_FAILED',
+      message: error.message || 'AliExpress feed-item verification failed.',
+      stage: 'feed_item_ids',
+      ...(error.aliexpressCode ? { aliexpressCode: error.aliexpressCode } : {}),
+    });
   }
 });
 
