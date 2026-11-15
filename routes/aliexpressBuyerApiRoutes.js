@@ -558,7 +558,7 @@ const extractAliExpressProductAttributes = (productResult) => {
   };
   walk(productResult);
 
-  const ignored = /supplier|aliexpress|seller|store|shipping|freight|delivery|price|cost|currency|stock|sku|product.?id|category|image|url|commission|profit|markup|source|provider/i;
+  const ignored = /supplier|aliexpress|seller|store|shipping|freight|delivery|price|cost|currency|stock|sku|product.?id|category|image|url|commission|profit|markup|source|provider|properties|attributes|specifications|^items?$/i;
   const clean = (value) => String(value ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
   const valueText = (value, depth = 0) => {
     if (depth > 3 || value == null) return '';
