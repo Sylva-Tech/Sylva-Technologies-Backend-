@@ -12,10 +12,10 @@ const processOnePendingProduct = async () => {
     const claimed = await AliExpressCatalogProduct.findOneAndUpdate(
       {
         status: { $in: ['pending', 'approved'] },
-        'aiContentDraft.status': 'pending',
+        'aiContentDraft.status': { $in: ['pending', 'processing'] },
         $or: [
-          { 'aiContentDraft.nextAttemptAt': null },
-          { 'aiContentDraft.nextAttemptAt': { $lte: now } },
+          { 'aiContentDraft.status': 'pending', 'aiContentDraft.nextAttemptAt': null },
+          { 'aiContentDraft.status': 'pending', 'aiContentDraft.nextAttemptAt': { $lte: now } },
           { 'aiContentDraft.status': 'processing', 'aiContentDraft.processingAt': { $lte: new Date(now.getTime() - 10 * 60 * 1000) } },
         ],
       },
