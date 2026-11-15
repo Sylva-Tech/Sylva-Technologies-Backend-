@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 
-const MODEL_DEFAULT = 'gemini-3.1-flash-lite';
+const MODEL_DEFAULT = 'gemini-3.5-flash-lite';
 const CONTENT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -50,8 +50,8 @@ const validateContent = (value) => {
     error.code = 'AI_CONTENT_INVALID';
     throw error;
   }
-  const keyFeatures = [...new Set(value.keyFeatures.map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean))].slice(0, 8);
-  const shortDescription = value.shortDescription.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+  const keyFeatures = [...new Set(value.keyFeatures.map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean))].slice(0, 7);
+  const shortDescription = value.shortDescription.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
   const description = value.description.replace(/<[^>]*>/g, ' ').replace(/\r?\n{3,}/g, '\n\n').replace(/\s{2,}/g, ' ').trim().slice(0, 12000);
   const seoTitle = value.seoTitle.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
   const seoMetaDescription = value.seoMetaDescription.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 155);
@@ -122,7 +122,7 @@ const generateAliExpressProductContent = async (product) => {
     'targetField indicates shortDescription, keyFeatures, description or all. Prioritize that field while returning all required schema fields.',
     'Also return seoTitle under 60 characters, seoMetaDescription under 155 characters, 5 to 8 factual marketingTags, a socialPromoCaption suitable for WhatsApp or Instagram, and suggestedCategory as plain text only. suggestedCategory is advisory and must never be treated as an approved category ID.',
     'Social captions must not claim local stock, immediate availability, warranty or delivery times unless explicitly supported by supplied verified data. Never include a price or currency amount.',
-    'Return up to eight concise factual key features. Short description should be 1–2 sentences and under 300 characters. Full description should use readable paragraphs. Do not add prices or shipping charges.',
+    'Return 5 to 7 concise factual key features. Short description should be 1–2 sentences and no more than 160 characters. Full description should use readable Markdown headings and bullet lists. Do not add prices or shipping charges.',
     'Give practical suggestions and missingSections only when useful. Return only structured JSON.',
   ].join('\n');
   try {
