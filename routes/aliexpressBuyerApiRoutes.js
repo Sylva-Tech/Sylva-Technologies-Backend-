@@ -341,8 +341,69 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
   };
 };
 
+// Isolated read-only feed-name verification. This separates feed discovery
+// from feed-item pagination and product detail lookups so each stage can be
+// diagnosed without importing or publishing anything.
+router.post('/catalog/verify-feeds', protect, adminOnly, limiter, async (req, res) => {
+  let connection;
+  try {
+    requiredDropshipEnv();
+    connection = await AliExpressConnection.findOne({ provider: 'aliexpress' })
+      .select('+accessTokenEncrypted +refreshTokenEncrypted');
+    if (!connection || connection.status !== 'connected' || !isBuyerPlatform(connection.accountPlatform)) {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_BUYERAPP_REQUIRED', stage: 'connection', message: 'Connect the existing buyerApp AliExpress account before verifying supplier feeds.' });
+    }
+
+    const accessToken = await getUsableBuyerToken(connection);
+    const payload = await callDropshipApi('aliexpress.ds.feedname.get', {}, accessToken);
+    const feedNames = getFeedNames(payload);
+    if (!feedNames.length) {
+      const error = new Error('AliExpress responded, but the feed-name response did not contain a recognizable promos.promo list.');
+      error.code = 'ALIEXPRESS_FEED_NAMES_EMPTY';
+      error.status = 502;
+      throw error;
+    }
+
+    const now = new Date();
+    connection.catalogFeedNamesVerifiedAt = now;
+    connection.catalogLastFeedName = feedNames[0];
+    connection.catalogLastTestError = '';
+    await connection.save();
+
+    return res.json({
+      success: true,
+      message: 'AliExpress feed-name discovery passed. No products were imported or published.',
+      stage: 'feed_names',
+      verification: { feedNameMethod: 'passed', feedCount: feedNames.length, verifiedAt: now },
+      availableFeeds: feedNames.slice(0, 150),
+      reviewQueueOnly: true,
+      storefrontPublished: false,
+      supplierOrderingEnabled: false,
+    });
+  } catch (error) {
+    if (connection) {
+      connection.catalogLastTestError = String(error.message || 'AliExpress feed-name verification failed.').slice(0, 500);
+      await connection.save().catch(() => {});
+    }
+    const status = Number(error.status) >= 400 && Number(error.status) < 600 ? Number(error.status) : 502;
+    console.error('[AliExpress feed-name verification] failed:', {
+      code: error.code || 'ALIEXPRESS_FEED_NAMES_FAILED',
+      aliexpressCode: error.aliexpressCode || '',
+      message: String(error.message || 'Unknown error').slice(0, 240),
+    });
+    return res.status(status).json({
+      success: false,
+      code: error.code || 'ALIEXPRESS_FEED_NAMES_FAILED',
+      message: error.message || 'AliExpress feed-name verification failed.',
+      stage: 'feed_names',
+      ...(error.aliexpressCode ? { aliexpressCode: error.aliexpressCode } : {}),
+    });
+  }
+});
+
 router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
   let connection;
+  let stage = 'configuration';
   try {
     requiredDropshipEnv();
     connection = await AliExpressConnection.findOne({ provider: 'aliexpress' })
@@ -350,7 +411,9 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
     if (!connection || connection.status !== 'connected' || !isBuyerPlatform(connection.accountPlatform)) {
       return res.status(409).json({ success: false, code: 'ALIEXPRESS_BUYERAPP_REQUIRED', message: 'Connect the existing buyerApp AliExpress account before catalogue synchronisation.' });
     }
+    stage = 'token';
     const accessToken = await getUsableBuyerToken(connection);
+    stage = 'feed_names';
     const feedNameResponse = await callDropshipApi('aliexpress.ds.feedname.get', {}, accessToken);
     const feedNames = getFeedNames(feedNameResponse);
     if (!feedNames.length) {
@@ -369,6 +432,7 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
     const pageSize = Math.max(1, Math.min(50, Number.parseInt(req.body?.pageSize, 10) || 20));
     const itemParams = { feed_name: selectedFeed, page_size: pageSize };
     if (req.body?.searchId) itemParams.search_id = String(req.body.searchId).slice(0, 300);
+    stage = 'feed_item_ids';
     const itemResponse = await callDropshipApi('aliexpress.ds.feed.itemids.get', itemParams, accessToken);
     const { ids, cursor } = getFeedItemIds(itemResponse);
     if (!ids.length) {
@@ -383,6 +447,7 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
 
     const operations = [];
     const failures = [];
+    stage = 'product_details';
     for (const productId of ids) {
       try {
         const detail = await callDropshipApi('aliexpress.ds.product.get', {
@@ -415,6 +480,7 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
       error.code = 'ALIEXPRESS_PRODUCT_DETAILS_NOT_VERIFIED';
       throw error;
     }
+    stage = 'save_private_queue';
     await AliExpressCatalogProduct.bulkWrite(operations, { ordered: false });
     const now = new Date();
     connection.catalogProtocolVerifiedAt = connection.catalogProtocolVerifiedAt || now;
@@ -450,10 +516,18 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
       connection.catalogLastTestError = String(error.message || 'AliExpress catalogue sync failed.').slice(0, 500);
       await connection.save().catch(() => {});
     }
-    return res.status(502).json({
+    const status = Number(error.status) >= 400 && Number(error.status) < 600 ? Number(error.status) : 502;
+    console.error('[AliExpress catalogue sync] failed:', {
+      stage,
+      code: error.code || 'ALIEXPRESS_CATALOG_SYNC_FAILED',
+      aliexpressCode: error.aliexpressCode || '',
+      message: String(error.message || 'Unknown error').slice(0, 240),
+    });
+    return res.status(status).json({
       success: false,
       code: error.code || 'ALIEXPRESS_CATALOG_SYNC_FAILED',
       message: error.message || 'AliExpress catalogue sync failed. No products were published.',
+      stage,
       reviewQueueOnly: true,
     });
   }
