@@ -9,46 +9,44 @@ const processOnePendingProduct = async () => {
   running = true;
   try {
     const now = new Date();
-    const retryDue = {
-      $expr: {
-        $or: [
-          { $eq: [{ $ifNull: ['$aiContentDraft.nextAttemptAt', null] }, null] },
-          { $lte: ['$aiContentDraft.nextAttemptAt', now] },
-        ],
-      },
-    };
-    const staleProcessing = {
-      $expr: {
-        $and: [
-          { $ne: [{ $ifNull: ['$aiContentDraft.processingAt', null] }, null] },
-          { $lte: ['$aiContentDraft.processingAt', new Date(now.getTime() - 10 * 60 * 1000)] },
-        ],
-      },
-    };
+    const retryCutoff = now;
+    const staleProcessingCutoff = new Date(now.getTime() - 10 * 60 * 1000);
 
-    // Use $expr for nested date comparisons. Mongoose otherwise incorrectly
-    // casts the operator object as the value of these nested schema paths.
-    const claimed = await AliExpressCatalogProduct.findOneAndUpdate(
+    // Use the native collection for this narrowly scoped claim query. MongoDB
+    // evaluates the nested Date operators directly, without Mongoose trying
+    // to cast operator objects as Date values or sanitize the trusted filter.
+    // Every filter value is a fixed worker state or a server-generated date.
+    const claimFilter = {
+      $or: [
+        {
+          status: { $in: ['pending', 'approved'] },
+          'aiContentDraft.status': 'pending',
+          $or: [
+            { 'aiContentDraft.nextAttemptAt': null },
+            { 'aiContentDraft.nextAttemptAt': { $lte: retryCutoff } },
+          ],
+        },
+        {
+          status: { $in: ['pending', 'approved'] },
+          'aiContentDraft.status': 'processing',
+          'aiContentDraft.processingAt': { $lte: staleProcessingCutoff },
+        },
+      ],
+    };
+    const claimResult = await AliExpressCatalogProduct.collection.findOneAndUpdate(
+      claimFilter,
       {
-        $or: [
-          { status: 'pending', 'aiContentDraft.status': 'pending', ...retryDue },
-          { status: 'approved', 'aiContentDraft.status': 'pending', ...retryDue },
-          { status: 'pending', 'aiContentDraft.status': 'processing', ...staleProcessing },
-          { status: 'approved', 'aiContentDraft.status': 'processing', ...staleProcessing },
-        ],
-      },
-      {
-        $set: { 'aiContentDraft.status': 'processing', 'aiContentDraft.lastError': '', 'aiContentDraft.processingAt': now },
+        $set: {
+          'aiContentDraft.status': 'processing',
+          'aiContentDraft.lastError': '',
+          'aiContentDraft.processingAt': now,
+        },
         $inc: { 'aiContentDraft.attempts': 1 },
       },
-      {
-        new: true,
-        sort: { syncedAt: 1 },
-        // This filter is built only from fixed worker states and server timestamps.
-        // Allow MongoDB aggregation expressions here without disabling sanitization globally.
-        sanitizeFilter: false,
-      }
+      { returnDocument: 'after', sort: { syncedAt: 1 } }
     );
+    const claimedRaw = claimResult?.value || claimResult;
+    const claimed = claimedRaw ? AliExpressCatalogProduct.hydrate(claimedRaw) : null;
     if (!claimed) return false;
 
     try {
