@@ -30,7 +30,10 @@ const schema = new mongoose.Schema({
     model: { type: String, default: '', maxlength: 80 },
     sourceHash: { type: String, default: '', maxlength: 64 },
     generatedAt: { type: Date, default: null },
-    status: { type: String, enum: ['not_generated', 'generated', 'failed'], default: 'not_generated' },
+    status: { type: String, enum: ['not_generated', 'pending', 'processing', 'generated', 'failed'], default: 'not_generated' },
+    attempts: { type: Number, default: 0, min: 0, max: 5 },
+    lastError: { type: String, default: '', maxlength: 240 },
+    nextAttemptAt: { type: Date, default: null },
   },
   productAttributes: {
     type: [{ name: { type: String, trim: true, maxlength: 80 }, value: { type: String, trim: true, maxlength: 240 } }],
