@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Product = require('../models/Product');
+const { syncGoogleSheetProducts } = require('../services/googleSheetProductSync');
 
 const {
   protect,
