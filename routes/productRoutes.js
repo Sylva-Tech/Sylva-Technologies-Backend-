@@ -2163,7 +2163,11 @@ router.post('/:id/ai-content-draft', protect, adminOnly, async (req, res) => {
       .slice(0, 40)
       .map(([name, value]) => ({ name: String(name).slice(0, 80), value: String(value).slice(0, 240) }));
 
+    const requestedField = ['shortDescription', 'keyFeatures', 'description'].includes(req.body?.targetField)
+      ? req.body.targetField
+      : 'all';
     const draft = await generateAliExpressProductContent({
+      targetField: requestedField,
       title: requestedName,
       brand: requestedBrand,
       categoryName: categoryRecord?.name || '',
