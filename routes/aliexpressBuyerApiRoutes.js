@@ -330,7 +330,7 @@ const getFeedItemIds = (payload) => {
   const addId = (value) => {
     if (typeof value === 'number' || typeof value === 'string') {
       const candidate = String(value).trim();
-      if (/^\\d{1,30}$/.test(candidate)) ids.add(candidate);
+      if (/^\d{1,30}$/.test(candidate)) ids.add(candidate);
       else if ((candidate.startsWith('[') && candidate.endsWith(']')) ||
                (candidate.startsWith('{') && candidate.endsWith('}'))) {
         try { const parsed = JSON.parse(candidate); if (parsed !== value) visit(parsed); } catch (_) {}
@@ -417,7 +417,7 @@ router.post('/catalog/stage-product', protect, adminOnly, limiter, async (req, r
   try {
     requiredDropshipEnv();
     const productId = String(req.body?.productId || '').trim();
-    if (!/^\\d{1,30}$/.test(productId)) {
+    if (!/^\d{1,30}$/.test(productId)) {
       return res.status(400).json({ success: false, code: 'ALIEXPRESS_PRODUCT_ID_INVALID', message: 'Enter a valid numeric AliExpress product ID.' });
     }
     connection = await AliExpressConnection.findOne({ provider: 'aliexpress' })
