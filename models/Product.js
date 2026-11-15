@@ -32,6 +32,15 @@ const productSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // Optional legacy/business product code. The database index is partial so
+    // products without a code do not collide on null or missing values.
+    code: {
+      type: String,
+      default: undefined,
+      trim: true,
+      uppercase: true,
+    },
+
     /*
      * Track product ownership for safe spreadsheet reconciliation.
      * Existing records remain unmarked until a successful sheet sync
