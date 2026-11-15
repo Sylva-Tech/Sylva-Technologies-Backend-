@@ -3,6 +3,7 @@ const rateLimit = require('express-rate-limit');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const AliExpressConnection = require('../models/AliExpressConnection');
 const AliExpressCatalogProduct = require('../models/AliExpressCatalogProduct');
+const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
 const {
   getDropshipApiConfig,
   requiredDropshipEnv,
@@ -23,31 +24,6 @@ const limiter = rateLimit({
 });
 
 const isBuyerPlatform = (value) => ['buyerapp', 'buyer_app', 'buyer'].includes(String(value || '').toLowerCase());
-
-const getUsableBuyerToken = async (connection) => {
-  const expiresAt = connection.accessTokenExpiresAt ? new Date(connection.accessTokenExpiresAt).getTime() : 0;
-  const needsRefresh = !connection.accessTokenEncrypted || !expiresAt || expiresAt <= Date.now() + 60000;
-  if (!needsRefresh) return decryptSecret(connection.accessTokenEncrypted);
-
-  if (!connection.refreshTokenEncrypted) {
-    const error = new Error('The AliExpress access token is missing or expired. Re-authorize the existing buyerApp account.');
-    error.code = 'ALIEXPRESS_TOKEN_EXPIRED';
-    error.status = 409;
-    throw error;
-  }
-
-  const currentRefreshToken = decryptSecret(connection.refreshTokenEncrypted);
-  const token = await refreshAccessToken(currentRefreshToken);
-  connection.accessTokenEncrypted = encryptSecret(token.access_token);
-  if (token.refresh_token) connection.refreshTokenEncrypted = encryptSecret(token.refresh_token);
-  connection.accessTokenExpiresAt = token.expires_in
-    ? new Date(Date.now() + Number(token.expires_in) * 1000) : null;
-  if (token.refresh_expires_in) {
-    connection.refreshTokenExpiresAt = new Date(Date.now() + Number(token.refresh_expires_in) * 1000);
-  }
-  await connection.save();
-  return token.access_token;
-};
 
 // Reveal only the current buyerApp access token to an authenticated administrator.
 // The token is never persisted in the browser, returned by status endpoints, or logged.
@@ -137,6 +113,9 @@ router.get('/status', protect, adminOnly, async (req, res) => {
         accountPlatform: connection?.accountPlatform || '',
         lastConnectedAt: connection?.lastConnectedAt || null,
         accessTokenExpiresAt: connection?.accessTokenExpiresAt || null,
+        tokenLastRefreshedAt: connection?.tokenLastRefreshedAt || null,
+        tokenRefreshLastError: connection?.tokenRefreshLastError || '',
+        automaticTokenRefresh: { enabled: true, checkIntervalMinutes: 5, refreshWindowMinutes: 10 },
         lastError: connection?.lastError || '',
         buyerAuthorized,
         dropshipApiConfigured: dropshipApi.configured,
