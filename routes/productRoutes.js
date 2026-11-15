@@ -2159,7 +2159,7 @@ router.post('/:id/ai-content-draft', protect, adminOnly, async (req, res) => {
     const categoryId = req.body?.category || product.category;
     const categoryRecord = await Category.findById(categoryId).select('name').lean();
     const specificationEntries = Object.entries(requestedSpecifications || {})
-      .filter(([name, value]) => name && value !== undefined && value !== null && String(value).trim())
+      .filter(([name, value]) => name && value !== undefined && value !== null && String(value).trim() && !/supplier|aliexpress|shipping|delivery|exchange|markup|profit|wholesale|purchase|cost|price|url|store|seller|internal|source|raw|order|payment|wallet/i.test(String(name)))
       .slice(0, 40)
       .map(([name, value]) => ({ name: String(name).slice(0, 80), value: String(value).slice(0, 240) }));
 
