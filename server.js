@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const app = require('./app');
 const connectDB = require('./config/db');
+const { startAliExpressTokenRefresh } = require('./services/aliexpressTokenManager');
 
 const PORT = process.env.PORT || 5000;
 
@@ -10,6 +11,7 @@ const startServer = async () => {
     const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
     if (mongoUri) {
       await connectDB();
+      startAliExpressTokenRefresh();
     } else {
       console.warn('MONGO_URI/MONGODB_URI is not set. The API will start without MongoDB until the environment is configured.');
     }
