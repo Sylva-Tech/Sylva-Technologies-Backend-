@@ -229,13 +229,18 @@ const productSchema = new mongoose.Schema(
     },
 
     contentGeneration: {
-      provider: { type: String, enum: ['openai'], default: undefined },
+      provider: { type: String, enum: ['google_gemini'], default: undefined },
       model: { type: String, default: '', maxlength: 80 },
       sourceHash: { type: String, default: '', maxlength: 64 },
       generatedAt: { type: Date, default: null },
       generatedFields: { type: [String], default: [] },
       warnings: { type: [String], default: [] },
     },
+
+    seoTitle: { type: String, default: '', trim: true, maxlength: 60 },
+    seoMetaDescription: { type: String, default: '', trim: true, maxlength: 155 },
+    marketingTags: { type: [String], default: [] },
+    socialPromoCaption: { type: String, default: '', trim: true, maxlength: 1000 },
 
     sellerNotes: {
       type: String,
