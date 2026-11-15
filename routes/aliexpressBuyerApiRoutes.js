@@ -857,6 +857,72 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
   }
 });
 
+
+/* Refresh supplier identity on an already-published AliExpress product.
+ * This updates source metadata only; price, stock, visibility and orders are untouched.
+ */
+router.post('/catalog/refresh-published-metadata/:productId', protect, adminOnly, limiter, async (req, res) => {
+  try {
+    const product = await Product.findOne({ _id: req.params.productId, source: 'aliexpress' });
+    if (!product) return res.status(404).json({ success: false, code: 'ALIEXPRESS_PUBLISHED_PRODUCT_NOT_FOUND', message: 'Published AliExpress product not found.' });
+
+    const productId = String(product.specifications?.supplierProductId || product.sku || '').replace(/^AE-/i, '').trim();
+    if (!/^\\d{1,30}$/.test(productId)) {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_PRODUCT_ID_MISSING', message: 'This product does not contain a valid AliExpress supplier product ID.' });
+    }
+
+    const connection = await AliExpressConnection.findOne({ provider: 'aliexpress' })
+      .select('+accessTokenEncrypted +refreshTokenEncrypted');
+    if (!connection || connection.status !== 'connected' || !isBuyerPlatform(connection.accountPlatform)) {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_BUYERAPP_REQUIRED', message: 'Connect the existing AliExpress buyerApp account before refreshing supplier details.' });
+    }
+
+    const accessToken = await getUsableBuyerToken(connection);
+    const supplierCurrency = String(product.specifications?.supplierCurrency || 'USD').toUpperCase();
+    const payload = await callDropshipApi('aliexpress.ds.product.get', {
+      product_id: productId,
+      ship_to_country: 'KE',
+      target_currency: /^[A-Z]{3}$/.test(supplierCurrency) ? supplierCurrency : 'USD',
+      target_language: 'en_US',
+    }, accessToken);
+    const normalized = normalizeAliExpressProduct(payload, productId, supplierCurrency);
+    if (!normalized) return res.status(502).json({ success: false, code: 'ALIEXPRESS_PRODUCT_DETAILS_INVALID', message: 'AliExpress did not return usable supplier details.' });
+
+    const storeName = normalized.supplierStoreName || '';
+    const storeUrl = normalized.supplierStoreUrl || '';
+    product.specifications = {
+      ...(product.specifications?.toObject?.() || product.specifications || {}),
+      supplier: 'AliExpress',
+      supplierProductId: productId,
+      supplierStoreName: storeName,
+      supplierStoreUrl: storeUrl,
+      shippingHandledBy: 'AliExpress',
+    };
+    if (!product.brand || /^aliexpress$/i.test(product.brand)) {
+      product.brand = normalized.supplierBrand || 'Sylva Technologies';
+    }
+    await product.save();
+
+    await AliExpressCatalogProduct.updateOne(
+      { providerProductId: productId },
+      { $set: { supplierStoreName: storeName, supplierStoreUrl: storeUrl, supplierBrand: normalized.supplierBrand || '', sellerId: normalized.sellerId || '' } }
+    );
+
+    return res.json({
+      success: true,
+      message: storeName
+        ? 'Supplier store details refreshed. Product price, stock and publication status were not changed.'
+        : 'AliExpress did not return a seller store name for this product. Existing product pricing and stock were not changed.',
+      product: { _id: product._id, brand: product.brand, supplierStoreName: storeName, supplierStoreUrl: storeUrl, shippingHandledBy: 'AliExpress' },
+      updated: { price: false, stock: false, visibility: false, orders: false },
+    });
+  } catch (error) {
+    console.error('[AliExpress published metadata refresh] failed:', error.message);
+    const status = Number(error.status) >= 400 && Number(error.status) < 600 ? Number(error.status) : 502;
+    return res.status(status).json({ success: false, code: error.code || 'ALIEXPRESS_METADATA_REFRESH_FAILED', message: error.message || 'Unable to refresh AliExpress supplier details.' });
+  }
+});
+
 router.post('/catalog/review/:id/reject', protect, adminOnly, async (req, res) => {
   try {
     const reason = String(req.body?.reason || '').trim().slice(0, 1000);
