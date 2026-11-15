@@ -22,7 +22,17 @@ const schema = new mongoose.Schema({
   supplierStoreName: { type: String, default: '', trim: true, maxlength: 200 },
   supplierStoreUrl: { type: String, default: '', trim: true, maxlength: 2000 },
   supplierBrand: { type: String, default: '', trim: true, maxlength: 120 },
-  aiContentDraft: {\n    keyFeatures: { type: [String], default: [] },\n    shortDescription: { type: String, default: '', maxlength: 500 },\n    description: { type: String, default: '', maxlength: 12000 },\n    warnings: { type: [String], default: [] },\n    model: { type: String, default: '', maxlength: 80 },\n    sourceHash: { type: String, default: '', maxlength: 64 },\n    generatedAt: { type: Date, default: null },\n    status: { type: String, enum: ['not_generated', 'generated', 'failed'], default: 'not_generated' },\n  },\n  productAttributes: {
+  aiContentDraft: {
+    keyFeatures: { type: [String], default: [] },
+    shortDescription: { type: String, default: '', maxlength: 500 },
+    description: { type: String, default: '', maxlength: 12000 },
+    warnings: { type: [String], default: [] },
+    model: { type: String, default: '', maxlength: 80 },
+    sourceHash: { type: String, default: '', maxlength: 64 },
+    generatedAt: { type: Date, default: null },
+    status: { type: String, enum: ['not_generated', 'generated', 'failed'], default: 'not_generated' },
+  },
+  productAttributes: {
     type: [{ name: { type: String, trim: true, maxlength: 80 }, value: { type: String, trim: true, maxlength: 240 } }],
     default: [],
   },
