@@ -724,7 +724,7 @@ router.post('/catalog/stage-product', protect, adminOnly, limiter, async (req, r
     normalized.aiContentDraft = { status: 'pending', attempts: 0 };
     const staged = await AliExpressCatalogProduct.findOneAndUpdate(
       { providerProductId: normalized.providerProductId },
-      { $set: { ...normalized, syncedAt: new Date(), 'aiContentDraft.status': 'pending' }, $setOnInsert: { status: 'pending', 'aiContentDraft.attempts': 0 } },
+      { $set: { ...normalized, syncedAt: new Date() }, $setOnInsert: { status: 'pending' } },
       { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
     );
     return res.status(201).json({
