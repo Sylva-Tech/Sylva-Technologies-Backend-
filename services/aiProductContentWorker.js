@@ -11,12 +11,33 @@ const processOnePendingProduct = async () => {
     const now = new Date();
     const claimed = await AliExpressCatalogProduct.findOneAndUpdate(
       {
-        status: { $in: ['pending', 'approved'] },
-        'aiContentDraft.status': { $in: ['pending', 'processing'] },
         $or: [
-          { 'aiContentDraft.status': 'pending', 'aiContentDraft.nextAttemptAt': null },
-          { 'aiContentDraft.status': 'pending', 'aiContentDraft.nextAttemptAt': { $lte: now } },
-          { 'aiContentDraft.status': 'processing', 'aiContentDraft.processingAt': { $lte: new Date(now.getTime() - 10 * 60 * 1000) } },
+          {
+            status: 'pending',
+            'aiContentDraft.status': 'pending',
+            $or: [
+              { 'aiContentDraft.nextAttemptAt': null },
+              { 'aiContentDraft.nextAttemptAt': { $lte: now } },
+            ],
+          },
+          {
+            status: 'approved',
+            'aiContentDraft.status': 'pending',
+            $or: [
+              { 'aiContentDraft.nextAttemptAt': null },
+              { 'aiContentDraft.nextAttemptAt': { $lte: now } },
+            ],
+          },
+          {
+            status: 'pending',
+            'aiContentDraft.status': 'processing',
+            'aiContentDraft.processingAt': { $lte: new Date(now.getTime() - 10 * 60 * 1000) },
+          },
+          {
+            status: 'approved',
+            'aiContentDraft.status': 'processing',
+            'aiContentDraft.processingAt': { $lte: new Date(now.getTime() - 10 * 60 * 1000) },
+          },
         ],
       },
       {
