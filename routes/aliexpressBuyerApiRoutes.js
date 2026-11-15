@@ -577,6 +577,11 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
   const originalPrice = regularPrices.length ? Math.min(...regularPrices) : (numericPrice(base.original_price) || supplierPrice);
   const currencyCode = skuRows.find((sku) => sku.currency_code)?.currency_code || base.currency_code || currency || 'USD';
   const id = String(base.product_id || productId);
+  const storeInfo = result.ae_store_info || result.ae_store_info_dto || result.ae_store_info_d_t_o || {};
+  const firstText = (...values) => values.find((value) => typeof value === 'string' && value.trim())?.trim() || '';
+  const supplierStoreName = firstText(storeInfo.store_name, storeInfo.store_title, storeInfo.storeName, storeInfo.shop_name, storeInfo.shop_title, storeInfo.seller_name, storeInfo.name, result.store_name, base.store_name).slice(0, 200);
+  const supplierStoreUrl = firstText(storeInfo.store_url, storeInfo.store_home_url, storeInfo.storeUrl, storeInfo.shop_url, storeInfo.url, result.store_url).slice(0, 2000);
+  const supplierBrand = firstText(base.product_brand, base.brand, base.brand_name, base.product_brand_name, result.product_brand).slice(0, 120);
   const targetSalePrice = supplierPrice == null ? null : Number((supplierPrice * 1.08).toFixed(2));
 
   return {
@@ -592,7 +597,10 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
     supplierCurrency: String(currencyCode).toUpperCase().slice(0, 3),
     targetCurrency: String(currency || 'USD').toUpperCase().slice(0, 3),
     categoryId: String(base.category_id || ''),
-    sellerId: String(result.ae_store_info?.store_id || ''),
+    sellerId: String(storeInfo.store_id || storeInfo.seller_id || ''),
+    supplierStoreName,
+    supplierStoreUrl,
+    supplierBrand,
     sourcePayload: {
       productId: id,
       skuCount: skuRows.length,
@@ -804,7 +812,8 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const title = String(req.body?.title || record.title || '').trim().slice(0, 500);
     if (title.length < 3) return res.status(400).json({ success: false, message: 'A product title is required.' });
     const description = String(req.body?.description || title).trim().slice(0, 12000);
-    const brand = String(req.body?.brand || 'AliExpress').trim().slice(0, 120);
+    const requestedBrand = String(req.body?.brand || '').trim();
+    const brand = String(record.supplierBrand || (requestedBrand && !/^aliexpress$/i.test(requestedBrand) ? requestedBrand : '') || 'Sylva Technologies').trim().slice(0, 120);
     let category = null;
     const chosenCategoryId = String(req.body?.categoryId || record.sylvaCategoryId || '');
     if (chosenCategoryId && mongoose.isValidObjectId(chosenCategoryId)) {
@@ -832,7 +841,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       images, stock: approvedStock, condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
       seller: null, featured: false, flashSale: false, offer: false,
-      specifications: { supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierPrice: record.supplierPrice, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: 8, shippingIncludedInMarkup: false, deliveryIncludedInMarkup: false, shippingHandledBy: 'AliExpress', deliveryCostChargedSeparately: true },
+      specifications: { supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierStoreName: record.supplierStoreName || '', supplierStoreUrl: record.supplierStoreUrl || '', supplierPrice: record.supplierPrice, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: 8, shippingIncludedInMarkup: false, deliveryIncludedInMarkup: false, shippingHandledBy: 'AliExpress', deliveryCostChargedSeparately: true },
     });
 
     record.status = 'approved';
@@ -1072,4 +1081,5 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
 module.exports = router;
 module.exports.isBuyerPlatform = isBuyerPlatform;
 module.exports.getFeedItemIds = getFeedItemIds;
+module.exports.normalizeAliExpressProduct = normalizeAliExpressProduct;
 module.exports.getUsableBuyerToken = getUsableBuyerToken;
