@@ -2181,7 +2181,7 @@ router.get('/admin/:id', protect, adminOnly, async (req, res) => {
       .populate('category')
       .populate('seller', 'name email sellerProfile.storeName');
     if (!product) return res.status(404).json({ success: false, message: 'Product not found.' });
-    res.set('Cache-Control', 'no-store, private').json({ success: true, product });
+    res.set('Cache-Control', 'no-store, private').json(product);
   } catch (error) {
     console.error('Admin product lookup failed:', error.message);
     res.status(500).json({ success: false, message: 'Unable to fetch product.' });
