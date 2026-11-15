@@ -24,6 +24,11 @@ const schema = new mongoose.Schema({
   supplierBrand: { type: String, default: '', trim: true, maxlength: 120 },
   aiContentDraft: {
     keyFeatures: { type: [String], default: [] },
+    seoTitle: { type: String, default: '', maxlength: 60 },
+    seoMetaDescription: { type: String, default: '', maxlength: 155 },
+    marketingTags: { type: [String], default: [] },
+    socialPromoCaption: { type: String, default: '', maxlength: 1000 },
+    suggestedCategory: { type: String, default: '', maxlength: 120 },
     shortDescription: { type: String, default: '', maxlength: 500 },
     description: { type: String, default: '', maxlength: 12000 },
     warnings: { type: [String], default: [] },
