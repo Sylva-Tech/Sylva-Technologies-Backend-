@@ -29,7 +29,7 @@ const PUBLIC_PRODUCT_FIELDS = [
 ];
 
 const PRIVATE_SPECIFICATION_KEY = /supplier|aliexpress|wholesale|purchase|cost|margin|markup|profit|exchange|currency|source|raw|internal|secret|token|url|seller|store|shop|merchant|shippingprice/i;
-const PRIVATE_SPECIFICATION_VALUE = /https?:\\/\\/|[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|aliexpress|supplier|wholesale|purchase price|cost price|profit margin|exchange rate/i;
+const PRIVATE_SPECIFICATION_VALUE = /https?:\/\/|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|aliexpress|supplier|wholesale|purchase price|cost price|profit margin|exchange rate/i;
 
 const toPublicProduct = (value) => {
   if (!value) return null;
