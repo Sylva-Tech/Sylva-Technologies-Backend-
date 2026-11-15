@@ -174,3 +174,18 @@ test('AliExpress product normalization retains supplier store name and brand whe
   assert.equal(normalized.supplierBrand, 'Osee');
   assert.equal(normalized.sellerId, 'store-123');
 });
+
+
+test('AliExpress product normalization tolerates missing optional store metadata', () => {
+  const normalized = normalizeAliExpressProduct({
+    aliexpress_ds_product_get_response: {
+      result: {
+        ae_item_base_info_dto: { product_id: '1005009876543210', subject: 'Generic USB Hub', currency_code: 'USD' },
+        ae_item_sku_info_dtos: [{ offer_sale_price: '12.00', currency_code: 'USD' }],
+        ae_multimedia_info_dto: { image_urls: 'https://example.com/hub.png' },
+      },
+    },
+  }, '1005009876543210', 'USD');
+  assert.equal(normalized.supplierStoreName, '');
+  assert.equal(normalized.supplierBrand, '');
+});
