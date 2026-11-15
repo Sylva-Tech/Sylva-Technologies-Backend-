@@ -8,6 +8,7 @@ const Product = require('../models/Product');
 const Category = require('../models/Category');
 const AliExpressCatalogSettings = require('../models/AliExpressCatalogSettings');
 const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
+const { generateAliExpressProductContent } = require('../services/aiProductContentService');
 const {
   getDropshipApiConfig,
   requiredDropshipEnv,
@@ -822,8 +823,9 @@ router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
   return res.set('Cache-Control', 'no-store, private').json({
     success: true,
     data: {
-      configured: Boolean(process.env.OPENAI_API_KEY),
-      model: String(process.env.OPENAI_MODEL || 'gpt-4o-mini'),
+      configured: Boolean(process.env.GEMINI_API_KEY),
+      provider: 'google_gemini',
+      model: String(process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite'),
       scope: 'product_content_only',
       mayPublishProducts: false,
       mayChangePricingOrStock: false,
@@ -831,6 +833,36 @@ router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
       supplierOrderingEnabled: false,
     },
   });
+});
+
+
+router.post('/catalog/review/:id/generate-content', protect, adminOnly, async (req, res) => {
+  try {
+    const record = await AliExpressCatalogProduct.findById(req.params.id);
+    if (!record) return res.status(404).json({ success: false, message: 'AliExpress catalogue item not found.' });
+    if (record.status !== 'pending') return res.status(409).json({ success: false, message: 'Only products awaiting admin review can receive a content draft.' });
+    const generated = await generateAliExpressProductContent({
+      title: record.title, supplierBrand: record.supplierBrand,
+      categoryName: record.categoryName, productAttributes: record.productAttributes, targetField: 'all',
+    });
+    record.aiContentDraft = {
+      ...generated, attempts: Number(record.aiContentDraft?.attempts || 0),
+      lastError: '', nextAttemptAt: null, processingAt: null,
+    };
+    await record.save();
+    return res.json({ success: true, draft: record.aiContentDraft });
+  } catch (error) {
+    console.warn('[AliExpress Gemini content] generation failed:', JSON.stringify({
+      code: error.code || 'AI_CONTENT_FAILED', providerStatus: error.providerStatus || null,
+      providerCode: error.providerCode || '',
+    }));
+    return res.status(Number(error.status) || (error.code === 'AI_CONTENT_NOT_CONFIGURED' ? 503 : 502)).json({
+      success: false, code: error.code || 'AI_CONTENT_FAILED',
+      message: error.code === 'AI_CONTENT_NOT_CONFIGURED'
+        ? 'Gemini is not configured. Add GEMINI_API_KEY to the backend environment.'
+        : 'Gemini could not generate product content. Check the Gemini API key, quota and backend logs.',
+    });
+  }
 });
 
 router.get('/catalog/review-queue', protect, adminOnly, async (req, res) => {
@@ -903,7 +935,8 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     }
     const title = String(req.body?.title || record.title || '').trim().slice(0, 500);
     if (title.length < 3) return res.status(400).json({ success: false, message: 'A product title is required.' });
-    const description = String(req.body?.description || title).trim().slice(0, 12000);
+    const aiDraft = record.aiContentDraft?.status === 'generated' ? record.aiContentDraft : null;
+    const description = String(req.body?.description || aiDraft?.description || title).trim().slice(0, 12000);
     const requestedBrand = String(req.body?.brand || '').trim();
     const titleBrand = title.match(/^(HP|Lenovo|Dell|Samsung|Apple|Xiaomi|JBL|Sony|Anker|Baseus|Ugreen|Logitech|Asus|Acer|Huawei|Microsoft|Canon|Epson|TP-Link|KZ|AOC|MSI|Gigabyte|Razer|Hikvision|Dahua)\b/i)?.[1] || '';
     const validBrand = (value) => { const candidate = String(value || '').trim(); return candidate && !/^(aliexpress|sylva technologies|unknown|generic)$/i.test(candidate) ? candidate : ''; };
@@ -940,8 +973,8 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const featureSummary = keyFeatures.join(' • ').slice(0, 300);
     const approvedKeyFeatures = Array.isArray(req.body?.keyFeatures) && req.body.keyFeatures.length
       ? req.body.keyFeatures.map((item) => String(item).trim()).filter(Boolean).slice(0, 8)
-      : keyFeatures;
-    const approvedShortDescription = String(req.body?.shortDescription || featureSummary || title).trim().slice(0, 500);
+      : (aiDraft?.keyFeatures?.length ? aiDraft.keyFeatures : keyFeatures);
+    const approvedShortDescription = String(req.body?.shortDescription || aiDraft?.shortDescription || featureSummary || title).trim().slice(0, 500);
     const published = await Product.create({
       name: title, slug, sku, source: 'aliexpress', brand, category: category._id,
       description, shortDescription: approvedShortDescription,
