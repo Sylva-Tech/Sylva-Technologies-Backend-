@@ -42,7 +42,9 @@ const extractOutputText = (response) => {
 const validateContent = (value) => {
   if (!value || typeof value !== 'object' || !Array.isArray(value.keyFeatures) ||
       typeof value.shortDescription !== 'string' || typeof value.description !== 'string' ||
-      !Array.isArray(value.warnings) || !Array.isArray(value.suggestions) || !Array.isArray(value.missingSections)) {
+      (value.warnings !== undefined && !Array.isArray(value.warnings)) ||
+      (value.suggestions !== undefined && !Array.isArray(value.suggestions)) ||
+      (value.missingSections !== undefined && !Array.isArray(value.missingSections))) {
     const error = new Error('The AI returned incomplete product content.');
     error.code = 'AI_CONTENT_INVALID';
     throw error;
@@ -62,8 +64,8 @@ const validateContent = (value) => {
     shortDescription,
     description,
     warnings: value.warnings.map((item) => String(item).trim()).filter(Boolean).slice(0, 8),
-    suggestions: value.suggestions.map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
-    missingSections: value.missingSections.map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
+    suggestions: (value.suggestions || []).map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
+    missingSections: (value.missingSections || []).map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
   };
 };
 
