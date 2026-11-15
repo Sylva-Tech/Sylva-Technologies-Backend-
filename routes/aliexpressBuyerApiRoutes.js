@@ -246,11 +246,23 @@ const findArray = (value, predicate, depth = 0) => {
 
 const getFeedNames = (payload) => {
   const envelope = getMethodEnvelope(payload, 'aliexpress.ds.feedname.get');
-  const names = findArray(envelope, (key, value) =>
+
+  // The current DropShippers response documents feed entries at:
+  // resp_result.result.promos.promo[], with each entry named promo_name.
+  // The older parser only searched array keys containing "feed" or "name",
+  // so it incorrectly rejected the documented "promo" array as empty.
+  const result = envelope.result || envelope.resp_result?.result || {};
+  const promoRows = result.promos?.promo;
+  const directRows = Array.isArray(promoRows) ? promoRows : null;
+  const fallbackRows = findArray(envelope, (key, value) =>
     /feed.*name|name.*feed/i.test(key) && value.length > 0);
-  return (names || []).map((item) => {
+  const rows = directRows || fallbackRows || [];
+
+  return rows.map((item) => {
     if (typeof item === 'string') return item.trim();
-    return String(item?.feed_name || item?.name || item?.feedName || '').trim();
+    return String(
+      item?.promo_name || item?.feed_name || item?.name || item?.feedName || ''
+    ).trim();
   }).filter(Boolean);
 };
 
