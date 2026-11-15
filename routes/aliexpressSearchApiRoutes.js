@@ -55,28 +55,9 @@ const getBuyerToken = async () => {
   return token.access_token;
 };
 
-const unwrap = (payload, method) => payload?.[method.split('.').join('_') + '_response'] || payload || {};
 const validCountry = (value) => /^[A-Z]{2}$/.test(value);
 const validCurrency = (value) => /^[A-Z]{3}$/.test(value);
 const validLocale = (value) => /^[a-z]{2}_[A-Z]{2}$/.test(value);
-
-const normalizeProduct = (item = {}) => ({
-  productId: String(item.product_id || item.itemId || ''),
-  title: String(item.title || item.product_title || ''),
-  imageUrl: String(item.image_url || item.itemMainPic || item.product_main_image_url || ''),
-  productUrl: String(item.product_detail_url || item.itemUrl || ''),
-  salePrice: String(item.price?.sale?.value ?? item.target_sale_price ?? item.targetSalePrice ?? item.salePrice ?? ''),
-  saleCurrency: String(item.price?.sale?.currency || item.target_sale_price_currency || item.targetSalePriceCurrency || item.salePriceCurrency || ''),
-  originalPrice: String(item.price?.original?.value ?? item.target_original_price ?? item.targetOriginalPrice ?? item.originalPrice ?? ''),
-  originalCurrency: String(item.price?.original?.currency || item.target_original_price_currency || item.targetOriginalPriceCurrency || item.originalPriceCurrency || ''),
-  discount: String(item.discount || ''),
-  orders: String(item.volume || item.latest_volume || item.orders || ''),
-  rating: String(item.evaluate_rate || item.evaluateRate || item.score || ''),
-  similarityScore: String(item.similarity_score || ''),
-  categoryId: String(item.category?.first_level?.id || item.cateId || item.first_level_category_id || ''),
-  shopId: String(item.shop_id || ''),
-  shipFrom: String(item.ship_from || ''),
-});
 
 const fail = (res, error, fallbackCode, fallbackMessage) => res.status(error.status || 502).json({
   success: false,
@@ -138,21 +119,19 @@ router.post('/text', async (req, res) => {
 
     const accessToken = await getBuyerToken();
     const payload = await callDropshipApi('aliexpress.ds.text.search', params, accessToken);
-    const response = unwrap(payload, 'aliexpress.ds.text.search');
-    const data = response.data || response.result?.data;
-    const products = Array.isArray(data?.products) ? data.products : [];
-    if (response.error_response || !data || !Array.isArray(data.products)) {
-      return res.status(502).json({ success: false, code: 'ALIEXPRESS_TEXT_SEARCH_RESPONSE_INCOMPLETE', message: 'AliExpress did not return a recognizable text-search result.' });
+    const searchResult = extractTextSearchResult(payload);
+    if (!searchResult) {
+      return res.status(502).json({ success: false, code: 'ALIEXPRESS_TEXT_SEARCH_RESPONSE_INCOMPLETE', message: 'AliExpress returned a response, but its text-search product list could not be recognized.' });
     }
 
     return res.json({
       success: true,
       readOnly: true,
-      products: products.map(normalizeProduct),
+      products: searchResult.products.map(normalizeProduct),
       pagination: {
-        totalCount: Number(data.totalCount || 0),
-        pageIndex: Number(data.pageIndex || pageIndex),
-        pageSize: Number(data.pageSize || pageSize),
+        totalCount: searchResult.totalCount,
+        pageIndex: searchResult.pageIndex || pageIndex,
+        pageSize: searchResult.pageSize || pageSize,
       },
       query: { keyWord, countryCode, currency, local, sortBy },
       imported: false,
