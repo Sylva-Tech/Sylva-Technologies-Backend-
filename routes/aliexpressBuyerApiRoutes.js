@@ -833,27 +833,6 @@ router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
   });
 });
 
-router.post('/catalog/review/:id/generate-content', protect, adminOnly, limiter, async (req, res) => {
-  try {
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(503).json({ success: false, code: 'AI_CONTENT_NOT_CONFIGURED', message: 'Add OPENAI_API_KEY to the backend environment before generating product content.' });
-    }
-    const record = await AliExpressCatalogProduct.findOne({ _id: req.params.id, status: 'pending' });
-    if (!record) return res.status(404).json({ success: false, message: 'Pending AliExpress catalogue product not found.' });
-    record.aiContentDraft = {
-      ...(record.aiContentDraft?.toObject?.() || record.aiContentDraft || {}),
-      status: 'pending',
-      attempts: 0,
-      lastError: '',
-      nextAttemptAt: null,
-    };
-    await record.save();
-    return res.json({ success: true, message: 'AI product-content generation queued. The product remains private and unpublished.' });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: 'Unable to queue AI product-content generation.' });
-  }
-});
-
 router.get('/catalog/review-queue', protect, adminOnly, async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(100, Number.parseInt(req.query.limit, 10) || 50));
@@ -924,8 +903,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     }
     const title = String(req.body?.title || record.title || '').trim().slice(0, 500);
     if (title.length < 3) return res.status(400).json({ success: false, message: 'A product title is required.' });
-    const aiDraft = record.aiContentDraft?.status === 'generated' ? record.aiContentDraft : null;
-    const description = String(req.body?.description || aiDraft?.description || title).trim().slice(0, 12000);
+    const description = String(req.body?.description || title).trim().slice(0, 12000);
     const requestedBrand = String(req.body?.brand || '').trim();
     const titleBrand = title.match(/^(HP|Lenovo|Dell|Samsung|Apple|Xiaomi|JBL|Sony|Anker|Baseus|Ugreen|Logitech|Asus|Acer|Huawei|Microsoft|Canon|Epson|TP-Link|KZ|AOC|MSI|Gigabyte|Razer|Hikvision|Dahua)\b/i)?.[1] || '';
     const validBrand = (value) => { const candidate = String(value || '').trim(); return candidate && !/^(aliexpress|sylva technologies|unknown|generic)$/i.test(candidate) ? candidate : ''; };
@@ -962,17 +940,12 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const featureSummary = keyFeatures.join(' • ').slice(0, 300);
     const approvedKeyFeatures = Array.isArray(req.body?.keyFeatures) && req.body.keyFeatures.length
       ? req.body.keyFeatures.map((item) => String(item).trim()).filter(Boolean).slice(0, 8)
-      : (aiDraft?.keyFeatures?.length ? aiDraft.keyFeatures : keyFeatures);
-    const approvedShortDescription = String(req.body?.shortDescription || aiDraft?.shortDescription || featureSummary || title).trim().slice(0, 500);
-    const generatedFields = [];
-    if (!req.body?.description && aiDraft?.description) generatedFields.push('description');
-    if (!req.body?.shortDescription && aiDraft?.shortDescription) generatedFields.push('shortDescription');
-    if (!(Array.isArray(req.body?.keyFeatures) && req.body.keyFeatures.length) && aiDraft?.keyFeatures?.length) generatedFields.push('keyFeatures');
+      : keyFeatures;
+    const approvedShortDescription = String(req.body?.shortDescription || featureSummary || title).trim().slice(0, 500);
     const published = await Product.create({
       name: title, slug, sku, source: 'aliexpress', brand, category: category._id,
       description, shortDescription: approvedShortDescription,
       keyFeatures: approvedKeyFeatures,
-      ...(generatedFields.length ? { contentGeneration: { provider: 'openai', model: aiDraft.model, sourceHash: aiDraft.sourceHash, generatedAt: aiDraft.generatedAt, generatedFields, warnings: aiDraft.warnings || [] } } : {}),
       price, oldPrice: Number(req.body?.oldPrice) > price ? Number(req.body.oldPrice) : 0,
       images, stock: approvedStock, condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
