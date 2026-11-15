@@ -1,8 +1,11 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const AliExpressConnection = require('../models/AliExpressConnection');
 const AliExpressCatalogProduct = require('../models/AliExpressCatalogProduct');
+const Product = require('../models/Product');
+const Category = require('../models/Category');
 const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
 const {
   getDropshipApiConfig,
@@ -423,6 +426,101 @@ router.post('/catalog/verify-feeds', protect, adminOnly, limiter, async (req, re
       stage: 'feed_names',
       ...(error.aliexpressCode ? { aliexpressCode: error.aliexpressCode } : {}),
     });
+  }
+});
+
+
+/*
+ * AliExpress listings stay in this private staging collection until an
+ * authenticated Sylva administrator explicitly approves them.
+ */
+router.get('/catalog/review-queue', protect, adminOnly, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(100, Number.parseInt(req.query.limit, 10) || 50));
+    const [products, counts] = await Promise.all([
+      AliExpressCatalogProduct.find({ status: 'pending' }).sort({ syncedAt: -1 }).limit(limit).lean(),
+      AliExpressCatalogProduct.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+    ]);
+    return res.json({ success: true, products, counts: Object.fromEntries(counts.map((row) => [row._id, row.count])) });
+  } catch (error) {
+    console.error('[AliExpress review queue] load failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to load the AliExpress admin review queue.' });
+  }
+});
+
+router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) => {
+  try {
+    const record = await AliExpressCatalogProduct.findById(req.params.id);
+    if (!record) return res.status(404).json({ success: false, message: 'AliExpress catalogue item not found.' });
+    if (record.status === 'rejected') return res.status(409).json({ success: false, message: 'Rejected items must be re-synced before approval.' });
+    if (record.importedProduct) {
+      const existing = await Product.findById(record.importedProduct);
+      if (existing) return res.status(409).json({ success: false, message: 'This AliExpress item has already been approved and published.', product: existing });
+    }
+
+    const price = Number(req.body?.price ?? record.targetSalePrice ?? record.supplierPrice);
+    if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ success: false, message: 'Set a valid Sylva selling price greater than zero before approval.' });
+    const title = String(req.body?.title || record.title || '').trim().slice(0, 500);
+    if (title.length < 3) return res.status(400).json({ success: false, message: 'A product title is required.' });
+    const description = String(req.body?.description || title).trim().slice(0, 12000);
+    const brand = String(req.body?.brand || 'AliExpress').trim().slice(0, 120);
+    let category = null;
+    if (req.body?.categoryId && mongoose.isValidObjectId(req.body.categoryId)) {
+      category = await Category.findById(req.body.categoryId);
+    }
+    if (!category) {
+      category = await Category.findOne({ slug: 'aliexpress-imported-products' });
+      if (!category) {
+        category = await Category.create({ name: 'Imported Products', slug: 'aliexpress-imported-products', description: 'Admin-approved products sourced through AliExpress.' });
+      }
+    }
+
+    const sku = ('AE-' + record.providerProductId).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
+    const slugBase = (title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 110) || 'aliexpress-product');
+    const slug = slugBase + '-' + record.providerProductId.slice(-12);
+    const existingSku = await Product.findOne({ sku });
+    if (existingSku) return res.status(409).json({ success: false, message: 'A product with this supplier SKU already exists. Review the existing product before proceeding.' });
+
+    const images = [...new Set([record.imageUrl, ...(record.imageUrls || [])].filter((url) => /^https?:\/\//i.test(url)))].slice(0, 4);
+    const published = await Product.create({
+      name: title, slug, sku, source: 'aliexpress', brand, category: category._id,
+      description, shortDescription: String(req.body?.shortDescription || title).trim().slice(0, 300),
+      price, oldPrice: Number(req.body?.oldPrice) > price ? Number(req.body.oldPrice) : 0,
+      images, stock: Math.max(0, Number.parseInt(req.body?.stock, 10) || 0), condition: 'New',
+      isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
+      seller: null, featured: false, flashSale: false, offer: false,
+      specifications: { supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierPrice: record.supplierPrice, supplierCurrency: record.supplierCurrency },
+    });
+
+    record.status = 'approved';
+    record.importedProduct = published._id;
+    record.reviewedAt = new Date();
+    record.reviewedBy = req.user._id;
+    record.rejectionReason = '';
+    await record.save();
+    return res.status(201).json({ success: true, message: 'AliExpress product approved and published to the Sylva storefront.', product: published });
+  } catch (error) {
+    console.error('[AliExpress review approval] failed:', error.message);
+    return res.status(500).json({ success: false, message: error.message || 'Unable to approve this AliExpress product.' });
+  }
+});
+
+router.post('/catalog/review/:id/reject', protect, adminOnly, async (req, res) => {
+  try {
+    const reason = String(req.body?.reason || '').trim().slice(0, 1000);
+    if (!reason) return res.status(400).json({ success: false, message: 'Provide a rejection reason.' });
+    const record = await AliExpressCatalogProduct.findById(req.params.id);
+    if (!record) return res.status(404).json({ success: false, message: 'AliExpress catalogue item not found.' });
+    if (record.importedProduct) return res.status(409).json({ success: false, message: 'This item has already been published. Deactivate its storefront product instead.' });
+    record.status = 'rejected';
+    record.rejectionReason = reason;
+    record.reviewedAt = new Date();
+    record.reviewedBy = req.user._id;
+    await record.save();
+    return res.json({ success: true, message: 'AliExpress product rejected and kept unpublished.' });
+  } catch (error) {
+    console.error('[AliExpress review rejection] failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to reject this AliExpress product.' });
   }
 });
 
