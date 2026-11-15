@@ -19,7 +19,7 @@ const { sendSalesNotificationEmail } = require('../services/emailService');
 const router = express.Router();
 
 const PUBLIC_PRODUCT_FIELDS = [
-  '_id', 'name', 'slug', 'sku', 'brand', 'subcategory', 'description',
+  '_id', 'name', 'slug', 'brand', 'subcategory', 'description',
   'shortDescription', 'price', 'oldPrice', 'discount', 'images', 'stock',
   'condition', 'warranty', 'warrantyDuration', 'warrantyTerms',
   'deliveryDuration', 'deliveryFee', 'deliveryTerms', 'deliveryLocations',
@@ -71,6 +71,7 @@ router.post('/:id/ai-content-draft', protect, adminOnly, async (req, res) => {
     const draft = await generateAliExpressProductContent({
       title: product.name, brand: product.brand, categoryName: category?.name || '',
       specifications: product.specifications || {},
+      rawDescription: req.body?.description ?? product.description,
       existingContent: {
         shortDescription: req.body?.shortDescription ?? product.shortDescription,
         keyFeatures: req.body?.keyFeatures ?? product.keyFeatures,
@@ -2690,6 +2691,10 @@ if (
         'returnConditions',
         'whatsIncluded',
         'keyFeatures',
+        'seoTitle',
+        'seoMetaDescription',
+        'marketingTags',
+        'socialPromoCaption',
         'sellerNotes',
         'images',
         'seller',
@@ -2717,6 +2722,10 @@ if (
       /*
        * Normalize list fields.
        */
+      if (Object.prototype.hasOwnProperty.call(req.body, 'marketingTags')) {
+        product.marketingTags = Array.isArray(req.body.marketingTags) ? req.body.marketingTags.map((tag) => String(tag).trim()).filter(Boolean).slice(0, 12) : [];
+      }
+
       if (
         Object.prototype.hasOwnProperty.call(
           req.body,
