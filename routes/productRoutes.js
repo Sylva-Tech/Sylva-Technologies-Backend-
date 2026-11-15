@@ -18,6 +18,39 @@ const { sendSalesNotificationEmail } = require('../services/emailService');
 
 const router = express.Router();
 
+const { generateAliExpressProductContent } = require('../services/aiProductContentService');
+
+router.post('/:id/ai-content-draft', protect, adminOnly, async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id).lean();
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found.' });
+    const category = product.category ? await Category.findById(product.category).select('name').lean() : null;
+    const draft = await generateAliExpressProductContent({
+      title: product.name, brand: product.brand, categoryName: category?.name || '',
+      specifications: product.specifications || {},
+      existingContent: {
+        shortDescription: req.body?.shortDescription ?? product.shortDescription,
+        keyFeatures: req.body?.keyFeatures ?? product.keyFeatures,
+        description: req.body?.description ?? product.description,
+      },
+      targetField: req.body?.targetField,
+    });
+    return res.json({ success: true, draft });
+  } catch (error) {
+    console.warn('[Admin product Gemini] draft generation failed:', JSON.stringify({
+      code: error.code || 'AI_CONTENT_FAILED', providerStatus: error.providerStatus || null,
+      providerCode: error.providerCode || '', providerType: error.providerType || '',
+    }));
+    return res.status(Number(error.status) || (error.code === 'AI_CONTENT_NOT_CONFIGURED' ? 503 : 502)).json({
+      success: false, code: error.code || 'AI_CONTENT_FAILED',
+      message: error.code === 'AI_CONTENT_NOT_CONFIGURED'
+        ? 'Gemini is not configured. Add GEMINI_API_KEY to the backend environment.'
+        : 'Gemini could not generate this draft. Check the Gemini API key, quota and backend logs.',
+    });
+  }
+});
+
+
 /*
  * Maximum number of product images allowed.
  */
