@@ -904,7 +904,8 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
       return res.status(400).json({ success: false, code: 'ALIEXPRESS_EXCHANGE_RATE_REQUIRED', message: 'Save the KES exchange rate once for ' + currency + ' in Catalogue pricing settings before approval.' });
     }
-    const supplierPriceKes = Number((supplierPrice * exchangeRate).toFixed(2));\n    const minimumSellingPrice = Math.ceil(supplierPriceKes * (1 + profitPercent / 100));
+    const supplierPriceKes = Number((supplierPrice * exchangeRate).toFixed(2));
+    const minimumSellingPrice = Math.ceil(supplierPriceKes * (1 + profitPercent / 100));
     if (!Number.isFinite(price) || price < minimumSellingPrice) {
       return res.status(400).json({
         success: false, code: 'ALIEXPRESS_SELLING_PRICE_BELOW_MINIMUM',
