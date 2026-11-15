@@ -23,7 +23,7 @@ const hashSource = (product) => crypto.createHash('sha256')
   .digest('hex');
 
 const extractOutputText = (response) => {
-  if (typeof response.output_text === 'string') return response.output_text;
+  if (typeof response.output_text === 'string' && response.output_text.trim()) return response.output_text;
   for (const item of response.output || []) {
     for (const content of item.content || []) {
       if (content.type === 'output_text' && content.text) return content.text;
@@ -74,7 +74,7 @@ const generateAliExpressProductContent = async (product) => {
   const rawAttributes = Array.isArray(product.productAttributes) ? product.productAttributes :
     Object.entries(product.specifications && typeof product.specifications === 'object' ? product.specifications : {}).map(([name, value]) => ({ name, value }));
   const attributes = rawAttributes
-    .filter((item) => item?.name && item?.value !== undefined && item?.value !== null && String(item.value).trim())
+    .filter((item) => item?.name && item?.value !== undefined && item?.value !== null && String(item.value).trim() && !/supplier|aliexpress|shipping|delivery|exchange|markup|profit|wholesale|purchase|cost|price|url|store|seller|internal|source|raw|order|payment|wallet/i.test(String(item.name)))
     .slice(0, 40)
     .map((item) => ({ name: String(item.name).slice(0, 80), value: String(item.value).slice(0, 240) }));
   const safeInput = {
