@@ -1233,9 +1233,11 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
     }
     stage = 'save_private_queue';
     await AliExpressCatalogProduct.bulkWrite(operations, { ordered: false });
-    await AliExpressCatalogProduct.updateMany(
+    // Native collection avoids Mongoose miscasting the bounded $in filter
+    // on providerProductId. Values originate from normalized supplier IDs.
+    await AliExpressCatalogProduct.collection.updateMany(
       {
-        providerProductId: { $in: operations.map((operation) => operation.updateOne.filter.providerProductId) },
+        providerProductId: { $in: operations.map((operation) => String(operation.updateOne.filter.providerProductId)) },
         $or: [
           { 'aiContentDraft.status': { $in: ['not_generated', 'failed'] } },
           { aiContentDraft: { $exists: false } },
