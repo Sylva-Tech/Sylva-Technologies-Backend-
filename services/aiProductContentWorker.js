@@ -62,7 +62,7 @@ const startAIProductContentWorker = () => {
   if (timer) return;
   timer = setInterval(() => {
     processOnePendingProduct().catch((error) => {
-      console.error('[AI product enrichment] worker cycle failed:', error.code || error.name || 'WORKER_ERROR');
+      console.error('[AI product enrichment] worker cycle failed:', JSON.stringify({ code: error.code || error.name || 'WORKER_ERROR', message: String(error.message || '').slice(0, 500), path: error.path || '', valueType: error.valueType || typeof error.value || '', kind: error.kind || '' }));
     });
   }, 5000);
   timer.unref?.();
