@@ -7,7 +7,6 @@ const AliExpressCatalogProduct = require('../models/AliExpressCatalogProduct');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
 const AliExpressCatalogSettings = require('../models/AliExpressCatalogSettings');
-const { generateAliExpressProductContent } = require('../services/aiProductContentService');
 const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
 const {
   getDropshipApiConfig,
@@ -722,20 +721,10 @@ router.post('/catalog/stage-product', protect, adminOnly, limiter, async (req, r
     normalized.sylvaCategoryId = categoryMatch ? String(categoryMatch.category._id) : '';
     normalized.categoryName = categoryMatch?.category?.name || '';
     normalized.categoryMatchStatus = categoryMatch ? 'matched' : 'needs_review';
-    try {
-      normalized.aiContentDraft = await generateAliExpressProductContent({
-        title: normalized.title,
-        supplierBrand: normalized.supplierBrand,
-        categoryName: normalized.categoryName,
-        productAttributes: normalized.productAttributes,
-      });
-    } catch (aiError) {
-      normalized.aiContentDraft = { status: 'failed' };
-      console.warn('[AI product enrichment] private staging skipped:', aiError.code || 'AI_CONTENT_FAILED');
-    }
+    normalized.aiContentDraft = { status: 'pending', attempts: 0 };
     const staged = await AliExpressCatalogProduct.findOneAndUpdate(
       { providerProductId: normalized.providerProductId },
-      { $set: { ...normalized, syncedAt: new Date() }, $setOnInsert: { status: 'pending' } },
+      { $set: { ...normalized, syncedAt: new Date(), 'aiContentDraft.status': 'pending' }, $setOnInsert: { status: 'pending', 'aiContentDraft.attempts': 0 } },
       { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
     );
     return res.status(201).json({
@@ -1183,17 +1172,7 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
         normalized.sylvaCategoryId = categoryMatch ? String(categoryMatch.category._id) : '';
         normalized.categoryName = categoryMatch?.category?.name || '';
         normalized.categoryMatchStatus = categoryMatch ? 'matched' : 'needs_review';
-        try {
-          normalized.aiContentDraft = await generateAliExpressProductContent({
-            title: normalized.title,
-            supplierBrand: normalized.supplierBrand,
-            categoryName: normalized.categoryName,
-            productAttributes: normalized.productAttributes,
-          });
-        } catch (aiError) {
-          normalized.aiContentDraft = { status: 'failed' };
-          console.warn('[AI product enrichment] catalogue draft skipped:', aiError.code || 'AI_CONTENT_FAILED');
-        }
+
         operations.push({
           updateOne: {
             filter: { providerProductId: normalized.providerProductId },
@@ -1215,6 +1194,16 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
     }
     stage = 'save_private_queue';
     await AliExpressCatalogProduct.bulkWrite(operations, { ordered: false });
+    await AliExpressCatalogProduct.updateMany(
+      {
+        providerProductId: { $in: operations.map((operation) => operation.updateOne.filter.providerProductId) },
+        $or: [
+          { 'aiContentDraft.status': { $in: ['not_generated', 'failed'] } },
+          { aiContentDraft: { $exists: false } },
+        ],
+      },
+      { $set: { 'aiContentDraft.status': 'pending', 'aiContentDraft.attempts': 0, 'aiContentDraft.lastError': '', 'aiContentDraft.nextAttemptAt': null } }
+    );
     const now = new Date();
     connection.catalogProtocolVerifiedAt = connection.catalogProtocolVerifiedAt || now;
     connection.catalogMethodEntitlementVerifiedAt = now;
