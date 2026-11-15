@@ -9,35 +9,32 @@ const processOnePendingProduct = async () => {
   running = true;
   try {
     const now = new Date();
+    const retryDue = {
+      $expr: {
+        $or: [
+          { $eq: [{ $ifNull: ['$aiContentDraft.nextAttemptAt', null] }, null] },
+          { $lte: ['$aiContentDraft.nextAttemptAt', now] },
+        ],
+      },
+    };
+    const staleProcessing = {
+      $expr: {
+        $and: [
+          { $ne: [{ $ifNull: ['$aiContentDraft.processingAt', null] }, null] },
+          { $lte: ['$aiContentDraft.processingAt', new Date(now.getTime() - 10 * 60 * 1000)] },
+        ],
+      },
+    };
+
+    // Use $expr for nested date comparisons. Mongoose otherwise incorrectly
+    // casts the operator object as the value of these nested schema paths.
     const claimed = await AliExpressCatalogProduct.findOneAndUpdate(
       {
         $or: [
-          {
-            status: 'pending',
-            'aiContentDraft.status': 'pending',
-            $or: [
-              { 'aiContentDraft.nextAttemptAt': null },
-              { 'aiContentDraft.nextAttemptAt': { $lte: now } },
-            ],
-          },
-          {
-            status: 'approved',
-            'aiContentDraft.status': 'pending',
-            $or: [
-              { 'aiContentDraft.nextAttemptAt': null },
-              { 'aiContentDraft.nextAttemptAt': { $lte: now } },
-            ],
-          },
-          {
-            status: 'pending',
-            'aiContentDraft.status': 'processing',
-            'aiContentDraft.processingAt': { $lte: new Date(now.getTime() - 10 * 60 * 1000) },
-          },
-          {
-            status: 'approved',
-            'aiContentDraft.status': 'processing',
-            'aiContentDraft.processingAt': { $lte: new Date(now.getTime() - 10 * 60 * 1000) },
-          },
+          { status: 'pending', 'aiContentDraft.status': 'pending', ...retryDue },
+          { status: 'approved', 'aiContentDraft.status': 'pending', ...retryDue },
+          { status: 'pending', 'aiContentDraft.status': 'processing', ...staleProcessing },
+          { status: 'approved', 'aiContentDraft.status': 'processing', ...staleProcessing },
         ],
       },
       {
