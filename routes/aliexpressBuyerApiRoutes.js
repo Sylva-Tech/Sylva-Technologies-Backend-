@@ -552,7 +552,7 @@ const extractAliExpressProductAttributes = (productResult) => {
     if (!node || typeof node !== 'object' || depth > 8 || visited.has(node)) return;
     visited.add(node);
     for (const [key, value] of Object.entries(node)) {
-      if (/property|attribute|specification|item_specific/i.test(key)) containers.push(value);
+      if (/propert(?:y|ies)|attribute|specification|item_specific/i.test(key)) containers.push(value);
       if (value && typeof value === 'object') walk(value, depth + 1);
     }
   };
