@@ -19,11 +19,17 @@ const refreshConnectedBuyerToken = async () => {
       {
         provider: 'aliexpress',
         status: 'connected',
-        accessTokenExpiresAt: { $lte: new Date(now.getTime() + REFRESH_AHEAD_MS) },
-        $or: [
-          { tokenRefreshLockUntil: null },
-          { tokenRefreshLockUntil: { $exists: false } },
-          { tokenRefreshLockUntil: { $lte: now } },
+        $and: [
+          { $or: [
+            { accessTokenExpiresAt: { $lte: new Date(now.getTime() + REFRESH_AHEAD_MS) } },
+            { accessTokenExpiresAt: null },
+            { accessTokenExpiresAt: { $exists: false } },
+          ] },
+          { $or: [
+            { tokenRefreshLockUntil: null },
+            { tokenRefreshLockUntil: { $exists: false } },
+            { tokenRefreshLockUntil: { $lte: now } },
+          ] },
         ],
       },
       {
@@ -79,6 +85,32 @@ const refreshConnectedBuyerToken = async () => {
   }
 };
 
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getUsableBuyerToken = async (connection) => {
+  if (!connection?._id) throw new Error('AliExpress connection is unavailable.');
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const latest = await AliExpressConnection.findById(connection._id)
+      .select('+accessTokenEncrypted +refreshTokenEncrypted +tokenRefreshLockId');
+    if (!latest || latest.status !== 'connected') throw new Error('AliExpress buyerApp connection is not active.');
+    const expiresAt = latest.accessTokenExpiresAt ? new Date(latest.accessTokenExpiresAt).getTime() : 0;
+    const lockUntil = latest.tokenRefreshLockUntil ? new Date(latest.tokenRefreshLockUntil).getTime() : 0;
+    if (lockUntil > Date.now()) {
+      await wait(750);
+      continue;
+    }
+    if (latest.accessTokenEncrypted && expiresAt > Date.now() + 60000) {
+      return decryptSecret(latest.accessTokenEncrypted);
+    }
+    await refreshConnectedBuyerToken();
+    await wait(500);
+  }
+  const error = new Error('AliExpress token refresh is still pending. Retry the request shortly; the admin session is unchanged.');
+  error.code = 'ALIEXPRESS_TOKEN_REFRESH_PENDING';
+  error.status = 503;
+  throw error;
+};
+
 const startAliExpressTokenRefresh = () => {
   if (interval) return;
   // Check on boot and then every five minutes. Refresh only when expiry is
@@ -89,4 +121,4 @@ const startAliExpressTokenRefresh = () => {
   console.log('AliExpress token refresh monitor started (5-minute checks).');
 };
 
-module.exports = { startAliExpressTokenRefresh, refreshConnectedBuyerToken };
+module.exports = { startAliExpressTokenRefresh, refreshConnectedBuyerToken, getUsableBuyerToken };
