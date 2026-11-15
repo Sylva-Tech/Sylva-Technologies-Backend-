@@ -326,7 +326,7 @@ const getFeedItemIds = (payload) => {
   const normalized = ids.map((item) => {
     if (typeof item === 'string' || typeof item === 'number') return String(item);
     return String(item?.product_id || item?.item_id || item?.productId || item?.itemId || '');
-  }).filter((id) => /^\\d{1,30}$/.test(id));
+  }).filter((id) => /^\d{1,30}$/.test(id));
   const cursor = envelope.search_id || result.search_id || '';
   return { ids: [...new Set(normalized)], cursor: String(cursor || '') };
 };
