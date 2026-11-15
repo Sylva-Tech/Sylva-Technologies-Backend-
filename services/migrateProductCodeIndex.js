@@ -11,6 +11,12 @@ const mongoose = require('mongoose');
  * It never edits or deletes product documents.
  */
 const migrateProductCodeIndex = async () => {
+  const collectionExists = await mongoose.connection.db
+    .listCollections({ name: 'products' }, { nameOnly: true })
+    .hasNext();
+  if (!collectionExists) {
+    await mongoose.connection.createCollection('products');
+  }
   const collection = mongoose.connection.collection('products');
   const duplicates = await collection.aggregate([
     { $match: { code: { $type: 'string', $ne: '' } } },
@@ -47,7 +53,7 @@ const migrateProductCodeIndex = async () => {
     index.key &&
     index.key.code === 1 &&
     index.unique === true &&
-    index.partialFilterExpression?.code?.$type === 'string'
+    index.partialFilterExpression?.code?.$type === 'string' && index.partialFilterExpression?.code?.$gt === ''
   );
 
   if (!partialIndexExists) {
@@ -56,7 +62,7 @@ const migrateProductCodeIndex = async () => {
       {
         name: 'code_unique_strings',
         unique: true,
-        partialFilterExpression: { code: { $type: 'string' } },
+        partialFilterExpression: { code: { $type: 'string', $gt: '' } },
       }
     );
   }
