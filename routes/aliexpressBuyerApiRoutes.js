@@ -841,7 +841,7 @@ router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
     data: {
       configured: Boolean(process.env.GEMINI_API_KEY),
       provider: 'google_gemini',
-      model: String(process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite'),
+      model: String(process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'),
       scope: 'product_content_only',
       mayPublishProducts: false,
       mayChangePricingOrStock: false,
