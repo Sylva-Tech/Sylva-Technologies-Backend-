@@ -9,6 +9,7 @@ const {
   refreshAccessToken,
   requiredDropshipEnv,
 } = require('../services/aliexpressService');
+const { extractTextSearchResult, normalizeProduct } = require('../utils/aliexpressSearchResponse');
 
 const router = express.Router();
 const limiter = rateLimit({
