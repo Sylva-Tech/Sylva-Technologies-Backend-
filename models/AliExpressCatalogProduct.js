@@ -34,6 +34,7 @@ const schema = new mongoose.Schema({
     attempts: { type: Number, default: 0, min: 0, max: 5 },
     lastError: { type: String, default: '', maxlength: 240 },
     nextAttemptAt: { type: Date, default: null },
+    processingAt: { type: Date, default: null },
   },
   productAttributes: {
     type: [{ name: { type: String, trim: true, maxlength: 80 }, value: { type: String, trim: true, maxlength: 240 } }],
