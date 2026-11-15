@@ -2168,6 +2168,11 @@ router.post('/:id/ai-content-draft', protect, adminOnly, async (req, res) => {
       brand: requestedBrand,
       categoryName: categoryRecord?.name || '',
       productAttributes: specificationEntries,
+      existingContent: {
+        shortDescription: String(req.body?.shortDescription ?? product.shortDescription ?? '').slice(0, 500),
+        keyFeatures: parseList(req.body?.keyFeatures ?? product.keyFeatures).slice(0, 12),
+        description: String(req.body?.description ?? product.description ?? '').slice(0, 12000),
+      },
     });
     const normalizedSpecifications = Object.fromEntries(
       specificationEntries.sort((left, right) => left.name.localeCompare(right.name)).map((item) => [item.name, item.value])
@@ -2182,6 +2187,8 @@ router.post('/:id/ai-content-draft', protect, adminOnly, async (req, res) => {
         description: draft.description,
         specifications: normalizedSpecifications,
         warnings: draft.warnings,
+        suggestions: draft.suggestions || [],
+        missingSections: draft.missingSections || [],
         model: draft.model,
         sourceHash: draft.sourceHash,
         generatedAt: draft.generatedAt,

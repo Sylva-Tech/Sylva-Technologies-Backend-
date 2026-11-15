@@ -9,8 +9,10 @@ const CONTENT_SCHEMA = {
     shortDescription: { type: 'string' },
     description: { type: 'string' },
     warnings: { type: 'array', items: { type: 'string' } },
+    suggestions: { type: 'array', items: { type: 'string' } },
+    missingSections: { type: 'array', items: { type: 'string' } },
   },
-  required: ['keyFeatures', 'shortDescription', 'description', 'warnings'],
+  required: ['keyFeatures', 'shortDescription', 'description', 'warnings', 'suggestions', 'missingSections'],
 };
 
 const hashSource = (product) => crypto.createHash('sha256')
@@ -40,7 +42,9 @@ const extractOutputText = (response) => {
 const validateContent = (value) => {
   if (!value || typeof value !== 'object' || !Array.isArray(value.keyFeatures) ||
       typeof value.shortDescription !== 'string' || typeof value.description !== 'string' ||
-      !Array.isArray(value.warnings)) {
+      (value.warnings !== undefined && !Array.isArray(value.warnings)) ||
+      (value.suggestions !== undefined && !Array.isArray(value.suggestions)) ||
+      (value.missingSections !== undefined && !Array.isArray(value.missingSections))) {
     const error = new Error('The AI returned incomplete product content.');
     error.code = 'AI_CONTENT_INVALID';
     throw error;
@@ -60,6 +64,8 @@ const validateContent = (value) => {
     shortDescription,
     description,
     warnings: value.warnings.map((item) => String(item).trim()).filter(Boolean).slice(0, 8),
+    suggestions: (value.suggestions || []).map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
+    missingSections: (value.missingSections || []).map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
   };
 };
 
@@ -82,6 +88,11 @@ const generateAliExpressProductContent = async (product) => {
     brand: (/^(aliexpress|sylva technologies|unknown|generic)$/i.test(String(product.supplierBrand || product.brand || '').trim()) ? '' : String(product.supplierBrand || product.brand || '').slice(0, 120)),
     category: String(product.categoryName || product.category || '').slice(0, 120),
     verifiedSupplierAttributes: attributes,
+    existingCustomerFacingContent: {
+      shortDescription: String(product.existingContent?.shortDescription || '').slice(0, 500),
+      keyFeatures: (Array.isArray(product.existingContent?.keyFeatures) ? product.existingContent.keyFeatures : []).slice(0, 12).map((item) => String(item).slice(0, 300)),
+      description: String(product.existingContent?.description || '').slice(0, 5000),
+    },
   };
 
   let response;
@@ -103,7 +114,9 @@ const generateAliExpressProductContent = async (product) => {
         'Never invent compatibility, performance, dimensions, materials, certifications, warranty, delivery promises, package contents, origin, availability, or endorsements. If a fact is not supplied, omit it and add a concise warning.',
         'Do not mention AliExpress, supplier costs, supplier links, supplier IDs, exchange rates, margins, internal metadata, or private business processes in customer-facing copy.',
         'Write clear, natural, professional English for Kenyan customers. Avoid keyword stuffing, exaggerated claims, fake urgency, emojis, and unsupported superlatives.',
+        'Use existingCustomerFacingContent as a draft to review, not as verified evidence. Preserve useful accurate wording, improve clarity, and fill genuinely missing parts. Do not discard relevant existing information without a reason.',
         'Return up to eight concise, non-repeating factual key features. Keep the short description concise (ideally 1–2 sentences and under 300 characters). Write the full description in clean, readable paragraphs with a brief overview followed by useful factual detail. Keep technical specifications out of marketing prose because the storefront displays verified specifications in a separate structured section. Do not add prices or shipping charges.',
+        'Provide practical suggestions for improving the listing and list missingSections such as short description, key features, or full description only when they are actually missing or materially incomplete. Suggestions must not invent product facts.',
         'Return only the requested structured content.',
       ].join('\n'),
       input: JSON.stringify(safeInput),
