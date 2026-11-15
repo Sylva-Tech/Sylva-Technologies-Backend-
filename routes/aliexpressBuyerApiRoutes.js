@@ -1256,7 +1256,7 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
           'Error code: ' + String(error.code || 'ALIEXPRESS_CATALOG_SYNC_FAILED').slice(0, 100),
           'Time: ' + new Date().toISOString(),
           'The private review queue was not published by this failed sync.',
-        ].join('\\n'),
+        ].join('\n'),
       });
     } catch (notificationError) {
       console.error('[AliExpress sync alert] could not send admin alert:', notificationError.message);
