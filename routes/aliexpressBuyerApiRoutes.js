@@ -407,6 +407,75 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
   };
 };
 
+/*
+ * Stage one explicitly selected AliExpress product by ID.
+ * This bypasses feed pagination for review-workflow testing, but still fetches
+ * the canonical supplier detail server-side and saves it privately only.
+ */
+router.post('/catalog/stage-product', protect, adminOnly, limiter, async (req, res) => {
+  let connection;
+  try {
+    requiredDropshipEnv();
+    const productId = String(req.body?.productId || '').trim();
+    if (!/^\\d{1,30}$/.test(productId)) {
+      return res.status(400).json({ success: false, code: 'ALIEXPRESS_PRODUCT_ID_INVALID', message: 'Enter a valid numeric AliExpress product ID.' });
+    }
+    connection = await AliExpressConnection.findOne({ provider: 'aliexpress' })
+      .select('+accessTokenEncrypted +refreshTokenEncrypted');
+    if (!connection || connection.status !== 'connected' || !isBuyerPlatform(connection.accountPlatform)) {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_BUYERAPP_REQUIRED', message: 'Connect the existing buyerApp account first.' });
+    }
+    const existing = await AliExpressCatalogProduct.findOne({ providerProductId: productId });
+    if (existing?.importedProduct || ['approved', 'imported'].includes(existing?.status)) {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_PRODUCT_ALREADY_PUBLISHED', message: 'This supplier product has already been approved or imported.' });
+    }
+    if (existing?.status === 'rejected') {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_PRODUCT_PREVIOUSLY_REJECTED', message: 'This product was previously rejected. It cannot be re-queued through manual staging.' });
+    }
+
+    const accessToken = await getUsableBuyerToken(connection);
+    const detail = await callDropshipApi('aliexpress.ds.product.get', {
+      product_id: productId,
+      ship_to_country: String(req.body?.country || 'KE').toUpperCase().slice(0, 2),
+      target_currency: String(req.body?.targetCurrency || 'USD').toUpperCase().slice(0, 3),
+      target_language: String(req.body?.targetLanguage || 'en_US').slice(0, 10),
+    }, accessToken);
+    const normalized = normalizeAliExpressProduct(detail, productId, req.body?.targetCurrency || 'USD');
+    if (!normalized || normalized.title.length < 3) {
+      return res.status(502).json({ success: false, code: 'ALIEXPRESS_PRODUCT_DETAILS_INVALID', message: 'AliExpress did not return a usable product title and detail record. Nothing was added to the review queue.' });
+    }
+
+    const staged = await AliExpressCatalogProduct.findOneAndUpdate(
+      { providerProductId: normalized.providerProductId },
+      { $set: { ...normalized, syncedAt: new Date() }, $setOnInsert: { status: 'pending' } },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+    );
+    return res.status(201).json({
+      success: true,
+      message: 'Product details verified and added to Sylva’s private admin review queue. It is not published.',
+      product: {
+        _id: staged._id, providerProductId: staged.providerProductId, title: staged.title,
+        imageUrl: staged.imageUrl, imageUrls: staged.imageUrls, supplierPrice: staged.supplierPrice,
+        supplierCurrency: staged.supplierCurrency, targetCurrency: staged.targetCurrency,
+        productUrl: staged.productUrl, status: staged.status,
+      },
+      reviewQueueOnly: true, storefrontPublished: false, supplierOrderingEnabled: false,
+    });
+  } catch (error) {
+    const status = Number(error.status) >= 400 && Number(error.status) < 600 ? Number(error.status) : 502;
+    console.error('[AliExpress private staging] failed:', {
+      code: error.code || 'ALIEXPRESS_PRODUCT_STAGING_FAILED',
+      aliexpressCode: error.aliexpressCode || '',
+      message: String(error.message || 'Unknown error').slice(0, 220),
+    });
+    return res.status(status).json({
+      success: false, code: error.code || 'ALIEXPRESS_PRODUCT_STAGING_FAILED',
+      message: error.message || 'Unable to stage this AliExpress product for admin review.',
+      ...(error.aliexpressCode ? { aliexpressCode: error.aliexpressCode } : {}),
+    });
+  }
+});
+
 // Isolated read-only feed-name verification. This separates feed discovery
 // from feed-item pagination and product detail lookups so each stage can be
 // diagnosed without importing or publishing anything.
