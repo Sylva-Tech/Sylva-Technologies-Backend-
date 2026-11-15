@@ -686,8 +686,26 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       if (existing) return res.status(409).json({ success: false, message: 'This AliExpress item has already been approved and published.', product: existing });
     }
 
-    const price = Number(req.body?.price ?? record.targetSalePrice ?? record.supplierPrice);
-    if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ success: false, message: 'Set a valid Sylva selling price greater than zero before approval.' });
+    const price = Number(req.body?.price);
+    const supplierPrice = Number(record.supplierPrice);
+    const exchangeRate = Number(req.body?.exchangeRate);
+    const profitPercent = Number(req.body?.profitPercent ?? 8);
+    if (!Number.isFinite(supplierPrice) || supplierPrice <= 0) {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_SOURCE_PRICE_MISSING', message: 'AliExpress did not return a valid supplier item price. Re-sync this product before approval.' });
+    }
+    if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+      return res.status(400).json({ success: false, code: 'ALIEXPRESS_EXCHANGE_RATE_REQUIRED', message: 'Enter the current KES exchange rate for the supplier currency before approval.' });
+    }
+    if (!Number.isFinite(profitPercent) || profitPercent < 8 || profitPercent > 500) {
+      return res.status(400).json({ success: false, code: 'ALIEXPRESS_MINIMUM_PROFIT_REQUIRED', message: 'Profit must be at least 8% and no more than 500%.' });
+    }
+    const minimumSellingPrice = Math.ceil(supplierPrice * exchangeRate * (1 + profitPercent / 100));
+    if (!Number.isFinite(price) || price < minimumSellingPrice) {
+      return res.status(400).json({
+        success: false, code: 'ALIEXPRESS_SELLING_PRICE_BELOW_MINIMUM',
+        minimumSellingPrice, message: 'Sylva selling price must include at least ' + profitPercent + '% profit on the AliExpress item price, excluding shipping. Minimum KES price: ' + minimumSellingPrice.toLocaleString('en-KE') + '.',
+      });
+    }
     const title = String(req.body?.title || record.title || '').trim().slice(0, 500);
     if (title.length < 3) return res.status(400).json({ success: false, message: 'A product title is required.' });
     const description = String(req.body?.description || title).trim().slice(0, 12000);
@@ -717,7 +735,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       images, stock: Math.max(0, Number.parseInt(req.body?.stock, 10) || 0), condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
       seller: null, featured: false, flashSale: false, offer: false,
-      specifications: { supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierPrice: record.supplierPrice, supplierCurrency: record.supplierCurrency },
+      specifications: { supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierPrice: record.supplierPrice, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: profitPercent, shippingIncludedInMarkup: false, shippingHandledBy: 'AliExpress' },
     });
 
     record.status = 'approved';
