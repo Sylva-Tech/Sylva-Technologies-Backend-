@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isBuyerPlatform } = require('../routes/aliexpressBuyerApiRoutes');
+const { isBuyerPlatform, getFeedItemIds } = require('../routes/aliexpressBuyerApiRoutes');
 const { getDropshipApiConfig, buildTopProtocolRequest } = require('../services/aliexpressService');
 
 test('AliExpress buyer platform detection accepts buyerApp identifiers only', () => {
@@ -127,4 +127,33 @@ test('Protocol.TOP adapter continues to reject supplier order creation after ena
     appKey: 'app-key',
     appSecret: 'app-secret',
   }), (error) => error.code === 'ALIEXPRESS_METHOD_NOT_ALLOWED');
+});
+
+
+test('AliExpress feed item parser reads the live products.number response and search cursor', () => {
+  const response = {
+    aliexpress_ds_feed_itemids_get_response: {
+      result: {
+        total: 18457,
+        products: { number: [1005013078612320, 1005007093064705, 1005006634143550, 1005011843719653, 1005011687865988] },
+        search_id: 'opaque-next-page-cursor',
+      },
+      ret: true,
+      rsp_msg: '',
+      request_id: 'test-request',
+    },
+  };
+  assert.deepEqual(getFeedItemIds(response), {
+    ids: ['1005013078612320', '1005007093064705', '1005006634143550', '1005011843719653', '1005011687865988'],
+    cursor: 'opaque-next-page-cursor',
+  });
+});
+
+test('AliExpress feed item parser retains compatibility with older item_ids payloads', () => {
+  const response = {
+    aliexpress_ds_feed_itemids_get_response: {
+      result: { item_ids: ['1001', '1002'], search_id: 'next' },
+    },
+  };
+  assert.deepEqual(getFeedItemIds(response), { ids: ['1001', '1002'], cursor: 'next' });
 });

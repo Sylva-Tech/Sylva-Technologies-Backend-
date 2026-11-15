@@ -315,13 +315,19 @@ const getFeedNames = (payload) => {
 
 const getFeedItemIds = (payload) => {
   const envelope = getMethodEnvelope(payload, 'aliexpress.ds.feed.itemids.get');
-  const ids = findArray(envelope, (key, value) =>
+  const result = envelope.result || envelope.resp_result?.result || {};
+  // Live API Explorer response shape:
+  // aliexpress_ds_feed_itemids_get_response.result.products.number[]
+  // The array key is "number", not "product_ids" or "item_ids".
+  const documentedIds = result.products?.number;
+  const fallbackIds = findArray(envelope, (key, value) =>
     /item.?ids?|product.?ids?/i.test(key) && value.length > 0);
-  const normalized = (ids || []).map((item) => {
+  const ids = Array.isArray(documentedIds) ? documentedIds : (fallbackIds || []);
+  const normalized = ids.map((item) => {
     if (typeof item === 'string' || typeof item === 'number') return String(item);
     return String(item?.product_id || item?.item_id || item?.productId || item?.itemId || '');
   }).filter((id) => /^\d{1,30}$/.test(id));
-  const cursor = envelope.search_id || envelope.result?.search_id || envelope.resp_result?.result?.search_id || '';
+  const cursor = envelope.search_id || result.search_id || '';
   return { ids: [...new Set(normalized)], cursor: String(cursor || '') };
 };
 
@@ -476,4 +482,5 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
 
 module.exports = router;
 module.exports.isBuyerPlatform = isBuyerPlatform;
+module.exports.getFeedItemIds = getFeedItemIds;
 module.exports.getUsableBuyerToken = getUsableBuyerToken;
