@@ -544,6 +544,69 @@ const getAliExpressSkuRows = (value) => {
   return [];
 };
 
+
+const extractAliExpressProductAttributes = (productResult) => {
+  const containers = [];
+  const visited = new Set();
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== 'object' || depth > 8 || visited.has(node)) return;
+    visited.add(node);
+    for (const [key, value] of Object.entries(node)) {
+      if (/property|attribute|specification|item_specific/i.test(key)) containers.push(value);
+      if (value && typeof value === 'object') walk(value, depth + 1);
+    }
+  };
+  walk(productResult);
+
+  const ignored = /supplier|aliexpress|seller|store|shipping|freight|delivery|price|cost|currency|stock|sku|product.?id|category|image|url|commission|profit|markup|source|provider/i;
+  const clean = (value) => String(value ?? '').replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 240);
+  const valueText = (value, depth = 0) => {
+    if (depth > 3 || value == null) return '';
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return clean(value);
+    if (Array.isArray(value)) return value.map((item) => valueText(item, depth + 1)).filter(Boolean).join(', ').slice(0, 240);
+    if (typeof value === 'object') {
+      for (const key of ['display_value', 'value_name', 'attr_value', 'property_value', 'value', 'name', 'label']) {
+        if (value[key] != null) {
+          const text = valueText(value[key], depth + 1);
+          if (text) return text;
+        }
+      }
+    }
+    return '';
+  };
+  const attributes = new Map();
+  const add = (labelValue, rawValue) => {
+    const label = clean(labelValue).replace(/[_-]+/g, ' ');
+    const value = valueText(rawValue);
+    if (!label || !value || label.length > 80 || ignored.test(label)) return;
+    const normalized = label.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!normalized || attributes.has(normalized)) return;
+    attributes.set(normalized, { name: label, value });
+  };
+  const parse = (node, depth = 0) => {
+    if (!node || typeof node !== 'object' || depth > 6) return;
+    if (Array.isArray(node)) {
+      node.forEach((item) => parse(item, depth + 1));
+      return;
+    }
+    const label = node.attr_name || node.attribute_name || node.property_name || node.propertyName ||
+      node.attributeName || node.name || node.label || node.key;
+    const value = node.attr_value || node.attribute_value || node.property_value || node.propertyValue ||
+      node.attributeValue || node.display_value || node.value_name || node.value;
+    if (label && value != null) add(label, value);
+    for ( (const [key, child] of Object.entries(node)) ) {
+      if (typeof child !== 'object' || child == null) continue;
+      if (!label && !ignored.test(key) && !/^(id|code|type|sort|order)$/i.test(key)) {
+        const scalar = valueText(child);
+        if (scalar) add(key, scalar);
+      }
+      parse(child, depth + 1);
+    }
+  };
+  containers.forEach((container) => parse(container));
+  return [...attributes.values()].slice(0, 40);
+};
+
 const normalizeAliExpressProduct = (payload, productId, currency) => {
   const result = getAliExpressProductResult(payload);
   const base = result?.ae_item_base_info_dto;
@@ -583,6 +646,7 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
   const supplierStoreUrl = firstText(storeInfo.store_url, storeInfo.store_home_url, storeInfo.storeUrl, storeInfo.shop_url, storeInfo.url, result.store_url).slice(0, 2000);
   const supplierBrand = firstText(base.product_brand, base.brand, base.brand_name, base.product_brand_name, result.product_brand).slice(0, 120);
   const targetSalePrice = supplierPrice == null ? null : Number((supplierPrice * 1.08).toFixed(2));
+  const productAttributes = extractAliExpressProductAttributes(result);
 
   return {
     providerProductId: id,
@@ -601,6 +665,7 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
     supplierStoreName,
     supplierStoreUrl,
     supplierBrand,
+    productAttributes,
     sourcePayload: {
       productId: id,
       skuCount: skuRows.length,
@@ -834,14 +899,25 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const requestedStock = Number.parseInt(req.body?.stock, 10);
     const approvedStock = Number.isInteger(requestedStock) && requestedStock >= 0 ? requestedStock : 10;
 
+    const publicSpecifications = Object.fromEntries(
+      (Array.isArray(record.productAttributes) ? record.productAttributes : [])
+        .filter((attribute) => attribute?.name && attribute?.value)
+        .map((attribute) => [String(attribute.name).slice(0, 80), String(attribute.value).slice(0, 240)])
+    );
+    const keyFeatures = (Array.isArray(record.productAttributes) ? record.productAttributes : [])
+      .filter((attribute) => attribute?.name && attribute?.value)
+      .slice(0, 8)
+      .map((attribute) => String(attribute.name) + ': ' + String(attribute.value));
+    const featureSummary = keyFeatures.join(' • ').slice(0, 300);
     const published = await Product.create({
       name: title, slug, sku, source: 'aliexpress', brand, category: category._id,
-      description, shortDescription: String(req.body?.shortDescription || title).trim().slice(0, 300),
+      description, shortDescription: String(req.body?.shortDescription || featureSummary || title).trim().slice(0, 300),
+      keyFeatures,
       price, oldPrice: Number(req.body?.oldPrice) > price ? Number(req.body.oldPrice) : 0,
       images, stock: approvedStock, condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
       seller: null, featured: false, flashSale: false, offer: false,
-      specifications: { supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierStoreName: record.supplierStoreName || '', supplierStoreUrl: record.supplierStoreUrl || '', supplierPrice: record.supplierPrice, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: 8, shippingIncludedInMarkup: false, deliveryIncludedInMarkup: false, shippingHandledBy: 'AliExpress', deliveryCostChargedSeparately: true },
+      specifications: { ...publicSpecifications, supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierStoreName: record.supplierStoreName || '', supplierStoreUrl: record.supplierStoreUrl || '', supplierPrice: record.supplierPrice, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: 8, shippingIncludedInMarkup: false, deliveryIncludedInMarkup: false, shippingHandledBy: 'AliExpress', deliveryCostChargedSeparately: true },
     });
 
     record.status = 'approved';
@@ -1148,4 +1224,5 @@ module.exports = router;
 module.exports.isBuyerPlatform = isBuyerPlatform;
 module.exports.getFeedItemIds = getFeedItemIds;
 module.exports.normalizeAliExpressProduct = normalizeAliExpressProduct;
+module.exports.extractAliExpressProductAttributes = extractAliExpressProductAttributes;
 module.exports.getUsableBuyerToken = getUsableBuyerToken;
