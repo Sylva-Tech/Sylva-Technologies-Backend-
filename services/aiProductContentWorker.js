@@ -41,7 +41,13 @@ const processOnePendingProduct = async () => {
         $set: { 'aiContentDraft.status': 'processing', 'aiContentDraft.lastError': '', 'aiContentDraft.processingAt': now },
         $inc: { 'aiContentDraft.attempts': 1 },
       },
-      { new: true, sort: { syncedAt: 1 } }
+      {
+        new: true,
+        sort: { syncedAt: 1 },
+        // This filter is built only from fixed worker states and server timestamps.
+        // Allow MongoDB aggregation expressions here without disabling sanitization globally.
+        sanitizeFilter: false,
+      }
     );
     if (!claimed) return false;
 
