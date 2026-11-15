@@ -228,6 +228,15 @@ const productSchema = new mongoose.Schema(
       default: [],
     },
 
+    contentGeneration: {
+      provider: { type: String, enum: ['openai'], default: undefined },
+      model: { type: String, default: '', maxlength: 80 },
+      sourceHash: { type: String, default: '', maxlength: 64 },
+      generatedAt: { type: Date, default: null },
+      generatedFields: { type: [String], default: [] },
+      warnings: { type: [String], default: [] },
+    },
+
     sellerNotes: {
       type: String,
       default: '',
