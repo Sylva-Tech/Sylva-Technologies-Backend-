@@ -46,7 +46,8 @@ const processOnePendingProduct = async () => {
       { returnDocument: 'after', sort: { syncedAt: 1 } }
     );
     const claimedRaw = claimResult?.value || claimResult;
-    const claimed = claimedRaw ? AliExpressCatalogProduct.hydrate(claimedRaw) : null;    if (!claimed) return false;
+    const claimed = claimedRaw ? AliExpressCatalogProduct.hydrate(claimedRaw) : null;
+    if (!claimed) return false;
 
     try {
       const generated = await generateAliExpressProductContent({
