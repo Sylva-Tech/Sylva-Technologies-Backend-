@@ -28,7 +28,7 @@ const extractOutputText = (response) => {
   const candidate = response?.candidates?.[0];
   if (candidate?.finishReason === 'SAFETY' || candidate?.finishReason === 'BLOCKLIST') { const error = new Error('Gemini blocked the product-content request.'); error.code = 'AI_CONTENT_REFUSED'; throw error; }
   if (candidate?.finishReason === 'MAX_TOKENS') { const error = new Error('Gemini product-content response was incomplete.'); error.code = 'AI_CONTENT_INCOMPLETE'; throw error; }
-  return (candidate?.content?.parts || []).filter((part) => typeof part.text === 'string' && part.thought !== true).map((part) => part.text).join('\\n').trim();
+  return (candidate?.content?.parts || []).filter((part) => typeof part.text === 'string' && part.thought !== true).map((part) => part.text).join('\n').trim();
 };
 
 const validateContent = (value) => {
@@ -102,14 +102,14 @@ const generateAliExpressProductContent = async (product) => {
     'targetField indicates shortDescription, keyFeatures, description or all. Prioritize that field while returning all required schema fields.',
     'Return up to eight concise factual key features. Short description should be 1–2 sentences and under 300 characters. Full description should use readable paragraphs. Do not add prices or shipping charges.',
     'Give practical suggestions and missingSections only when useful. Return only structured JSON.',
-  ].join('\\n');
+  ].join('\n');
   try {
     response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
       method: 'POST',
       headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemInstruction }] },
-        contents: [{ role: 'user', parts: [{ text: 'Create the product-content draft from this JSON data:\\n' + JSON.stringify(safeInput) }] }],
+        contents: [{ role: 'user', parts: [{ text: 'Create the product-content draft from this JSON data:\n' + JSON.stringify(safeInput) }] }],
         generationConfig: { temperature: 0.2, maxOutputTokens: 1800, responseMimeType: 'application/json', responseJsonSchema: CONTENT_SCHEMA },
       }),
       signal: AbortSignal.timeout(30000),
@@ -129,14 +129,15 @@ const generateAliExpressProductContent = async (product) => {
     error.providerStatus = response.status;
     error.providerCode = String(providerError.status || providerError.code || '').slice(0, 100);
     error.providerType = String(providerError.details?.[0]?.reason || '').slice(0, 100);
-    error.providerParam = ''.slice(0, 100);
+    error.providerParam = '';
     error.providerMessage = String(providerError.message || '').replace(/(?:key|token)[=: ]+\S+/gi, '[redacted]').slice(0, 240);
     error.status = response.status === 429 || response.status >= 500 ? 503 : 502;
     throw error;
   }
 
   const payload = await response.json();
-  if (payload?.promptFeedback?.blockReason) { const error = new Error('Gemini blocked the product-content request.'); error.code = 'AI_CONTENT_REFUSED'; throw error; }\n  if (payload.status === 'incomplete') {
+  if (payload?.promptFeedback?.blockReason) { const error = new Error('Gemini blocked the product-content request.'); error.code = 'AI_CONTENT_REFUSED'; throw error; }
+  if (payload.status === 'incomplete') {
     const error = new Error('The AI product-content response was incomplete.');
     error.code = 'AI_CONTENT_INCOMPLETE';
     throw error;
