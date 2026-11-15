@@ -904,7 +904,8 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
       return res.status(400).json({ success: false, code: 'ALIEXPRESS_EXCHANGE_RATE_REQUIRED', message: 'Save the KES exchange rate once for ' + currency + ' in Catalogue pricing settings before approval.' });
     }
-    const minimumSellingPrice = Math.ceil(supplierPrice * exchangeRate * (1 + profitPercent / 100));
+    const supplierPriceKes = Number((supplierPrice * exchangeRate).toFixed(2));
+    const minimumSellingPrice = Math.ceil(supplierPriceKes * (1 + profitPercent / 100));
     if (!Number.isFinite(price) || price < minimumSellingPrice) {
       return res.status(400).json({
         success: false, code: 'ALIEXPRESS_SELLING_PRICE_BELOW_MINIMUM',
@@ -916,7 +917,9 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const aiDraft = record.aiContentDraft?.status === 'generated' ? record.aiContentDraft : null;
     const description = String(req.body?.description || aiDraft?.description || title).trim().slice(0, 12000);
     const requestedBrand = String(req.body?.brand || '').trim();
-    const brand = String(record.supplierBrand || (requestedBrand && !/^aliexpress$/i.test(requestedBrand) ? requestedBrand : '') || 'Sylva Technologies').trim().slice(0, 120);
+    const titleBrand = title.match(/^(HP|Lenovo|Dell|Samsung|Apple|Xiaomi|JBL|Sony|Anker|Baseus|Ugreen|Logitech|Asus|Acer|Huawei|Microsoft|Canon|Epson|TP-Link|KZ|AOC|MSI|Gigabyte|Razer|Hikvision|Dahua)\b/i)?.[1] || '';
+    const validBrand = (value) => { const candidate = String(value || '').trim(); return candidate && !/^(aliexpress|sylva technologies|unknown|generic)$/i.test(candidate) ? candidate : ''; };
+    const brand = String(titleBrand || validBrand(record.supplierBrand) || validBrand(requestedBrand) || '').trim().slice(0, 120);
     let category = null;
     const chosenCategoryId = String(req.body?.categoryId || record.sylvaCategoryId || '');
     if (chosenCategoryId && mongoose.isValidObjectId(chosenCategoryId)) {
@@ -964,7 +967,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       images, stock: approvedStock, condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
       seller: null, featured: false, flashSale: false, offer: false,
-      specifications: { ...publicSpecifications, supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierStoreName: record.supplierStoreName || '', supplierStoreUrl: record.supplierStoreUrl || '', supplierPrice: record.supplierPrice, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: 8, shippingIncludedInMarkup: false, deliveryIncludedInMarkup: false, shippingHandledBy: 'AliExpress', deliveryCostChargedSeparately: true },
+      specifications: { ...publicSpecifications, supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierStoreName: record.supplierStoreName || '', supplierStoreUrl: record.supplierStoreUrl || '', supplierPrice: record.supplierPrice, supplierPriceKes, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: 8, shippingIncludedInMarkup: false, deliveryIncludedInMarkup: false, shippingHandledBy: 'AliExpress', deliveryCostChargedSeparately: true },
     });
 
     record.status = 'approved';
