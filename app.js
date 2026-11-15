@@ -102,8 +102,6 @@ const allowedOrigins = new Set([
   ...configuredPreviewOrigins,
   'https://sylvatechnologies.co.ke',
   'https://www.sylvatechnologies.co.ke',
-  'https://sylvatechnologies.vercel.app',
-  'https://sylva-technologies-frontend.vercel.app',
 ]);
 
 // Local origins are accepted only outside production. Production preview
