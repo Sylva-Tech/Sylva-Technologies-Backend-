@@ -594,7 +594,7 @@ const extractAliExpressProductAttributes = (productResult) => {
     const value = node.attr_value || node.attribute_value || node.property_value || node.propertyValue ||
       node.attributeValue || node.display_value || node.value_name || node.value;
     if (label && value != null) add(label, value);
-    for ( (const [key, child] of Object.entries(node)) ) {
+    for (const [key, child] of Object.entries(node)) {
       if (typeof child !== 'object' || child == null) continue;
       if (!label && !ignored.test(key) && !/^(id|code|type|sort|order)$/i.test(key)) {
         const scalar = valueText(child);
