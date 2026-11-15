@@ -52,7 +52,7 @@ const validateContent = (value) => {
   }
   const keyFeatures = [...new Set(value.keyFeatures.map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean))].slice(0, 8);
   const shortDescription = value.shortDescription.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
-  const description = value.description.replace(/<\/?(script|style|iframe|object|embed)[^>]*>/gi, '').replace(/\son\w+\s*=\s*(['\"]).*?\1/gi, '').replace(/javascript:/gi, '').replace(/\r?\n{3,}/g, '\n\n').trim().slice(0, 12000);
+  const description = value.description.replace(/<[^>]*>/g, ' ').replace(/\r?\n{3,}/g, '\n\n').replace(/\s{2,}/g, ' ').trim().slice(0, 12000);
   const seoTitle = value.seoTitle.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
   const seoMetaDescription = value.seoMetaDescription.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 155);
   const marketingTags = [...new Set(value.marketingTags.map((tag) => String(tag).replace(/<[^>]*>/g, '').replace(/[^a-zA-Z0-9 &-]/g, '').trim()).filter(Boolean))].slice(0, 8);
@@ -99,7 +99,7 @@ const generateAliExpressProductContent = async (product) => {
     productTitle: String(product.title || product.name || '').slice(0, 500),
     brand: (/^(aliexpress|sylva technologies|unknown|generic)$/i.test(String(product.supplierBrand || product.brand || '').trim()) ? '' : String(product.supplierBrand || product.brand || '').slice(0, 120)),
     category: String(product.categoryName || product.category || '').slice(0, 120),
-    supplierDescription: String(product.rawDescription || '').replace(/https?:\\/\\/\\S+/gi, '').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi, '').split(/\\r?\\n/).filter((line) => !/supplier|aliexpress|wholesale|purchase price|cost price|shipping fee|freight|contact seller|seller id|store url|tracking/i.test(line)).join(' ').slice(0, 2500),
+    supplierDescription: String(product.rawDescription || '').replace(/https?:\/\/\S+/gi, '').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '').split(/\r?\n/).filter((line) => !/supplier|aliexpress|wholesale|purchase price|cost price|shipping fee|freight|contact seller|seller id|store url|tracking/i.test(line)).join(' ').slice(0, 2500),
     verifiedSupplierAttributes: attributes,
     existingCustomerFacingContent: {
       shortDescription: String(product.existingContent?.shortDescription || '').slice(0, 500),
