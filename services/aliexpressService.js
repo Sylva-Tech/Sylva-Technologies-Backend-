@@ -13,6 +13,8 @@ const READ_ONLY_METHODS = new Set([
   'aliexpress.trade.ds.order.get',
   'aliexpress.ds.order.tracking.get',
   'aliexpress.ds.member.benefit.get',
+  'aliexpress.ds.text.search',
+  'aliexpress.ds.image.searchV2',
 ]);
 
 const getDropshipApiConfig = () => ({
