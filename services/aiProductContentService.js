@@ -49,7 +49,8 @@ const validateContent = (value) => {
   const shortDescription = value.shortDescription.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
   const description = value.description.replace(/<[^>]*>/g, ' ').replace(/\r?\n{3,}/g, '\n\n').trim().slice(0, 12000);
   const privateContentPattern = /\b(?:aliexpress|supplier\s+(?:price|cost|id|url|currency|store)|exchange\s+rate|profit\s+margin|markup|wholesale\s+price|purchase\s+price)\b/i;
-  if (!keyFeatures.length || shortDescription.length < 20 || description.length < 60 ||\n      [...keyFeatures, shortDescription, description].some((text) => privateContentPattern.test(text))) {
+  if (!keyFeatures.length || shortDescription.length < 20 || description.length < 60 ||
+      [...keyFeatures, shortDescription, description].some((text) => privateContentPattern.test(text))) {
     const error = new Error('The AI returned product content that did not meet minimum quality checks.');
     error.code = 'AI_CONTENT_QUALITY_FAILED';
     throw error;
