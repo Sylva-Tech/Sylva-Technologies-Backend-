@@ -6,6 +6,7 @@ const AliExpressConnection = require('../models/AliExpressConnection');
 const AliExpressCatalogProduct = require('../models/AliExpressCatalogProduct');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
+const AliExpressCatalogSettings = require('../models/AliExpressCatalogSettings');
 const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
 const {
   getDropshipApiConfig,
@@ -77,6 +78,43 @@ router.post('/token/reveal', protect, adminOnly, tokenRevealLimiter, async (req,
 
 const getMethodEnvelope = (payload, method) => payload?.[`${method.split('.').join('_')}_response`] || payload || {};
 const countImages = (result) => collectAliExpressImageUrls(result || {}).length;
+
+const CATEGORY_HINTS = [
+  { terms: ['laptop', 'notebook', 'desktop', 'computer', 'pc', 'monitor', 'keyboard', 'mouse', 'printer', 'ssd', 'hard drive', 'ram', 'graphics card'], names: ['computer', 'laptop', 'desktop', 'pc'] },
+  { terms: ['phone', 'smartphone', 'iphone', 'android', 'tablet', 'ipad', 'mobile', 'screen protector', 'phone case'], names: ['phone', 'mobile', 'tablet', 'smartphone'] },
+  { terms: ['headphone', 'earphone', 'earbud', 'speaker', 'microphone', 'soundbar', 'audio', 'bluetooth headset'], names: ['audio', 'headphone', 'earphone', 'speaker', 'sound'] },
+  { terms: ['camera', 'webcam', 'cctv', 'surveillance', 'dashcam', 'lens'], names: ['camera', 'security', 'cctv'] },
+  { terms: ['router', 'wifi', 'wi-fi', 'network', 'ethernet', 'switch', 'access point'], names: ['network', 'router', 'connectivity'] },
+  { terms: ['charger', 'power bank', 'powerbank', 'cable', 'adapter', 'usb hub', 'charging'], names: ['power', 'charger', 'cable'] },
+  { terms: ['smart watch', 'smartwatch', 'fitness tracker', 'wearable', 'watch band'], names: ['wearable', 'watch', 'fitness'] },
+  { terms: ['gamepad', 'controller', 'playstation', 'xbox', 'nintendo', 'gaming', 'console'], names: ['gaming', 'game', 'console'] },
+  { terms: ['television', 'smart tv', 'projector', 'tv box', 'streaming stick'], names: ['tv', 'television', 'projector', 'entertainment'] },
+  { terms: ['drone', 'rc car', 'robot', '3d printer'], names: ['drone', 'robot', '3d printing'] },
+];
+
+const normalizeCategoryText = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+const matchSylvaCategory = (title, categories) => {
+  const text = normalizeCategoryText(title);
+  if (!text || !Array.isArray(categories) || !categories.length) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const category of categories) {
+    const name = normalizeCategoryText(category.name);
+    if (!name) continue;
+    let score = 0;
+    const nameTokens = name.split(' ').filter((token) => token.length > 2);
+    for (const token of nameTokens) if (text.includes(token)) score += 2;
+    for (const group of CATEGORY_HINTS) {
+      const titleHit = group.terms.some((term) => text.includes(normalizeCategoryText(term)));
+      const categoryHit = group.names.some((term) => name.includes(term));
+      if (titleHit && categoryHit) score += 5;
+    }
+    if (score > bestScore) { best = category; bestScore = score; }
+  }
+  return bestScore >= 5 ? { category: best, confidence: bestScore } : null;
+};
+
 
 router.get('/status', protect, adminOnly, async (req, res) => {
   try {
@@ -255,6 +293,45 @@ router.post('/catalog/test-product', protect, adminOnly, limiter, async (req, re
       message: error.message || 'AliExpress read-only product test failed.',
       ...(error.aliexpressCode ? { aliexpressCode: error.aliexpressCode } : {}),
     });
+  }
+});
+
+
+router.get('/catalog/settings', protect, adminOnly, async (req, res) => {
+  try {
+    const settings = await AliExpressCatalogSettings.findOne({ key: 'default' }).lean();
+    return res.json({ success: true, exchangeRates: settings?.exchangeRates || [], minimumProfitPercent: 8 });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Unable to load AliExpress catalogue pricing settings.' });
+  }
+});
+
+router.put('/catalog/settings/exchange-rate', protect, adminOnly, async (req, res) => {
+  try {
+    const currency = String(req.body?.currency || '').trim().toUpperCase();
+    const kesPerUnit = Number(req.body?.kesPerUnit);
+    if (!/^[A-Z]{3}$/.test(currency)) return res.status(400).json({ success: false, message: 'Enter a valid three-letter supplier currency code.' });
+    if (!Number.isFinite(kesPerUnit) || kesPerUnit <= 0 || kesPerUnit > 1000000) {
+      return res.status(400).json({ success: false, message: 'Enter a valid positive KES exchange rate.' });
+    }
+    const settings = await AliExpressCatalogSettings.findOneAndUpdate(
+      { key: 'default' },
+      { $setOnInsert: { key: 'default' } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    const existing = settings.exchangeRates.find((item) => item.currency === currency);
+    if (existing) {
+      existing.kesPerUnit = kesPerUnit;
+      existing.updatedAt = new Date();
+      existing.updatedBy = req.user._id;
+    } else {
+      settings.exchangeRates.push({ currency, kesPerUnit, updatedAt: new Date(), updatedBy: req.user._id });
+    }
+    await settings.save();
+    return res.json({ success: true, currency, kesPerUnit, exchangeRates: settings.exchangeRates, minimumProfitPercent: 8 });
+  } catch (error) {
+    console.error('[AliExpress exchange rate] save failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to save the supplier currency exchange rate.' });
   }
 });
 
@@ -566,6 +643,11 @@ router.post('/catalog/stage-product', protect, adminOnly, limiter, async (req, r
       return res.status(502).json({ success: false, code: 'ALIEXPRESS_PRODUCT_DETAILS_INVALID', message: 'AliExpress did not return a usable product title and detail record. Nothing was added to the review queue.' });
     }
 
+    const categories = await Category.find({ isActive: true }).select('_id name slug').lean();
+    const categoryMatch = matchSylvaCategory(normalized.title, categories);
+    normalized.sylvaCategoryId = categoryMatch ? String(categoryMatch.category._id) : '';
+    normalized.categoryName = categoryMatch?.category?.name || '';
+    normalized.categoryMatchStatus = categoryMatch ? 'matched' : 'needs_review';
     const staged = await AliExpressCatalogProduct.findOneAndUpdate(
       { providerProductId: normalized.providerProductId },
       { $set: { ...normalized, syncedAt: new Date() }, $setOnInsert: { status: 'pending' } },
@@ -669,7 +751,20 @@ router.get('/catalog/review-queue', protect, adminOnly, async (req, res) => {
       AliExpressCatalogProduct.find({ status: 'pending' }).sort({ syncedAt: -1 }).limit(limit).lean(),
       AliExpressCatalogProduct.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
     ]);
-    return res.json({ success: true, products, counts: Object.fromEntries(counts.map((row) => [row._id, row.count])) });
+    const categories = await Category.find({ isActive: true }).select('_id name slug').sort({ name: 1 }).lean();
+    // Backfill category suggestions for older pending imports without publishing them.
+    for (const product of products) {
+      if (!product.sylvaCategoryId || product.categoryMatchStatus !== 'matched') {
+        const match = matchSylvaCategory(product.title, categories);
+        if (match) {
+          product.sylvaCategoryId = String(match.category._id);
+          product.categoryName = match.category.name;
+          product.categoryMatchStatus = 'matched';
+          await AliExpressCatalogProduct.updateOne({ _id: product._id, status: 'pending' }, { $set: { sylvaCategoryId: product.sylvaCategoryId, categoryName: product.categoryName, categoryMatchStatus: 'matched' } });
+        }
+      }
+    }
+    return res.json({ success: true, products, categories, counts: Object.fromEntries(counts.map((row) => [row._id, row.count])) });
   } catch (error) {
     console.error('[AliExpress review queue] load failed:', error.message);
     return res.status(500).json({ success: false, message: 'Unable to load the AliExpress admin review queue.' });
@@ -688,16 +783,16 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
 
     const price = Number(req.body?.price);
     const supplierPrice = Number(record.supplierPrice);
-    const exchangeRate = Number(req.body?.exchangeRate);
-    const profitPercent = Number(req.body?.profitPercent ?? 8);
+    const currency = String(record.supplierCurrency || 'USD').toUpperCase();
+    const settings = await AliExpressCatalogSettings.findOne({ key: 'default' }).lean();
+    const savedRate = (settings?.exchangeRates || []).find((item) => item.currency === currency);
+    const exchangeRate = Number(savedRate?.kesPerUnit);
+    const profitPercent = 8;
     if (!Number.isFinite(supplierPrice) || supplierPrice <= 0) {
       return res.status(409).json({ success: false, code: 'ALIEXPRESS_SOURCE_PRICE_MISSING', message: 'AliExpress did not return a valid supplier item price. Re-sync this product before approval.' });
     }
     if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
-      return res.status(400).json({ success: false, code: 'ALIEXPRESS_EXCHANGE_RATE_REQUIRED', message: 'Enter the current KES exchange rate for the supplier currency before approval.' });
-    }
-    if (!Number.isFinite(profitPercent) || profitPercent < 8 || profitPercent > 500) {
-      return res.status(400).json({ success: false, code: 'ALIEXPRESS_MINIMUM_PROFIT_REQUIRED', message: 'Profit must be at least 8% and no more than 500%.' });
+      return res.status(400).json({ success: false, code: 'ALIEXPRESS_EXCHANGE_RATE_REQUIRED', message: 'Save the KES exchange rate once for ' + currency + ' in Catalogue pricing settings before approval.' });
     }
     const minimumSellingPrice = Math.ceil(supplierPrice * exchangeRate * (1 + profitPercent / 100));
     if (!Number.isFinite(price) || price < minimumSellingPrice) {
@@ -711,14 +806,12 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const description = String(req.body?.description || title).trim().slice(0, 12000);
     const brand = String(req.body?.brand || 'AliExpress').trim().slice(0, 120);
     let category = null;
-    if (req.body?.categoryId && mongoose.isValidObjectId(req.body.categoryId)) {
-      category = await Category.findById(req.body.categoryId);
+    const chosenCategoryId = String(req.body?.categoryId || record.sylvaCategoryId || '');
+    if (chosenCategoryId && mongoose.isValidObjectId(chosenCategoryId)) {
+      category = await Category.findOne({ _id: chosenCategoryId, isActive: true });
     }
     if (!category) {
-      category = await Category.findOne({ slug: 'aliexpress-imported-products' });
-      if (!category) {
-        category = await Category.create({ name: 'Imported Products', slug: 'aliexpress-imported-products', description: 'Admin-approved products sourced through AliExpress.' });
-      }
+      return res.status(400).json({ success: false, code: 'ALIEXPRESS_CATEGORY_REQUIRED', message: 'Choose an active Sylva category. No generic or incorrect category will be assigned automatically.' });
     }
 
     const sku = ('AE-' + record.providerProductId).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
@@ -728,6 +821,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     if (existingSku) return res.status(409).json({ success: false, message: 'A product with this supplier SKU already exists. Review the existing product before proceeding.' });
 
     const images = [...new Set([record.imageUrl, ...(record.imageUrls || [])].filter((url) => /^https?:\/\//i.test(url)))].slice(0, 4);
+    if (!images.length) return res.status(409).json({ success: false, code: 'ALIEXPRESS_IMAGES_REQUIRED', message: 'No usable AliExpress product photos were synced. Refresh supplier details and confirm images before approval.' });
     const published = await Product.create({
       name: title, slug, sku, source: 'aliexpress', brand, category: category._id,
       description, shortDescription: String(req.body?.shortDescription || title).trim().slice(0, 300),
@@ -735,7 +829,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       images, stock: Math.max(0, Number.parseInt(req.body?.stock, 10) || 0), condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
       seller: null, featured: false, flashSale: false, offer: false,
-      specifications: { supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierPrice: record.supplierPrice, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: profitPercent, shippingIncludedInMarkup: false, shippingHandledBy: 'AliExpress' },
+      specifications: { supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierPrice: record.supplierPrice, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: 8, shippingIncludedInMarkup: false, deliveryIncludedInMarkup: false, shippingHandledBy: 'AliExpress', deliveryCostChargedSeparately: true },
     });
 
     record.status = 'approved';
@@ -880,6 +974,7 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
 
     const operations = [];
     const failures = [];
+    const activeCategories = await Category.find({ isActive: true }).select('_id name slug').lean();
     stage = 'product_details';
     for (const productId of ids) {
       try {
@@ -894,6 +989,10 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
           failures.push({ productId, reason: 'Product detail response did not contain the expected product structure.' });
           continue;
         }
+        const categoryMatch = matchSylvaCategory(normalized.title, activeCategories);
+        normalized.sylvaCategoryId = categoryMatch ? String(categoryMatch.category._id) : '';
+        normalized.categoryName = categoryMatch?.category?.name || '';
+        normalized.categoryMatchStatus = categoryMatch ? 'matched' : 'needs_review';
         operations.push({
           updateOne: {
             filter: { providerProductId: normalized.providerProductId },
