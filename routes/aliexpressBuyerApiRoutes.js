@@ -49,6 +49,53 @@ const getUsableBuyerToken = async (connection) => {
   return token.access_token;
 };
 
+// Reveal only the current buyerApp access token to an authenticated administrator.
+// The token is never persisted in the browser, returned by status endpoints, or logged.
+const tokenRevealLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 3,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { success: false, message: 'Token reveal limit reached. Try again later.' },
+});
+
+router.post('/token/reveal', protect, adminOnly, tokenRevealLimiter, async (req, res) => {
+  res.set('Cache-Control', 'no-store, private, max-age=0');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({ success: false, message: 'Confirm the one-time token reveal request.' });
+  }
+
+  try {
+    const connection = await AliExpressConnection.findOne({ provider: 'aliexpress' })
+      .select('+accessTokenEncrypted +refreshTokenEncrypted');
+    if (!connection || connection.status !== 'connected') {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_NOT_CONNECTED', message: 'The AliExpress account is not connected.' });
+    }
+    if (!isBuyerPlatform(connection.accountPlatform)) {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_BUYERAPP_REQUIRED', message: 'The saved authorization is not a buyerApp connection.' });
+    }
+
+    const accessToken = await getUsableBuyerToken(connection);
+    const expiresAt = connection.accessTokenExpiresAt || null;
+    return res.json({
+      success: true,
+      accessToken,
+      expiresAt,
+      revealPolicy: 'one-time; not stored in browser storage; refresh token is never exposed',
+    });
+  } catch (error) {
+    return res.status(Number(error.status) || 502).json({
+      success: false,
+      code: error.code || 'ALIEXPRESS_TOKEN_REVEAL_FAILED',
+      message: error.message || 'Unable to retrieve the current AliExpress access token.',
+    });
+  }
+});
+
 const getMethodEnvelope = (payload, method) => payload?.[`${method.split('.').join('_')}_response`] || payload || {};
 const countImages = (result) => {
   const multimedia = result?.ae_multimedia_info_dto || {};
