@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isBuyerPlatform, getFeedItemIds } = require('../routes/aliexpressBuyerApiRoutes');
+const { isBuyerPlatform, getFeedItemIds, normalizeAliExpressProduct } = require('../routes/aliexpressBuyerApiRoutes');
 const { getDropshipApiConfig, buildTopProtocolRequest } = require('../services/aliexpressService');
 
 test('AliExpress buyer platform detection accepts buyerApp identifiers only', () => {
@@ -156,4 +156,21 @@ test('AliExpress feed item parser retains compatibility with older item_ids payl
     },
   };
   assert.deepEqual(getFeedItemIds(response), { ids: ['1001', '1002'], cursor: 'next' });
+});
+
+
+test('AliExpress product normalization retains supplier store name and brand when provided', () => {
+  const normalized = normalizeAliExpressProduct({
+    aliexpress_ds_product_get_response: {
+      result: {
+        ae_item_base_info_dto: { product_id: '1005001234567890', subject: 'Osee GoStream Deck', currency_code: 'USD', product_brand: 'Osee' },
+        ae_item_sku_info_dtos: [{ offer_sale_price: '100.00', currency_code: 'USD' }],
+        ae_multimedia_info_dto: { image_urls: 'https://example.com/image.png' },
+        ae_store_info: { store_id: 'store-123', store_name: 'Osee Official Store', store_url: 'https://www.aliexpress.com/store/123' },
+      },
+    }, '1005001234567890', 'USD');
+  assert.equal(normalized.supplierStoreName, 'Osee Official Store');
+  assert.equal(normalized.supplierStoreUrl, 'https://www.aliexpress.com/store/123');
+  assert.equal(normalized.supplierBrand, 'Osee');
+  assert.equal(normalized.sellerId, 'store-123');
 });
