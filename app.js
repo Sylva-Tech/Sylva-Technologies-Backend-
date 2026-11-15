@@ -92,32 +92,28 @@ const configuredOrigins = (process.env.CLIENT_URL || '')
   .map((origin) => origin.trim().replace(/\/$/, ''))
   .filter(Boolean);
 
-const allowedOrigins = [
-  ...configuredOrigins,
+const configuredPreviewOrigins = (process.env.VERCEL_PREVIEW_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/$/, ''))
+  .filter(Boolean);
 
-  // Production frontend
+const allowedOrigins = new Set([
+  ...configuredOrigins,
+  ...configuredPreviewOrigins,
   'https://sylvatechnologies.co.ke',
   'https://www.sylvatechnologies.co.ke',
   'https://sylvatechnologies.vercel.app',
   'https://sylva-technologies-frontend.vercel.app',
-  'https://sylva-technologies-frontend-jucbjftlx.vercel.app',
+]);
 
-  // Local development
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://localhost:5175',
-  'http://localhost:4173',
-
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:5174',
-  'http://127.0.0.1:5175',
-  'http://127.0.0.1:4173',
-];
-
-const localOriginRegex =
-  /^https?:\/\/(localhost|127\.0\.0\.1):(3000|4173|5173|5174|5175)$/;
+// Local origins are accepted only outside production. Production preview
+// domains must be explicitly listed in VERCEL_PREVIEW_ORIGINS.
+if (!isProduction) {
+  for (const port of [3000, 4173, 5173, 5174, 5175]) {
+    allowedOrigins.add('http://localhost:' + port);
+    allowedOrigins.add('http://127.0.0.1:' + port);
+  }
+}
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -131,11 +127,7 @@ const corsOptions = {
 
     const cleanOrigin = origin.replace(/\/$/, '');
 
-    if (allowedOrigins.includes(cleanOrigin)) {
-      return callback(null, true);
-    }
-
-    if (localOriginRegex.test(cleanOrigin)) {
+    if (allowedOrigins.has(cleanOrigin)) {
       return callback(null, true);
     }
 
