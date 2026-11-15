@@ -45,10 +45,10 @@ const validateContent = (value) => {
     error.code = 'AI_CONTENT_INVALID';
     throw error;
   }
-  const keyFeatures = value.keyFeatures.map((item) => String(item).trim()).filter(Boolean).slice(0, 8);
-  const shortDescription = value.shortDescription.trim().slice(0, 500);
-  const description = value.description.trim().slice(0, 12000);
-  if (!keyFeatures.length || shortDescription.length < 20 || description.length < 60) {
+  const keyFeatures = [...new Set(value.keyFeatures.map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean))].slice(0, 8);
+  const shortDescription = value.shortDescription.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+  const description = value.description.replace(/<[^>]*>/g, ' ').replace(/\r?\n{3,}/g, '\n\n').trim().slice(0, 12000);
+  const privateContentPattern = /\b(?:aliexpress|supplier\s+(?:price|cost|id|url|currency|store)|exchange\s+rate|profit\s+margin|markup|wholesale\s+price|purchase\s+price)\b/i;\n  if (!keyFeatures.length || shortDescription.length < 20 || description.length < 60 ||\n      [...keyFeatures, shortDescription, description].some((text) => privateContentPattern.test(text))) {
     const error = new Error('The AI returned product content that did not meet minimum quality checks.');
     error.code = 'AI_CONTENT_QUALITY_FAILED';
     throw error;
@@ -75,7 +75,7 @@ const generateAliExpressProductContent = async (product) => {
     .map((item) => ({ name: String(item.name).slice(0, 80), value: String(item.value).slice(0, 240) }));
   const safeInput = {
     productTitle: String(product.title || '').slice(0, 500),
-    brand: String(product.supplierBrand || '').slice(0, 120),
+    brand: (/^(aliexpress|sylva technologies)$/i.test(String(product.supplierBrand || '').trim()) ? '' : String(product.supplierBrand || '').slice(0, 120)),
     category: String(product.categoryName || '').slice(0, 120),
     verifiedSupplierAttributes: attributes,
   };
@@ -97,7 +97,7 @@ const generateAliExpressProductContent = async (product) => {
         'Never invent compatibility, performance, dimensions, materials, certifications, warranty, delivery promises, package contents, origin, availability, or endorsements. If a fact is not supplied, omit it and add a concise warning.',
         'Do not mention AliExpress, supplier costs, supplier links, supplier IDs, exchange rates, margins, internal metadata, or private business processes in customer-facing copy.',
         'Write clear, natural, professional English for Kenyan customers. Avoid keyword stuffing, exaggerated claims, fake urgency, emojis, and unsupported superlatives.',
-        'Return up to eight concise factual key features, a short description under 300 characters where practical, and a useful full description. Do not add prices or shipping charges.',
+        'Return up to eight concise, non-repeating factual key features. Keep the short description concise (ideally 1–2 sentences and under 300 characters). Write the full description in clean, readable paragraphs with a brief overview followed by useful factual detail. Keep technical specifications out of marketing prose because the storefront displays verified specifications in a separate structured section. Do not add prices or shipping charges.',
         'Return only the requested structured content.',
       ].join('\n'),
       input: JSON.stringify(safeInput),
