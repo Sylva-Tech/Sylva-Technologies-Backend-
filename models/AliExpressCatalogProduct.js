@@ -7,6 +7,8 @@ const schema = new mongoose.Schema({
   imageUrl: { type: String, default: '', trim: true, maxlength: 2000 },
   imageUrls: { type: [String], default: [] },
   supplierPrice: { type: Number, default: null, min: 0 },
+  supplierOriginalPrice: { type: Number, default: null, min: 0 },
+  minimumProfitPercent: { type: Number, default: 8, min: 8, max: 500 },
   supplierCurrency: { type: String, default: 'USD', uppercase: true, trim: true, maxlength: 3 },
   targetSalePrice: { type: Number, default: null, min: 0 },
   targetCurrency: { type: String, default: 'USD', uppercase: true, trim: true, maxlength: 3 },
