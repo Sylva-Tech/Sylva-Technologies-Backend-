@@ -1005,7 +1005,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       images, stock: approvedStock, condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
       seller: null, featured: false, flashSale: false, offer: false,
-      specifications: { ...publicSpecifications },rkup: false, shippingHandledBy: 'AliExpress', deliveryCostChargedSeparately: true },
+      specifications: { ...publicSpecifications },
     });
 
     record.status = 'approved';
