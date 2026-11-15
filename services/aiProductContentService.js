@@ -12,12 +12,12 @@ const CONTENT_SCHEMA = {
     socialPromoCaption: { type: 'string' },
     suggestedCategory: { type: 'string' },
     shortDescription: { type: 'string' },
-    description: { type: 'string' },
+    fullDescription: { type: 'string' },
     warnings: { type: 'array', items: { type: 'string' } },
     suggestions: { type: 'array', items: { type: 'string' } },
     missingSections: { type: 'array', items: { type: 'string' } },
   },
-  required: ['keyFeatures', 'shortDescription', 'description', 'seoTitle', 'seoMetaDescription', 'marketingTags', 'socialPromoCaption', 'suggestedCategory', 'warnings', 'suggestions', 'missingSections'],
+  required: ['keyFeatures', 'shortDescription', 'fullDescription', 'seoTitle', 'seoMetaDescription', 'marketingTags', 'socialPromoCaption', 'suggestedCategory', 'warnings', 'suggestions', 'missingSections'],
 };
 
 const hashSource = (product) => crypto.createHash('sha256')
@@ -65,7 +65,7 @@ const htmlToPlainText = (value) => String(value || '')
 
 const validateContent = (value) => {
   if (!value || typeof value !== 'object' || !Array.isArray(value.keyFeatures) ||
-      typeof value.shortDescription !== 'string' || typeof value.description !== 'string' ||
+      typeof value.shortDescription !== 'string' || typeof (value.fullDescription || value.description) !== 'string' ||
       typeof value.seoTitle !== 'string' || typeof value.seoMetaDescription !== 'string' ||
       typeof value.socialPromoCaption !== 'string' || typeof value.suggestedCategory !== 'string' ||
       !Array.isArray(value.marketingTags) ||
@@ -78,7 +78,7 @@ const validateContent = (value) => {
   }
   const keyFeatures = [...new Set(value.keyFeatures.map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean))].slice(0, 7);
   const shortDescription = value.shortDescription.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
-  const description = sanitizeProductHtml(value.description).slice(0, 12000);
+  const description = sanitizeProductHtml(value.fullDescription || value.description).slice(0, 12000);
   const descriptionText = htmlToPlainText(description);
   const seoTitle = value.seoTitle.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
   const seoMetaDescription = value.seoMetaDescription.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 155);
@@ -96,6 +96,7 @@ const validateContent = (value) => {
     keyFeatures,
     shortDescription,
     description,
+    fullDescription: description,
     seoTitle,
     seoMetaDescription,
     marketingTags,
