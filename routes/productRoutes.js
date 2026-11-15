@@ -15,6 +15,7 @@ const {
 const sellerUpload = require('../middleware/sellerUpload');
 const uploadProductImage = require('../utils/uploadProductImage');
 const { sendSalesNotificationEmail } = require('../services/emailService');
+const { generateAliExpressProductContent } = require('../services/aiProductContentService');
 
 const router = express.Router();
 
@@ -2136,6 +2137,77 @@ router.get(
 /* =========================================================
    ADMIN PRODUCT MANAGEMENT
    ========================================================= */
+
+/*
+ * POST /api/products/:id/ai-content-draft
+ *
+ * Generate an editable AI draft for the normal admin product editor.
+ * This endpoint never saves product changes; the administrator reviews
+ * and applies the returned fields before the normal Save Product action.
+ */
+router.post('/:id/ai-content-draft', protect, adminOnly, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+    }
+    const product = await Product.findById(req.params.id).lean();
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found.' });
+
+    const requestedName = String(req.body?.name || product.name || '').trim().slice(0, 500);
+    const requestedBrand = String(req.body?.brand || product.brand || '').trim().slice(0, 120);
+    const requestedSpecifications = parseSpecifications(req.body?.specifications ?? product.specifications);
+    const categoryId = req.body?.category || product.category;
+    const categoryRecord = await Category.findById(categoryId).select('name').lean();
+    const specificationEntries = Object.entries(requestedSpecifications || {})
+      .filter(([name, value]) => name && value !== undefined && value !== null && String(value).trim())
+      .slice(0, 40)
+      .map(([name, value]) => ({ name: String(name).slice(0, 80), value: String(value).slice(0, 240) }));
+
+    const draft = await generateAliExpressProductContent({
+      title: requestedName,
+      brand: requestedBrand,
+      categoryName: categoryRecord?.name || '',
+      productAttributes: specificationEntries,
+    });
+    const normalizedSpecifications = Object.fromEntries(
+      specificationEntries.sort((left, right) => left.name.localeCompare(right.name)).map((item) => [item.name, item.value])
+    );
+
+    return res.json({
+      success: true,
+      message: 'AI draft generated. Review the fields and apply them before saving the product.',
+      draft: {
+        keyFeatures: draft.keyFeatures,
+        shortDescription: draft.shortDescription,
+        description: draft.description,
+        specifications: normalizedSpecifications,
+        warnings: draft.warnings,
+        model: draft.model,
+        sourceHash: draft.sourceHash,
+        generatedAt: draft.generatedAt,
+      },
+    });
+  } catch (error) {
+    console.error('[Admin product AI] draft generation failed:', JSON.stringify({
+      code: error.code || error.name || 'AI_CONTENT_FAILED',
+      providerStatus: error.providerStatus || null,
+      providerCode: error.providerCode || '',
+      providerType: error.providerType || '',
+      providerParam: error.providerParam || '',
+      providerMessage: error.providerMessage || '',
+    }));
+    const status = Number(error.status) >= 400 && Number(error.status) < 600 ? Number(error.status) : 502;
+    return res.status(status).json({
+      success: false,
+      code: error.code || 'AI_CONTENT_FAILED',
+      message: error.code === 'AI_CONTENT_NOT_CONFIGURED'
+        ? 'AI product drafting is not configured on the server.'
+        : error.code === 'AI_CONTENT_PROVIDER_ERROR'
+          ? 'The AI provider rejected the request. Check the server diagnostic code and model configuration.'
+          : 'Unable to generate an AI product draft. Please try again.',
+    });
+  }
+});
 
 /*
  * POST /api/products
