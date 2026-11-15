@@ -5,7 +5,7 @@ let timer = null;
 let running = false;
 
 const processOnePendingProduct = async () => {
-  if (!process.env.OPENAI_API_KEY || running) return false;
+  if (!process.env.GEMINI_API_KEY || running) return false;
   running = true;
   try {
     const now = new Date();
