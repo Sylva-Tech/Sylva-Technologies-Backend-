@@ -100,6 +100,8 @@ const getUsableBuyerToken = async (connection) => {
       continue;
     }
     if (latest.accessTokenEncrypted && expiresAt > Date.now() + 60000) {
+      connection.accessTokenExpiresAt = latest.accessTokenExpiresAt;
+      connection.tokenLastRefreshedAt = latest.tokenLastRefreshedAt;
       return decryptSecret(latest.accessTokenEncrypted);
     }
     await refreshConnectedBuyerToken();
