@@ -55,6 +55,7 @@ const processOnePendingProduct = async () => {
         supplierBrand: claimed.supplierBrand,
         categoryName: claimed.categoryName,
         productAttributes: claimed.productAttributes,
+        rawDescription: claimed.sourcePayload?.description || claimed.sourcePayload?.detail || '',
       });
       claimed.aiContentDraft = {
         ...generated,
