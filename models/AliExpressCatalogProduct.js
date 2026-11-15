@@ -27,6 +27,8 @@ const schema = new mongoose.Schema({
     shortDescription: { type: String, default: '', maxlength: 500 },
     description: { type: String, default: '', maxlength: 12000 },
     warnings: { type: [String], default: [] },
+    suggestions: { type: [String], default: [] },
+    missingSections: { type: [String], default: [] },
     model: { type: String, default: '', maxlength: 80 },
     sourceHash: { type: String, default: '', maxlength: 64 },
     generatedAt: { type: Date, default: null },
