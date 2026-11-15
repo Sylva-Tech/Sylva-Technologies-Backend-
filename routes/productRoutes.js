@@ -28,7 +28,8 @@ const PUBLIC_PRODUCT_FIELDS = [
   'offerStartDate', 'offerEndDate', 'createdAt', 'updatedAt',
 ];
 
-const PRIVATE_SPECIFICATION_KEY = /supplier|aliexpress|wholesale|purchase|cost|margin|markup|profit|exchange|currency|source|raw|internal|secret|token|url|seller|shippingprice/i;
+const PRIVATE_SPECIFICATION_KEY = /supplier|aliexpress|wholesale|purchase|cost|margin|markup|profit|exchange|currency|source|raw|internal|secret|token|url|seller|store|shop|merchant|shippingprice/i;
+const PRIVATE_SPECIFICATION_VALUE = /https?:\\/\\/|[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|aliexpress|supplier|wholesale|purchase price|cost price|profit margin|exchange rate/i;
 
 const toPublicProduct = (value) => {
   if (!value) return null;
@@ -39,14 +40,14 @@ const toPublicProduct = (value) => {
   }
   result.specifications = Object.fromEntries(
     Object.entries(product.specifications && typeof product.specifications === 'object' && !Array.isArray(product.specifications) ? product.specifications : {})
-      .filter(([key]) => !PRIVATE_SPECIFICATION_KEY.test(key))
+      .filter(([key, value]) => !PRIVATE_SPECIFICATION_KEY.test(key) && !PRIVATE_SPECIFICATION_VALUE.test(String(value ?? '')))
   );
   const category = product.category;
   result.category = category && typeof category === 'object'
     ? { _id: category._id, name: category.name, slug: category.slug }
     : category || null;
   const seller = product.seller;
-  result.seller = seller && typeof seller === 'object'
+  result.seller = seller && typeof seller === 'object' && seller.name
     ? {
         _id: seller._id,
         name: seller.name,
