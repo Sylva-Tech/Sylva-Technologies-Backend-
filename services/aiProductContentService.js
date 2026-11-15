@@ -39,20 +39,20 @@ const extractOutputText = (response) => {
 
 const sanitizeProductHtml = (value) => {
   const source = String(value || '')
-    .replace(/<!--[\\s\\S]*?-->/g, '')
-    .replace(/<(script|style|iframe|object|svg|math)\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>/gi, '');
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(script|style|iframe|object|svg|math)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
   const allowed = new Set(['h3', 'p', 'ul', 'li', 'strong', 'em', 'br']);
-  return source.replace(/<\\/?([a-z0-9]+)\\b[^>]*>/gi, (tag, rawName) => {
+  return source.replace(/<\/?([a-z0-9]+)\b[^>]*>/gi, (tag, rawName) => {
     const name = String(rawName).toLowerCase();
     if (!allowed.has(name)) return '';
     if (name === 'br') return '<br>';
-    return /^<\\s*\\//.test(tag) ? '</' + name + '>' : '<' + name + '>';
-  }).replace(/\\s{2,}/g, ' ').trim();
+    return /^<\s*\//.test(tag) ? '</' + name + '>' : '<' + name + '>';
+  }).replace(/\s{2,}/g, ' ').trim();
 };
 
 const htmlToPlainText = (value) => String(value || '')
-  .replace(/<br\\s*\\/?\\s*>/gi, ' ')
-  .replace(/<\\/(p|h3|li)>/gi, ' ')
+  .replace(/<br\s*\/?\s*>/gi, ' ')
+  .replace(/<\/(p|h3|li)>/gi, ' ')
   .replace(/<[^>]*>/g, ' ')
   .replace(/&nbsp;/gi, ' ')
   .replace(/&amp;/gi, '&')
@@ -60,7 +60,7 @@ const htmlToPlainText = (value) => String(value || '')
   .replace(/&gt;/gi, '>')
   .replace(/&quot;/gi, '"')
   .replace(/&#39;/gi, "'")
-  .replace(/\\s+/g, ' ')
+  .replace(/\s+/g, ' ')
   .trim();
 
 const validateContent = (value) => {
@@ -87,7 +87,7 @@ const validateContent = (value) => {
   const suggestedCategory = value.suggestedCategory.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
   const privateContentPattern = /\b(?:aliexpress|supplier\s+(?:price|cost|id|url|currency|store)|exchange\s+rate|profit\s+margin|markup|wholesale\s+price|purchase\s+price)\b|(?:KSh|KES|USD|GBP|EUR|£|€|\$)\s?\d/i;
   if (!keyFeatures.length || shortDescription.length < 20 || descriptionText.length < 60 || seoTitle.length < 5 || seoMetaDescription.length < 40 || marketingTags.length < 5 || !socialPromoCaption || !suggestedCategory ||
-      [...keyFeatures, shortDescription, description, seoTitle, seoMetaDescription, socialPromoCaption, suggestedCategory, ...marketingTags].some((text) => privateContentPattern.test(text))) {
+      [...keyFeatures, shortDescription, descriptionText, seoTitle, seoMetaDescription, socialPromoCaption, suggestedCategory, ...marketingTags].some((text) => privateContentPattern.test(text))) {
     const error = new Error('The AI returned product content that did not meet minimum quality checks.');
     error.code = 'AI_CONTENT_QUALITY_FAILED';
     throw error;
@@ -102,8 +102,8 @@ const validateContent = (value) => {
     socialPromoCaption,
     suggestedCategory,
     warnings: (value.warnings || []).map((item) => String(item).trim()).filter(Boolean).slice(0, 8),
-    suggestions: (value.suggestions || []).map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
-    missingSections: (value.missingSections || []).map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
+    suggestions: (value.suggestions || []).map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
+    missingSections: (value.missingSections || []).map((item) => String(item).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 8),
   };
 };
 
