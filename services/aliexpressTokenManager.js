@@ -15,7 +15,10 @@ const refreshConnectedBuyerToken = async () => {
   const lockId = crypto.randomUUID();
   let locked = null;
   try {
-    locked = await AliExpressConnection.findOneAndUpdate(
+    // Use the native collection here: Mongoose schema casting of nested $or
+    // Date predicates has caused a CastError before the OAuth request is made.
+    // The raw atomic update also guarantees a single worker owns the lease.
+    const result = await AliExpressConnection.collection.findOneAndUpdate(
       {
         provider: 'aliexpress',
         status: 'connected',
@@ -38,12 +41,12 @@ const refreshConnectedBuyerToken = async () => {
           tokenRefreshLockUntil: new Date(now.getTime() + LOCK_MS),
         },
       },
-      { new: true }
-    ).select('+refreshTokenEncrypted +tokenRefreshLockId');
-
-    if (!locked) return;
+      { returnDocument: 'after', projection: { refreshTokenEncrypted: 1, tokenRefreshLockId: 1 } }
+    );
+    locked = result?.value || result;
+    if (!locked?._id) return;
     if (!locked.refreshTokenEncrypted) {
-      await AliExpressConnection.updateOne(
+      await AliExpressConnection.collection.updateOne(
         { _id: locked._id, tokenRefreshLockId: lockId },
         { $set: { tokenRefreshLastError: 'Refresh credential is unavailable.' }, $unset: { tokenRefreshLockId: 1, tokenRefreshLockUntil: 1 } }
       );
@@ -65,16 +68,16 @@ const refreshConnectedBuyerToken = async () => {
     if (token.refresh_token) update.refreshTokenEncrypted = encryptSecret(token.refresh_token);
     if (token.refresh_expires_in) update.refreshTokenExpiresAt = new Date(Date.now() + Number(token.refresh_expires_in) * 1000);
 
-    await AliExpressConnection.updateOne(
+    await AliExpressConnection.collection.updateOne(
       { _id: locked._id, tokenRefreshLockId: lockId },
       { $set: update, $unset: { tokenRefreshLockId: 1, tokenRefreshLockUntil: 1 } }
     );
   } catch (error) {
     if (locked?._id) {
-      await AliExpressConnection.updateOne(
+      await AliExpressConnection.collection.updateOne(
         { _id: locked._id, tokenRefreshLockId: lockId },
         {
-          $set: { tokenRefreshLastError: String(error.message || 'Automatic token refresh failed.').slice(0, 300) },
+          $set: { tokenRefreshLastError: String(error.message || 'Automatic refresh failed.').slice(0, 300) },
           $unset: { tokenRefreshLockId: 1, tokenRefreshLockUntil: 1 },
         }
       ).catch(() => {});
