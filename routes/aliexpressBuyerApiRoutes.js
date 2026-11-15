@@ -397,13 +397,13 @@ const collectAliExpressImageUrls = (payload) => {
         (value.startsWith('{') && value.endsWith('}'))) {
       try { addUrl(JSON.parse(value)); return; } catch (_) {}
     }
-    if (/[,;\\n]/.test(value) && !/^https?:\\/\\//i.test(value)) {
-      value.split(/[,;\\n]+/).forEach(addUrl);
+    if (/[,;\n]/.test(value) && !/^https?:\/\//i.test(value)) {
+      value.split(/[,;\n]+/).forEach(addUrl);
       return;
     }
     if (value.startsWith('//')) value = 'https:' + value;
     value = value.replace(/^["']|["']$/g, '').trim();
-    if (/^https?:\\/\\//i.test(value) && value.length <= 2000) urls.add(value);
+    if (/^https?:\/\//i.test(value) && value.length <= 2000) urls.add(value);
   };
 
   const visit = (node, parentKey = '', depth = 0) => {
