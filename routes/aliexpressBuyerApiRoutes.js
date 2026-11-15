@@ -76,11 +76,7 @@ router.post('/token/reveal', protect, adminOnly, tokenRevealLimiter, async (req,
 });
 
 const getMethodEnvelope = (payload, method) => payload?.[`${method.split('.').join('_')}_response`] || payload || {};
-const countImages = (result) => {
-  const multimedia = result?.ae_multimedia_info_dto || {};
-  const images = multimedia.image_urls || multimedia.image_url_list || multimedia.image_urls_list;
-  return Array.isArray(images) ? images.length : 0;
-};
+const countImages = (result) => collectAliExpressImageUrls(result || {}).length;
 
 router.get('/status', protect, adminOnly, async (req, res) => {
   try {
@@ -448,6 +444,11 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
     image_urls: result.image_urls,
     image_url_list: result.image_url_list,
     main_image: result.main_image,
+    product_main_pic: result.product_main_pic,
+    itemMainPic: result.itemMainPic,
+    product_main_image_url: result.product_main_image_url,
+    image_url: result.image_url,
+    image_list: result.image_list,
   });
   const skuRows = Array.isArray(result.ae_item_sku_info_dtos) ? result.ae_item_sku_info_dtos : [];
   const candidatePrices = skuRows.map((sku) => Number(sku.sku_price || sku.offer_sale_price || sku.price))
@@ -524,7 +525,7 @@ router.post('/catalog/stage-product', protect, adminOnly, limiter, async (req, r
       message: 'Product details verified and added to Sylva’s private admin review queue. It is not published.',
       product: {
         _id: staged._id, providerProductId: staged.providerProductId, title: staged.title,
-        imageUrl: staged.imageUrl, imageUrls: staged.imageUrls, supplierPrice: staged.supplierPrice,
+        imageUrl: staged.imageUrl, imageUrls: staged.imageUrls, imageCount: staged.imageUrls?.length || 0, supplierPrice: staged.supplierPrice,
         supplierCurrency: staged.supplierCurrency, targetCurrency: staged.targetCurrency,
         productUrl: staged.productUrl, status: staged.status,
       },
@@ -868,6 +869,7 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
         failedProductDetails: failures.length,
       },
       imported: operations.length,
+      productsWithImages: operations.length - failures.filter((item) => item.reason === 'Product detail response did not contain usable product images.').length,
       failed: failures.slice(0, 10),
       nextSearchId: cursor || null,
       reviewQueueOnly: true,
