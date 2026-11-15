@@ -331,12 +331,19 @@ const getFeedItemIds = (payload) => {
     if (typeof value === 'number' || typeof value === 'string') {
       const candidate = String(value).trim();
       if (/^\\d{1,30}$/.test(candidate)) ids.add(candidate);
+      else if ((candidate.startsWith('[') && candidate.endsWith(']')) ||
+               (candidate.startsWith('{') && candidate.endsWith('}'))) {
+        try { const parsed = JSON.parse(candidate); if (parsed !== value) visit(parsed); } catch (_) {}
+      }
       return;
     }
     if (!value || typeof value !== 'object') return;
     const candidate = value.product_id ?? value.item_id ?? value.productId ?? value.itemId ??
-      value.productIdStr ?? value.itemIdStr ?? value.id;
+      value.productIdStr ?? value.itemIdStr ?? value.productIdLong ?? value.itemIdLong ??
+      value.product_id_str ?? value.item_id_str ?? value.id;
     if (candidate !== undefined && candidate !== null) addId(candidate);
+    else if (Array.isArray(value.string)) value.string.forEach(addId);
+    else if (Array.isArray(value.number)) value.number.forEach(addId);
   };
 
   // IOP has returned feed IDs as products.number[], as well as wrapped
