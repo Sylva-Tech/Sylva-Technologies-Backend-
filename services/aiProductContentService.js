@@ -163,7 +163,7 @@ const generateAliExpressProductContent = async (product) => {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemInstruction }] },
         contents: [{ role: 'user', parts: [{ text: 'Create the product-content draft from this JSON data:\n' + JSON.stringify(safeInput) }] }],
-        generationConfig: { maxOutputTokens: 2400,
+        generationConfig: { maxOutputTokens: 2400, responseMimeType: 'application/json', responseJsonSchema: CONTENT_SCHEMA },
       }),
       signal: AbortSignal.timeout(30000),
     });
