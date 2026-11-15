@@ -4,7 +4,6 @@ const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Product = require('../models/Product');
-const { syncGoogleSheetProducts } = require('../services/googleSheetProductSync');
 
 const {
   protect,
@@ -1193,6 +1192,22 @@ router.post(
   adminOnly,
   async (req, res) => {
     try {
+      // Load this optional integration only when requested. The service
+      // depends on googleapis, which is not currently installed in this
+      // deployment's dependency manifest; don't let it prevent API startup.
+      let syncGoogleSheetProducts;
+      try {
+        ({ syncGoogleSheetProducts } = require('../services/googleSheetProductSync'));
+      } catch (dependencyError) {
+        if (dependencyError.code === 'MODULE_NOT_FOUND' && String(dependencyError.message).includes('googleapis')) {
+          return res.status(503).json({
+            success: false,
+            code: 'GOOGLE_SHEETS_DEPENDENCY_MISSING',
+            message: 'Google Sheets sync is unavailable because the googleapis dependency is not installed on this deployment.',
+          });
+        }
+        throw dependencyError;
+      }
       const result =
         await syncGoogleSheetProducts();
 
