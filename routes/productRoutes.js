@@ -24,7 +24,7 @@ const PUBLIC_PRODUCT_FIELDS = [
   'condition', 'warranty', 'warrantyDuration', 'warrantyTerms',
   'deliveryDuration', 'deliveryFee', 'deliveryTerms', 'deliveryLocations',
   'returnPeriod', 'returnPolicy', 'returnConditions', 'whatsIncluded',
-  'keyFeatures', 'featured', 'isNew', 'flashSale', 'offer', 'offerMessage',
+  'keyFeatures', 'seoTitle', 'seoMetaDescription', 'featured', 'isNew', 'flashSale', 'offer', 'offerMessage',
   'offerStartDate', 'offerEndDate', 'createdAt', 'updatedAt',
 ];
 
