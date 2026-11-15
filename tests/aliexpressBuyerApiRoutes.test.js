@@ -168,7 +168,7 @@ test('AliExpress product normalization retains supplier store name and brand whe
         ae_multimedia_info_dto: { image_urls: 'https://example.com/image.png' },
         ae_store_info: { store_id: 'store-123', store_name: 'Osee Official Store', store_url: 'https://www.aliexpress.com/store/123' },
       },
-    }, '1005001234567890', 'USD');
+    }}, '1005001234567890', 'USD');
   assert.equal(normalized.supplierStoreName, 'Osee Official Store');
   assert.equal(normalized.supplierStoreUrl, 'https://www.aliexpress.com/store/123');
   assert.equal(normalized.supplierBrand, 'Osee');
