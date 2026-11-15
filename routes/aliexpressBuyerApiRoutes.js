@@ -80,12 +80,12 @@ const getMethodEnvelope = (payload, method) => payload?.[`${method.split('.').jo
 const countImages = (result) => collectAliExpressImageUrls(result || {}).length;
 
 const CATEGORY_HINTS = [
-  { terms: ['laptop', 'notebook', 'desktop', 'computer', 'pc', 'monitor', 'keyboard', 'mouse', 'printer', 'ssd', 'hard drive', 'ram', 'graphics card'], names: ['computer', 'laptop', 'desktop', 'pc', 'accessories'] },
+  { terms: ['laptop', 'notebook', 'desktop', 'computer', 'pc', 'monitor', 'keyboard', 'mouse', 'printer', 'ssd', 'hard drive', 'ram', 'graphics card'], names: ['computer', 'laptop', 'desktop', 'pc'] },
   { terms: ['phone', 'smartphone', 'iphone', 'android', 'tablet', 'ipad', 'mobile', 'screen protector', 'phone case'], names: ['phone', 'mobile', 'tablet', 'smartphone'] },
   { terms: ['headphone', 'earphone', 'earbud', 'speaker', 'microphone', 'soundbar', 'audio', 'bluetooth headset'], names: ['audio', 'headphone', 'earphone', 'speaker', 'sound'] },
   { terms: ['camera', 'webcam', 'cctv', 'surveillance', 'dashcam', 'lens'], names: ['camera', 'security', 'cctv'] },
   { terms: ['router', 'wifi', 'wi-fi', 'network', 'ethernet', 'switch', 'access point'], names: ['network', 'router', 'connectivity'] },
-  { terms: ['charger', 'power bank', 'powerbank', 'cable', 'adapter', 'usb hub', 'charging'], names: ['power', 'charger', 'cable', 'accessories'] },
+  { terms: ['charger', 'power bank', 'powerbank', 'cable', 'adapter', 'usb hub', 'charging'], names: ['power', 'charger', 'cable'] },
   { terms: ['smart watch', 'smartwatch', 'fitness tracker', 'wearable', 'watch band'], names: ['wearable', 'watch', 'fitness'] },
   { terms: ['gamepad', 'controller', 'playstation', 'xbox', 'nintendo', 'gaming', 'console'], names: ['gaming', 'game', 'console'] },
   { terms: ['television', 'smart tv', 'projector', 'tv box', 'streaming stick'], names: ['tv', 'television', 'projector', 'entertainment'] },
@@ -752,6 +752,18 @@ router.get('/catalog/review-queue', protect, adminOnly, async (req, res) => {
       AliExpressCatalogProduct.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
     ]);
     const categories = await Category.find({ isActive: true }).select('_id name slug').sort({ name: 1 }).lean();
+    // Backfill category suggestions for older pending imports without publishing them.
+    for (const product of products) {
+      if (!product.sylvaCategoryId || product.categoryMatchStatus !== 'matched') {
+        const match = matchSylvaCategory(product.title, categories);
+        if (match) {
+          product.sylvaCategoryId = String(match.category._id);
+          product.categoryName = match.category.name;
+          product.categoryMatchStatus = 'matched';
+          await AliExpressCatalogProduct.updateOne({ _id: product._id, status: 'pending' }, { $set: { sylvaCategoryId: product.sylvaCategoryId, categoryName: product.categoryName, categoryMatchStatus: 'matched' } });
+        }
+      }
+    }
     return res.json({ success: true, products, categories, counts: Object.fromEntries(counts.map((row) => [row._id, row.count])) });
   } catch (error) {
     console.error('[AliExpress review queue] load failed:', error.message);
