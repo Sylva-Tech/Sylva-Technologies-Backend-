@@ -285,20 +285,6 @@ router.post('/catalog/test-product', protect, adminOnly, limiter, async (req, re
       nextStep: 'The product-detail method is verified. Feed-name discovery and feed-item pagination must be tested separately before catalogue import is enabled.',
     });
   } catch (error) {
-    try {
-      await sendSalesNotificationEmail({
-        subject: 'AliExpress catalogue sync failed',
-        text: [
-          'An administrator-triggered AliExpress catalogue sync failed.',
-          'Stage: ' + String(stage || 'unknown').slice(0, 60),
-          'Error code: ' + String(error.code || 'ALIEXPRESS_CATALOG_SYNC_FAILED').slice(0, 100),
-          'Time: ' + new Date().toISOString(),
-          'The private review queue was not published by this failed sync.',
-        ].join('\\n'),
-      });
-    } catch (notificationError) {
-      console.error('[AliExpress sync alert] could not send admin alert:', notificationError.message);
-    }
     if (connection) {
       connection.catalogLastTestError = String(error.message || 'AliExpress product test failed.').slice(0, 500);
       await connection.save().catch(() => {});
@@ -1261,6 +1247,20 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
           },
         });
       } catch (error) {
+    try {
+      await sendSalesNotificationEmail({
+        subject: 'AliExpress catalogue sync failed',
+        text: [
+          'An administrator-triggered AliExpress catalogue sync failed.',
+          'Stage: ' + String(stage || 'unknown').slice(0, 60),
+          'Error code: ' + String(error.code || 'ALIEXPRESS_CATALOG_SYNC_FAILED').slice(0, 100),
+          'Time: ' + new Date().toISOString(),
+          'The private review queue was not published by this failed sync.',
+        ].join('\\n'),
+      });
+    } catch (notificationError) {
+      console.error('[AliExpress sync alert] could not send admin alert:', notificationError.message);
+    }
         failures.push({ productId, reason: String(error.message || 'Product detail lookup failed.').slice(0, 180) });
       }
     }
