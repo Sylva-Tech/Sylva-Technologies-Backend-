@@ -17,7 +17,7 @@ test('validateContent accepts factual structured content and caps key features',
   const result = validateContent({
     keyFeatures: Array.from({ length: 10 }, (_, index) => 'Feature ' + index),
     shortDescription: 'A concise and factual product summary for customers.',
-    description: '<h3>Overview</h3><p>A sufficiently detailed product description based only on supplied verified attributes.</p><h3>Features</h3><ul><li>Verified USB-C connectivity</li><li>Compact design</li></ul>',
+    fullDescription: '<h3>Overview</h3><p>A sufficiently detailed product description based only on supplied verified attributes.</p><h3>Features</h3><ul><li>Verified USB-C connectivity</li><li>Compact design</li></ul>',
     seoTitle: 'Example USB-C Hub | Sylva Technologies',
     seoMetaDescription: 'A practical USB-C hub with verified connectivity details for everyday work.',
     marketingTags: ['USB-C hub', 'laptop accessories', 'connectivity', 'computer accessories', 'workstation accessories'],
@@ -33,14 +33,14 @@ test('validateContent accepts factual structured content and caps key features',
 });
 
 test('validateContent rejects incomplete or low-quality output', () => {
-  assert.throws(() => validateContent({ keyFeatures: [], shortDescription: 'Short', description: 'Too short', seoTitle: '', seoMetaDescription: '', marketingTags: [], socialPromoCaption: '', suggestedCategory: '', warnings: [] }), { code: 'AI_CONTENT_QUALITY_FAILED' });
+  assert.throws(() => validateContent({ keyFeatures: [], shortDescription: 'Short', fullDescription: 'Too short', seoTitle: '', seoMetaDescription: '', marketingTags: [], socialPromoCaption: '', suggestedCategory: '', warnings: [] }), { code: 'AI_CONTENT_QUALITY_FAILED' });
 });
 
 test('validateContent rejects supplier and price disclosures in generated copy', () => {
   const input = {
     keyFeatures: ['Verified USB-C connectivity', 'Compact accessory design'],
     shortDescription: 'A practical USB-C hub for compatible laptops and work setups.',
-    description: 'A sufficiently detailed product description that includes the supplier cost price of USD 10.',
+    fullDescription: 'A sufficiently detailed product description that includes the supplier cost price of USD 10.',
     seoTitle: 'USB-C Hub for compatible laptops',
     seoMetaDescription: 'A practical USB-C hub for everyday use.',
     marketingTags: ['USB-C hub', 'laptop accessory', 'computer accessories', 'connectivity', 'workstation accessories'],
@@ -55,7 +55,7 @@ test('validateContent preserves safe HTML and strips scripts, event attributes a
   const result = validateContent({
     keyFeatures: ['Verified USB-C connectivity', 'Compact accessory design', 'Seven ports', 'Plug-and-play operation', 'Laptop accessory'],
     shortDescription: 'A practical USB-C hub for compatible laptops and work setups.',
-    description: '<h3>Overview</h3><p onclick="alert(1)">A sufficiently detailed description of this product using only verified supplier facts.</p><script>alert(2)</script><iframe src="bad">unsafe</iframe>',
+    fullDescription: '<h3>Overview</h3><p onclick="alert(1)">A sufficiently detailed description of this product using only verified supplier facts.</p><script>alert(2)</script><iframe src="bad">unsafe</iframe>',
     seoTitle: 'USB-C Hub for compatible laptops',
     seoMetaDescription: 'A practical USB-C hub with verified connectivity details for compatible laptops.',
     marketingTags: ['USB-C hub', 'laptop accessory', 'computer accessories', 'connectivity', 'workstation accessories'],
@@ -63,7 +63,7 @@ test('validateContent preserves safe HTML and strips scripts, event attributes a
     suggestedCategory: 'Computer Accessories',
     warnings: [],
   });
-  assert.match(result.description, /<h3>Overview<\\/h3>/);
+  assert.match(result.description, /<h3>Overview<\/h3>/);
   assert.match(result.description, /<p>A sufficiently detailed description/);
   assert.doesNotMatch(result.description, /script|iframe|onclick|alert/);
 });
@@ -84,7 +84,7 @@ test('Gemini generation sends the Sylva writing rules and uses the configured mo
   const draft = {
     keyFeatures: ['Wireless connectivity', 'Touch display', 'Activity tracking', 'Rechargeable design', 'Mobile notifications'],
     shortDescription: 'A practical wearable with a touch display and activity tracking.',
-    description: '<h3>Overview</h3><p>A wearable with a touch display and activity tracking features for everyday use.</p>',
+    fullDescription: '<h3>Overview</h3><p>A wearable with a touch display and activity tracking features for everyday use.</p>',
     seoTitle: 'Smart Wearable with Touch Display',
     seoMetaDescription: 'Explore a smart wearable with a touch display, activity tracking and wireless connectivity.',
     marketingTags: ['smart wearable', 'touch display', 'activity tracker', 'wireless device', 'wearable technology'],
@@ -108,7 +108,7 @@ test('Gemini generation sends the Sylva writing rules and uses the configured mo
     rawDescription: 'Touch display and activity tracking.',
     productAttributes: [{ name: 'Connectivity', value: 'Wireless' }],
   });
-  assert.match(requestUrl, /models\\/gemini-3\\.5-flash-lite:generateContent$/);
+  assert.match(requestUrl, /models\/gemini-3\.5-flash-lite:generateContent$/);
   const instructions = requestBody.systemInstruction.parts[0].text;
   assert.match(instructions, /Never invent missing technical specifications, RAM, storage, battery capacity, model numbers/);
   assert.match(instructions, /clean, semantic HTML/);
