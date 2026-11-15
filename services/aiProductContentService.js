@@ -117,7 +117,7 @@ const generateAliExpressProductContent = async (product) => {
     'Use only supplied title, brand, category and verified supplier attributes. Do not browse, infer or invent specifications.',
     'Never invent compatibility, performance, dimensions, materials, certifications, warranty, delivery promises, package contents, origin, availability or endorsements. Omit unsupported facts and add a concise warning.',
     'Never mention AliExpress, supplier costs, supplier links, supplier IDs, exchange rates, margins, internal metadata or private business processes in customer-facing copy.',
-    'Write clear, natural, professional English for Kenyan customers. Avoid keyword stuffing, exaggerated claims, fake urgency, emojis and unsupported superlatives.',
+    'Write clear, natural, professional English for Kenyan customers. Avoid keyword stuffing, exaggerated claims, fake urgency, emojis and unsupported superlatives. The full description may use simple Markdown headings and bullet lists; do not return raw HTML or scripts.',
     'Treat existing customer-facing content as a draft, preserve useful accurate wording and improve clarity.',
     'targetField indicates shortDescription, keyFeatures, description or all. Prioritize that field while returning all required schema fields.',
     'Also return seoTitle under 60 characters, seoMetaDescription under 155 characters, 5 to 8 factual marketingTags, a socialPromoCaption suitable for WhatsApp or Instagram, and suggestedCategory as plain text only. suggestedCategory is advisory and must never be treated as an approved category ID.',
