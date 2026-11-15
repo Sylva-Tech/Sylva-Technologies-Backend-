@@ -237,6 +237,7 @@ router.post('/catalog/test-product', protect, adminOnly, limiter, async (req, re
         reviewCount: String(baseInfo.evaluation_count || ''),
         skuCount,
         imageCount: countImages(result),
+        sampleImageUrls: collectAliExpressImageUrls(result).slice(0, 3),
         shipToCountry,
       },
       catalogueSyncEnabled: false,
@@ -384,7 +385,7 @@ const collectAliExpressImageUrls = (payload) => {
         candidate.forEach(addUrl);
         return;
       }
-      for (const key of ['url', 'image_url', 'imageUrl', 'src', 'value', 'string']) {
+      for (const key of ['url', 'image_url', 'imageUrl', 'src', 'value', 'string', 'image_urls']) {
         if (candidate[key] != null) addUrl(candidate[key]);
       }
       return;
@@ -392,18 +393,25 @@ const collectAliExpressImageUrls = (payload) => {
     if (typeof candidate !== 'string') return;
     let value = candidate.trim().replace(/&amp;/gi, '&').replace(/\\\//g, '/');
     if (!value) return;
-    // Some IOP responses serialize image lists as JSON or delimited strings.
+
+    // AliExpress documents ae_multimedia_info_dto.image_urls as one
+    // semicolon-delimited string. Split that list BEFORE URL validation;
+    // otherwise the entire list is incorrectly stored as one broken URL.
+    if (value.includes(';') || value.includes('|') || /[\r\n]/.test(value)) {
+      value.split(/[;|\r\n]+/).forEach(addUrl);
+      return;
+    }
     if ((value.startsWith('[') && value.endsWith(']')) ||
         (value.startsWith('{') && value.endsWith('}'))) {
       try { addUrl(JSON.parse(value)); return; } catch (_) {}
     }
-    if (/[,;\n]/.test(value) && !/^https?:\/\//i.test(value)) {
-      value.split(/[,;\n]+/).forEach(addUrl);
-      return;
-    }
-    if (value.startsWith('//')) value = 'https:' + value;
     value = value.replace(/^["']|["']$/g, '').trim();
-    if (/^https?:\/\//i.test(value) && value.length <= 2000) urls.add(value);
+    if (value.startsWith('//')) value = 'https:' + value;
+    // AliExpress product payload examples still contain http image hosts.
+    // Sylva storefront is HTTPS, so normalize image URLs to HTTPS to avoid
+    // mixed-content blocking in browsers.
+    value = value.replace(/^http:\/\//i, 'https://');
+    if (/^https:\/\//i.test(value) && value.length <= 2000) urls.add(value);
   };
 
   const visit = (node, parentKey = '', depth = 0) => {
@@ -431,13 +439,43 @@ const collectAliExpressImageUrls = (payload) => {
   return [...urls].slice(0, 20);
 };
 
-const normalizeAliExpressProduct = (payload, productId, currency) => {
+const getAliExpressProductResult = (payload) => {
   const envelope = getMethodEnvelope(payload, 'aliexpress.ds.product.get');
-  const result = envelope.result || envelope.resp_result?.result;
+  const direct = envelope.result || envelope.resp_result?.result;
+  if (direct?.ae_item_base_info_dto) return direct;
+  const visited = new Set();
+  const find = (node, depth = 0) => {
+    if (!node || typeof node !== 'object' || depth > 12 || visited.has(node)) return null;
+    visited.add(node);
+    if (node.ae_item_base_info_dto) return node;
+    for (const child of Object.values(node)) {
+      const found = find(child, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  };
+  return find(envelope) || find(payload);
+};
+
+const getAliExpressSkuRows = (value) => {
+  if (Array.isArray(value)) return value.filter((row) => row && typeof row === 'object');
+  if (value && typeof value === 'object') {
+    const nested = value.ae_item_sku_info_d_t_o || value.ae_item_sku_info_dto || value.sku_info;
+    if (Array.isArray(nested)) return nested.filter(Boolean);
+    return [nested && typeof nested === 'object' ? nested : value];
+  }
+  return [];
+};
+
+const normalizeAliExpressProduct = (payload, productId, currency) => {
+  const result = getAliExpressProductResult(payload);
   const base = result?.ae_item_base_info_dto;
   if (!base || !(base.product_id || base.subject)) return null;
+
+  const multimedia = result.ae_multimedia_info_dto || {};
+  const skuRows = getAliExpressSkuRows(result.ae_item_sku_info_dtos);
   const imageUrls = collectAliExpressImageUrls({
-    ae_multimedia_info_dto: result.ae_multimedia_info_dto,
+    ae_multimedia_info_dto: multimedia,
     ae_item_base_info_dto: base,
     ae_item_sku_info_dtos: result.ae_item_sku_info_dtos,
     product_images: result.product_images,
@@ -450,12 +488,20 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
     image_url: result.image_url,
     image_list: result.image_list,
   });
-  const skuRows = Array.isArray(result.ae_item_sku_info_dtos) ? result.ae_item_sku_info_dtos : [];
-  const candidatePrices = skuRows.map((sku) => Number(sku.sku_price || sku.offer_sale_price || sku.price))
-    .filter((price) => Number.isFinite(price) && price > 0);
-  const basePrice = Number(base.discount_price || base.sale_price || base.min_price || base.original_price);
-  const supplierPrice = candidatePrices.length ? Math.min(...candidatePrices) : (Number.isFinite(basePrice) && basePrice > 0 ? basePrice : null);
+
+  const numericPrice = (value) => {
+    const parsed = Number(String(value ?? '').replace(/[^0-9.]/g, ''));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+  const salePrices = skuRows.map((sku) => numericPrice(sku.offer_sale_price) || numericPrice(sku.discount_price) || numericPrice(sku.sku_price) || numericPrice(sku.price)).filter(Boolean);
+  const regularPrices = skuRows.map((sku) => numericPrice(sku.sku_price) || numericPrice(sku.price)).filter(Boolean);
+  const baseSale = numericPrice(base.discount_price) || numericPrice(base.sale_price) || numericPrice(base.min_price);
+  const supplierPrice = salePrices.length ? Math.min(...salePrices) : baseSale;
+  const originalPrice = regularPrices.length ? Math.min(...regularPrices) : (numericPrice(base.original_price) || supplierPrice);
+  const currencyCode = skuRows.find((sku) => sku.currency_code)?.currency_code || base.currency_code || currency || 'USD';
   const id = String(base.product_id || productId);
+  const targetSalePrice = supplierPrice == null ? null : Number((supplierPrice * 1.08).toFixed(2));
+
   return {
     providerProductId: id,
     title: String(base.subject || '').trim().slice(0, 500),
@@ -463,7 +509,10 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
     imageUrl: imageUrls[0] || '',
     imageUrls,
     supplierPrice,
-    supplierCurrency: String(base.currency_code || currency || 'USD').toUpperCase().slice(0, 3),
+    supplierOriginalPrice: originalPrice,
+    minimumProfitPercent: 8,
+    targetSalePrice,
+    supplierCurrency: String(currencyCode).toUpperCase().slice(0, 3),
     targetCurrency: String(currency || 'USD').toUpperCase().slice(0, 3),
     categoryId: String(base.category_id || ''),
     sellerId: String(result.ae_store_info?.store_id || ''),
@@ -472,7 +521,9 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
       skuCount: skuRows.length,
       categoryId: String(base.category_id || ''),
       imageCount: imageUrls.length,
-      imageFieldPresent: Boolean(result.ae_multimedia_info_dto || base.image_url || base.image_urls),
+      imageFieldPresent: Boolean(multimedia.image_urls || base.image_url || base.image_urls),
+      imageListDelimited: typeof multimedia.image_urls === 'string' && multimedia.image_urls.includes(';'),
+      priceSource: salePrices.length ? 'sku_offer_sale_price_or_sku_price' : 'base_product_price',
     },
   };
 };
@@ -635,8 +686,26 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       if (existing) return res.status(409).json({ success: false, message: 'This AliExpress item has already been approved and published.', product: existing });
     }
 
-    const price = Number(req.body?.price ?? record.targetSalePrice ?? record.supplierPrice);
-    if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ success: false, message: 'Set a valid Sylva selling price greater than zero before approval.' });
+    const price = Number(req.body?.price);
+    const supplierPrice = Number(record.supplierPrice);
+    const exchangeRate = Number(req.body?.exchangeRate);
+    const profitPercent = Number(req.body?.profitPercent ?? 8);
+    if (!Number.isFinite(supplierPrice) || supplierPrice <= 0) {
+      return res.status(409).json({ success: false, code: 'ALIEXPRESS_SOURCE_PRICE_MISSING', message: 'AliExpress did not return a valid supplier item price. Re-sync this product before approval.' });
+    }
+    if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+      return res.status(400).json({ success: false, code: 'ALIEXPRESS_EXCHANGE_RATE_REQUIRED', message: 'Enter the current KES exchange rate for the supplier currency before approval.' });
+    }
+    if (!Number.isFinite(profitPercent) || profitPercent < 8 || profitPercent > 500) {
+      return res.status(400).json({ success: false, code: 'ALIEXPRESS_MINIMUM_PROFIT_REQUIRED', message: 'Profit must be at least 8% and no more than 500%.' });
+    }
+    const minimumSellingPrice = Math.ceil(supplierPrice * exchangeRate * (1 + profitPercent / 100));
+    if (!Number.isFinite(price) || price < minimumSellingPrice) {
+      return res.status(400).json({
+        success: false, code: 'ALIEXPRESS_SELLING_PRICE_BELOW_MINIMUM',
+        minimumSellingPrice, message: 'Sylva selling price must include at least ' + profitPercent + '% profit on the AliExpress item price, excluding shipping. Minimum KES price: ' + minimumSellingPrice.toLocaleString('en-KE') + '.',
+      });
+    }
     const title = String(req.body?.title || record.title || '').trim().slice(0, 500);
     if (title.length < 3) return res.status(400).json({ success: false, message: 'A product title is required.' });
     const description = String(req.body?.description || title).trim().slice(0, 12000);
@@ -666,7 +735,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       images, stock: Math.max(0, Number.parseInt(req.body?.stock, 10) || 0), condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
       seller: null, featured: false, flashSale: false, offer: false,
-      specifications: { supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierPrice: record.supplierPrice, supplierCurrency: record.supplierCurrency },
+      specifications: { supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierPrice: record.supplierPrice, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: profitPercent, shippingIncludedInMarkup: false, shippingHandledBy: 'AliExpress' },
     });
 
     record.status = 'approved';
