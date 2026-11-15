@@ -648,6 +648,7 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
   const supplierStoreName = firstText(storeInfo.store_name, storeInfo.store_title, storeInfo.storeName, storeInfo.shop_name, storeInfo.shop_title, storeInfo.seller_name, storeInfo.name, result.store_name, base.store_name).slice(0, 200);
   const supplierStoreUrl = firstText(storeInfo.store_url, storeInfo.store_home_url, storeInfo.storeUrl, storeInfo.shop_url, storeInfo.url, result.store_url).slice(0, 2000);
   const supplierBrand = firstText(base.product_brand, base.brand, base.brand_name, base.product_brand_name, result.product_brand).slice(0, 120);
+  const rawDescription = firstText(base.product_description, base.description, base.detail, base.product_detail, result.product_description, result.description, result.detail, result.detail_description, result.ae_item_detail?.description, result.ae_item_detail?.detail).slice(0, 5000);
   const targetSalePrice = supplierPrice == null ? null : Number((supplierPrice * 1.08).toFixed(2));
   const productAttributes = extractAliExpressProductAttributes(result);
 
@@ -671,6 +672,7 @@ const normalizeAliExpressProduct = (payload, productId, currency) => {
     productAttributes,
     sourcePayload: {
       productId: id,
+      rawDescription,
       skuCount: skuRows.length,
       categoryId: String(base.category_id || ''),
       imageCount: imageUrls.length,
@@ -846,7 +848,7 @@ router.post('/catalog/review/:id/generate-content', protect, adminOnly, async (r
     const generated = await generateAliExpressProductContent({
       title: record.title, supplierBrand: record.supplierBrand,
       categoryName: record.categoryName, productAttributes: record.productAttributes,
-      rawDescription: record.sourcePayload?.description || record.sourcePayload?.detail || '', targetField: 'all',
+      rawDescription: record.sourcePayload?.rawDescription || '', targetField: 'all',
     });
     record.aiContentDraft = {
       ...generated, attempts: Number(record.aiContentDraft?.attempts || 0),
