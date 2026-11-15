@@ -1,4 +1,4 @@
-# AliExpress Dropshipping Order API integration notes
+# AliExpress Dropshipping Order and Catalogue Search API integration notes
 
 This document records the official DropShippers API contracts supplied for Sylva's existing AliExpress app (App ID 40465). Credentials and access tokens must remain in Render/server-side encrypted storage.
 
@@ -19,35 +19,22 @@ This document records the official DropShippers API contracts supplied for Sylva
 - Response may contain tracking number (`mail_no`), carrier (`carrier_name`), estimated arrival timestamp (`eta_time_stamps`), tracking events (`detail_node_list.detail_node[]` with `time_stamp`, `tracking_name`, and `tracking_detail_desc`), and package items.
 - `TRACKING DATA NOT FOUND` / code `1001` is a provider response, not proof that the order is invalid; retry later according to a bounded polling policy.
 
-## Supplier order creation: `aliexpress.ds.order.create` — intentionally disabled
+## Read-only keyword search: `aliexpress.ds.text.search`
 
-The official contract accepts `param_place_order_request4_open_api_d_t_o` with `logistics_address` and `product_items`. Optional `ds_extend_request` may contain payment settings such as `pay_currency` and `try_to_pay`; `try_to_pay=true` is only allowed after the AliExpress account is authorized as a Dropshipper. The request supports `out_order_id` as a recommended idempotency key (24-hour validity).
+- Purpose: search the Dropshipper catalogue by keyword.
+- Required parameters: `keyWord`, `local` (for example `en_US`), `countryCode` (two-letter ship-to country), and `currency` (for example `USD`).
+- Optional parameters: `categoryId`, `sortBy` (`min_price|orders|comments` plus `asc|desc`), `pageSize`, `pageIndex`, `searchExtend`, and `selectionName`.
+- Supported documented `searchExtend.searchKey` values include `free_ship_to`, `item_tag`, `seller_level`, `ship_from`, `seller_online`, and `hot_area`.
+- Endpoint: `POST /api/aliexpress/search/text` (admin-only). Send the documented parameter names in the JSON request body. Defaults are `local=en_US`, `countryCode=KE`, `currency=USD`, `sortBy=orders,desc`, `pageSize=20`, and `pageIndex=1`.
+- The response normalizes supplier product IDs, titles, image/product URLs, prices, currency, discount, orders and ratings. It is search-only; results are not imported or published.
 
-**Safety gate:** Sylva must not submit supplier purchases or automatic payments yet. The API method entitlement, buyer/Dropshipper authorization, live freight quote and destination availability, final supplier price, address validation, idempotent retry/reconciliation, cancellation handling, payment lifecycle, and tracking lifecycle have not all been verified against the existing app/account. The backend allowlist therefore continues to reject `aliexpress.ds.order.create`. Do not enable it merely because the documentation exists.
+## Read-only image search: `aliexpress.ds.image.searchV2`
 
-Before enabling supplier ordering, implement and test all of the following:
-1. Persist an immutable supplier-order attempt linked to the Sylva order and unique `out_order_id`; reject duplicate attempts and ambiguous retries.
-2. Recalculate supplier price and freight immediately before purchase; validate currency and stock.
-3. Validate the complete recipient address, including country code, province, city, phone, and any country-specific tax/identity fields.
-4. Require an explicit, auditable admin/fulfilment authorization before any paid supplier placement. Keep automatic payment disabled until separately approved.
-5. Reconcile `order_list.number[]` to the local attempt and query order status after the provider synchronization delay.
-6. Handle partial shipment, cancellation, risk control, payment processing, completed and failed states without releasing Sylva escrow or marking customer delivery complete prematurely.
-7. Poll tracking with bounded backoff and store provider events idempotently. Tracking data is not customer delivery confirmation.
-8. Add mocked tests for provider success/failure, insufficient permissions, duplicate requests, timeouts, and partial responses; then run live read-only tests before any purchase test.
-
-## Request protocol and secrets
-
-The current backend adapter sends IOP Protocol.TOP requests to `https://api-sg.aliexpress.com/sync`, using the encrypted connected-account access token as the `session` common parameter. Never place App Secret, access tokens, customer addresses, or full provider payloads in logs, source control, frontend code, or API responses.
-
-The adapter now permits only these read-only methods:
-- `aliexpress.ds.product.get`
-- `aliexpress.ds.feedname.get`
-- `aliexpress.ds.feed.itemids.get`
-- `aliexpress.trade.ds.order.get`
-- `aliexpress.ds.order.tracking.get`
-
-The supplier write method `aliexpress.ds.order.create` remains blocked.
-
+- Purpose: find same or similar catalogue products from an image.
+- The method accepts one JSON-string business parameter named `param0`; its object can contain `search_type` (`same|similar`), `image_base64`, `currency`, `lang`, `sort_type` (`price|orders|best`), `sort_order` (`asc|desc`), and `ship_to`.
+- Endpoint: `POST /api/aliexpress/search/image` (admin-only). Supply `image_base64` as raw base64 or a PNG/JPEG/WebP data URL, maximum 5 MB. Defaults are `search_type=similar`, `currency=USD`, `lang=en`, `sort_type=best`, `sort_order=desc`, and `ship_to=KE`.
+- Response products and pagination are normalized, including similarity score and next-row cursor when provided. The next cursor is returned as `pagination.nextStartRowKey`; pass it only if/when AliExpress documents the corresponding continuation parameter for this method.
+- Image bytes are sent server-to-server to AliExpress and are not persisted by these endpoints.
 
 ## Read-only member benefit lookup: `aliexpress.ds.member.benefit.get`
 
@@ -57,6 +44,25 @@ The supplier write method `aliexpress.ds.order.create` remains blocked.
 - Boolean-like values may be returned as strings (for example, `"true"`).
 - The supplied example includes an `auto-pay` benefit. This only reports whether the account can apply for / already has that benefit; it does not initiate payment, charge a payment method, or authorize Sylva to pay for supplier orders.
 - Endpoint: `GET /api/aliexpress/payment/benefits` (admin-only; read-only).
-- Method entitlement must be verified against the existing AliExpress App ID 40465 and connected buyerApp account with a live call. OAuth success alone is not proof of permission.
 
-**Payment safety gate:** the member-benefit method is informational only. It does not enable automatic supplier payment. Supplier order creation and `try_to_pay` remain blocked until AliExpress confirms the account's Dropshipper authorization, payment permissions, payment method and complete order/payment lifecycle.
+## Supplier order creation: `aliexpress.ds.order.create` — intentionally disabled
+
+The official contract accepts `param_place_order_request4_open_api_d_t_o` with `logistics_address` and `product_items`. Optional `ds_extend_request` may contain payment settings such as `pay_currency` and `try_to_pay`; `try_to_pay=true` is only allowed after the AliExpress account is authorized as a Dropshipper. The request supports `out_order_id` as a recommended idempotency key (24-hour validity).
+
+**Safety gate:** Sylva must not submit supplier purchases or automatic payments yet. The API method entitlement, buyer/Dropshipper authorization, live freight quote and destination availability, final supplier price, address validation, idempotent retry/reconciliation, cancellation handling, payment lifecycle, and tracking lifecycle have not all been verified against the existing app/account. The backend allowlist therefore continues to reject `aliexpress.ds.order.create`.
+
+## Request protocol and secrets
+
+The current backend adapter sends IOP Protocol.TOP requests to `https://api-sg.aliexpress.com/sync`, using the encrypted connected-account access token as the `session` common parameter. Never place App Secret, access tokens, customer addresses, or full provider payloads in logs, source control, frontend code, or API responses.
+
+The adapter permits only these read-only methods:
+- `aliexpress.ds.product.get`
+- `aliexpress.ds.feedname.get`
+- `aliexpress.ds.feed.itemids.get`
+- `aliexpress.trade.ds.order.get`
+- `aliexpress.ds.order.tracking.get`
+- `aliexpress.ds.member.benefit.get`
+- `aliexpress.ds.text.search`
+- `aliexpress.ds.image.searchV2`
+
+**Payment and publishing safety:** catalogue search is not supplier order placement. Search results remain admin-side search results and do not create Sylva products, publish storefront listings, charge a payment method, or enable supplier ordering. Live App ID 40465 method entitlement must be confirmed by a successful call against the connected buyerApp account.
