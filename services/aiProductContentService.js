@@ -15,15 +15,15 @@ const CONTENT_SCHEMA = {
 
 const hashSource = (product) => crypto.createHash('sha256')
   .update(JSON.stringify({
-    title: String(product.title || '').slice(0, 500),
-    brand: String(product.brand || '').slice(0, 120),
+    title: String(product.title || product.name || '').slice(0, 500),
+    brand: String(product.brand || product.supplierBrand || '').slice(0, 120),
     attributes: (Array.isArray(product.productAttributes) ? product.productAttributes : [])
       .slice(0, 40).map((item) => [String(item?.name || '').slice(0, 80), String(item?.value || '').slice(0, 240)]),
   }))
   .digest('hex');
 
 const extractOutputText = (response) => {
-  if (typeof response.output_text === 'string') return response.output_text;
+  if (typeof response.output_text === 'string' && response.output_text.trim()) return response.output_text;
   for (const item of response.output || []) {
     for (const content of item.content || []) {
       if (content.type === 'output_text' && content.text) return content.text;
@@ -71,24 +71,28 @@ const generateAliExpressProductContent = async (product) => {
     throw error;
   }
 
-  const attributes = (Array.isArray(product.productAttributes) ? product.productAttributes : [])
-    .filter((item) => item?.name && item?.value)
+  const rawAttributes = Array.isArray(product.productAttributes) ? product.productAttributes :
+    Object.entries(product.specifications && typeof product.specifications === 'object' ? product.specifications : {}).map(([name, value]) => ({ name, value }));
+  const attributes = rawAttributes
+    .filter((item) => item?.name && item?.value !== undefined && item?.value !== null && String(item.value).trim() && !/supplier|aliexpress|shipping|delivery|exchange|markup|profit|wholesale|purchase|cost|price|url|store|seller|internal|source|raw|order|payment|wallet/i.test(String(item.name)))
     .slice(0, 40)
     .map((item) => ({ name: String(item.name).slice(0, 80), value: String(item.value).slice(0, 240) }));
   const safeInput = {
-    productTitle: String(product.title || '').slice(0, 500),
-    brand: (/^(aliexpress|sylva technologies)$/i.test(String(product.supplierBrand || '').trim()) ? '' : String(product.supplierBrand || '').slice(0, 120)),
-    category: String(product.categoryName || '').slice(0, 120),
+    productTitle: String(product.title || product.name || '').slice(0, 500),
+    brand: (/^(aliexpress|sylva technologies|unknown|generic)$/i.test(String(product.supplierBrand || product.brand || '').trim()) ? '' : String(product.supplierBrand || product.brand || '').slice(0, 120)),
+    category: String(product.categoryName || product.category || '').slice(0, 120),
     verifiedSupplierAttributes: attributes,
   };
 
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      Authorization: 'Bearer ' + apiKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+  let response;
+  try {
+    response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
       model: String(process.env.OPENAI_MODEL || MODEL_DEFAULT).trim(),
       store: false,
       instructions: [
@@ -111,15 +115,29 @@ const generateAliExpressProductContent = async (product) => {
           schema: CONTENT_SCHEMA,
         },
       },
-      max_output_tokens: 1800,
-    }),
-    signal: AbortSignal.timeout(25000),
-  });
+        max_output_tokens: 1800,
+      }),
+      signal: AbortSignal.timeout(25000),
+    });
+  } catch (cause) {
+    const timedOut = cause?.name === 'TimeoutError' || cause?.name === 'AbortError';
+    const error = new Error(timedOut ? 'OpenAI product enrichment request timed out.' : 'OpenAI product enrichment could not reach the provider.');
+    error.code = timedOut ? 'AI_CONTENT_TIMEOUT' : 'AI_CONTENT_NETWORK_ERROR';
+    throw error;
+  }
 
   if (!response.ok) {
-    const error = new Error('OpenAI product enrichment request failed with HTTP ' + response.status + '.');
+    let providerPayload = {};
+    try { providerPayload = await response.json(); } catch { /* Provider may return a non-JSON error body. */ }
+    const providerError = providerPayload?.error || {};
+    const error = new Error('OpenAI product enrichment request failed.');
     error.code = 'AI_CONTENT_PROVIDER_ERROR';
-    error.status = response.status === 429 ? 503 : 502;
+    error.providerStatus = response.status;
+    error.providerCode = String(providerError.code || '').slice(0, 100);
+    error.providerType = String(providerError.type || '').slice(0, 100);
+    error.providerParam = String(providerError.param || '').slice(0, 100);
+    error.providerMessage = String(providerError.message || '').replace(/Bearer\s+\S+/gi, '[redacted]').slice(0, 240);
+    error.status = response.status === 429 || response.status >= 500 ? 503 : 502;
     throw error;
   }
 
