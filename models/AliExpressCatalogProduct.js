@@ -15,6 +15,8 @@ const schema = new mongoose.Schema({
   originalPrice: { type: Number, default: null, min: 0 },
   discount: { type: String, default: '', trim: true, maxlength: 40 },
   categoryId: { type: String, default: '', trim: true, maxlength: 80 },
+  sylvaCategoryId: { type: String, default: '', trim: true, maxlength: 80 },
+  categoryMatchStatus: { type: String, enum: ['matched', 'needs_review'], default: 'needs_review' },
   categoryName: { type: String, default: '', trim: true, maxlength: 200 },
   sellerId: { type: String, default: '', trim: true, maxlength: 100 },
   latestVolume: { type: Number, default: null, min: 0 },
