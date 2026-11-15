@@ -58,7 +58,7 @@ const validateContent = (value) => {
   const marketingTags = [...new Set(value.marketingTags.map((tag) => String(tag).replace(/<[^>]*>/g, '').replace(/[^a-zA-Z0-9 &-]/g, '').trim()).filter(Boolean))].slice(0, 8);
   const socialPromoCaption = value.socialPromoCaption.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 1000);
   const suggestedCategory = value.suggestedCategory.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
-  const privateContentPattern = /\b(?:aliexpress|supplier\s+(?:price|cost|id|url|currency|store)|exchange\s+rate|profit\s+margin|markup|wholesale\s+price|purchase\s+price)\b/i;
+  const privateContentPattern = /\b(?:aliexpress|supplier\s+(?:price|cost|id|url|currency|store)|exchange\s+rate|profit\s+margin|markup|wholesale\s+price|purchase\s+price)\b|(?:KSh|KES|USD|GBP|EUR|£|€|\$)\s?\d/i;
   if (!keyFeatures.length || shortDescription.length < 20 || description.length < 60 ||
       [...keyFeatures, shortDescription, description, seoTitle, seoMetaDescription, socialPromoCaption, suggestedCategory, ...marketingTags].some((text) => privateContentPattern.test(text))) {
     const error = new Error('The AI returned product content that did not meet minimum quality checks.');
@@ -120,9 +120,9 @@ const generateAliExpressProductContent = async (product) => {
     'Write clear, natural, professional English for Kenyan customers. Avoid keyword stuffing, exaggerated claims, fake urgency, emojis and unsupported superlatives. The full description may use simple Markdown headings and bullet lists; do not return raw HTML or scripts.',
     'Treat existing customer-facing content as a draft, preserve useful accurate wording and improve clarity.',
     'targetField indicates shortDescription, keyFeatures, description or all. Prioritize that field while returning all required schema fields.',
-    'Also return seoTitle under 60 characters, seoMetaDescription under 155 characters, 5 to 8 factual marketingTags, a socialPromoCaption suitable for WhatsApp or Instagram, and suggestedCategory as plain text only. suggestedCategory is advisory and must never be treated as an approved category ID.',
+    'Also return seoTitle under 60 characters containing the known brand/product terms, seoMetaDescription under 155 characters with relevant factual keywords, 5 to 8 relevant marketingTags, a socialPromoCaption suitable for WhatsApp or Instagram, and suggestedCategory as plain text only. suggestedCategory is advisory and must never be treated as an approved category ID.',
     'Social captions must not claim local stock, immediate availability, warranty or delivery times unless explicitly supported by supplied verified data. Never include a price or currency amount.',
-    'Return 5 to 7 concise factual key features. Short description should be 1–2 sentences and no more than 160 characters. Full description should use readable Markdown headings and bullet lists. Do not add prices or shipping charges.',
+    'Return up to 7 concise factual key features, aiming for 5–7 only when the source supports them; never pad the list with guesses. Short description should be 1–2 sentences and no more than 160 characters. Full description should use readable Markdown headings and bullet lists. Do not add prices or shipping charges.',
     'Give practical suggestions and missingSections only when useful. Return only structured JSON.',
   ].join('\n');
   try {
