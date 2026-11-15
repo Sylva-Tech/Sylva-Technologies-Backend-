@@ -22,6 +22,10 @@ const schema = new mongoose.Schema({
   supplierStoreName: { type: String, default: '', trim: true, maxlength: 200 },
   supplierStoreUrl: { type: String, default: '', trim: true, maxlength: 2000 },
   supplierBrand: { type: String, default: '', trim: true, maxlength: 120 },
+  productAttributes: {
+    type: [{ name: { type: String, trim: true, maxlength: 80 }, value: { type: String, trim: true, maxlength: 240 } }],
+    default: [],
+  },
   latestVolume: { type: Number, default: null, min: 0 },
   shippingDays: { type: Number, default: null, min: 0 },
   status: { type: String, enum: ['pending', 'approved', 'rejected', 'imported', 'ignored'], default: 'pending', index: true },
