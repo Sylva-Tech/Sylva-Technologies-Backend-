@@ -822,11 +822,14 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
 
     const images = [...new Set([record.imageUrl, ...(record.imageUrls || [])].filter((url) => /^https?:\/\//i.test(url)))].slice(0, 4);
     if (!images.length) return res.status(409).json({ success: false, code: 'ALIEXPRESS_IMAGES_REQUIRED', message: 'No usable AliExpress product photos were synced. Refresh supplier details and confirm images before approval.' });
+    const requestedStock = Number.parseInt(req.body?.stock, 10);
+    const approvedStock = Number.isInteger(requestedStock) && requestedStock >= 0 ? requestedStock : 10;
+
     const published = await Product.create({
       name: title, slug, sku, source: 'aliexpress', brand, category: category._id,
       description, shortDescription: String(req.body?.shortDescription || title).trim().slice(0, 300),
       price, oldPrice: Number(req.body?.oldPrice) > price ? Number(req.body.oldPrice) : 0,
-      images, stock: Math.max(0, Number.parseInt(req.body?.stock, 10) || 0), condition: 'New',
+      images, stock: approvedStock, condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
       seller: null, featured: false, flashSale: false, offer: false,
       specifications: { supplier: 'AliExpress', supplierProductId: record.providerProductId, supplierUrl: record.productUrl, supplierPrice: record.supplierPrice, supplierOriginalPrice: record.supplierOriginalPrice, supplierCurrency: record.supplierCurrency, supplierExchangeRate: exchangeRate, supplierProfitPercent: 8, shippingIncludedInMarkup: false, deliveryIncludedInMarkup: false, shippingHandledBy: 'AliExpress', deliveryCostChargedSeparately: true },
