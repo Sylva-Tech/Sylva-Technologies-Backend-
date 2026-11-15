@@ -55,7 +55,8 @@ const getBuyerToken = async () => {
   return token.access_token;
 };
 
-const unwrap = (payload, method) => payload?.[method.split('.').join('_') + '_response'] || payload || {};\nconst validCountry = (value) => /^[A-Z]{2}$/.test(value);
+const unwrap = (payload, method) => payload?.[method.split('.').join('_') + '_response'] || payload || {};
+const validCountry = (value) => /^[A-Z]{2}$/.test(value);
 const validCurrency = (value) => /^[A-Z]{3}$/.test(value);
 const validLocale = (value) => /^[a-z]{2}_[A-Z]{2}$/.test(value);
 
