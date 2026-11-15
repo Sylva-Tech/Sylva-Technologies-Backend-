@@ -821,6 +821,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     if (existingSku) return res.status(409).json({ success: false, message: 'A product with this supplier SKU already exists. Review the existing product before proceeding.' });
 
     const images = [...new Set([record.imageUrl, ...(record.imageUrls || [])].filter((url) => /^https?:\/\//i.test(url)))].slice(0, 4);
+    if (!images.length) return res.status(409).json({ success: false, code: 'ALIEXPRESS_IMAGES_REQUIRED', message: 'No usable AliExpress product photos were synced. Refresh supplier details and confirm images before approval.' });
     const published = await Product.create({
       name: title, slug, sku, source: 'aliexpress', brand, category: category._id,
       description, shortDescription: String(req.body?.shortDescription || title).trim().slice(0, 300),
