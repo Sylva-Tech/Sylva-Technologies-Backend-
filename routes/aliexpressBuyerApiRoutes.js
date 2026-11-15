@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const AliExpressConnection = require('../models/AliExpressConnection');
