@@ -862,7 +862,9 @@ router.get('/catalog/review-queue', protect, adminOnly, async (req, res) => {
       AliExpressCatalogProduct.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
     ]);
     const categories = await Category.find({ isActive: true }).select('_id name slug').sort({ name: 1 }).lean();
-    // Backfill category suggestions for older pending imports without publishing them.
+    // Backfill category suggestions in one native bulk write instead of
+    // serial per-product writes. This keeps queue loading responsive at scale.
+    const categoryUpdates = [];
     for (const product of products) {
       if (!product.sylvaCategoryId || product.categoryMatchStatus !== 'matched') {
         const match = matchSylvaCategory(product.title, categories);
@@ -870,9 +872,17 @@ router.get('/catalog/review-queue', protect, adminOnly, async (req, res) => {
           product.sylvaCategoryId = String(match.category._id);
           product.categoryName = match.category.name;
           product.categoryMatchStatus = 'matched';
-          await AliExpressCatalogProduct.updateOne({ _id: product._id, status: 'pending' }, { $set: { sylvaCategoryId: product.sylvaCategoryId, categoryName: product.categoryName, categoryMatchStatus: 'matched' } });
+          categoryUpdates.push({
+            updateOne: {
+              filter: { _id: product._id, status: 'pending' },
+              update: { $set: { sylvaCategoryId: product.sylvaCategoryId, categoryName: product.categoryName, categoryMatchStatus: 'matched' } },
+            },
+          });
         }
       }
+    }
+    if (categoryUpdates.length) {
+      await AliExpressCatalogProduct.collection.bulkWrite(categoryUpdates, { ordered: false });
     }
     return res.json({ success: true, products, categories, counts: Object.fromEntries(counts.map((row) => [row._id, row.count])) });
   } catch (error) {
@@ -1232,7 +1242,7 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
       throw error;
     }
     stage = 'save_private_queue';
-    await AliExpressCatalogProduct.bulkWrite(operations, { ordered: false });
+    await AliExpressCatalogProduct.collection.bulkWrite(operations, { ordered: false });
     // Native collection avoids Mongoose miscasting the bounded $in filter
     // on providerProductId. Values originate from normalized supplier IDs.
     await AliExpressCatalogProduct.collection.updateMany(
