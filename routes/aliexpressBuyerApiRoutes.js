@@ -966,14 +966,28 @@ router.post('/catalog/refresh-published-metadata/:productId', protect, adminOnly
 
     const storeName = normalized.supplierStoreName || '';
     const storeUrl = normalized.supplierStoreUrl || '';
+    const currentSpecifications = product.specifications?.toObject?.() || product.specifications || {};
+    const refreshedPublicSpecifications = Object.fromEntries(
+      (Array.isArray(normalized.productAttributes) ? normalized.productAttributes : [])
+        .filter((attribute) => attribute?.name && attribute?.value)
+        .map((attribute) => [String(attribute.name).slice(0, 80), String(attribute.value).slice(0, 240)])
+    );
     product.specifications = {
-      ...(product.specifications?.toObject?.() || product.specifications || {}),
+      ...currentSpecifications,
+      ...refreshedPublicSpecifications,
       supplier: 'AliExpress',
       supplierProductId: productId,
       supplierStoreName: storeName,
       supplierStoreUrl: storeUrl,
       shippingHandledBy: 'AliExpress',
     };
+    if (!Array.isArray(product.keyFeatures) || !product.keyFeatures.length) {
+      product.keyFeatures = (normalized.productAttributes || []).slice(0, 8)
+        .map((attribute) => String(attribute.name) + ': ' + String(attribute.value));
+    }
+    if ((!product.shortDescription || product.shortDescription === product.name) && product.keyFeatures.length) {
+      product.shortDescription = product.keyFeatures.join(' • ').slice(0, 300);
+    }
     if (!product.brand || /^aliexpress$/i.test(product.brand)) {
       product.brand = normalized.supplierBrand || 'Sylva Technologies';
     }
@@ -987,8 +1001,8 @@ router.post('/catalog/refresh-published-metadata/:productId', protect, adminOnly
     return res.json({
       success: true,
       message: storeName
-        ? 'Supplier store details refreshed. Product price, stock and publication status were not changed.'
-        : 'AliExpress did not return a seller store name for this product. Existing product pricing and stock were not changed.',
+        ? 'Supplier store details and available product specifications refreshed. Price, stock and publication status were not changed.'
+        : 'Supplier store or product specifications may be unavailable. Existing product pricing and stock were not changed.',
       product: { _id: product._id, brand: product.brand, supplierStoreName: storeName, supplierStoreUrl: storeUrl, shippingHandledBy: 'AliExpress' },
       updated: { price: false, stock: false, visibility: false, orders: false },
     });
