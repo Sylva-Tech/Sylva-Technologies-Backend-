@@ -110,13 +110,19 @@ router.post('/service-health/test', protect, adminOnly, sendLimiter, async (req,
   if (!process.env.RESEND_API_KEY) {
     return res.status(503).json({ success: false, message: 'Sylva Mail is not configured on the backend.' });
   }
-  const result = await sendMail({
-    to: recipient,
-    subject: 'Sylva Mail delivery test',
-    text: 'This is a test message from the Sylva Technologies administration dashboard. No customer or order data is included.',
-    html: '<p>This is a test message from the <strong>Sylva Technologies</strong> administration dashboard.</p><p>No customer or order data is included.</p>',
-    sender: 'admin',
-  });
+  let result;
+  try {
+    result = await sendMail({
+      to: recipient,
+      subject: 'Sylva Mail delivery test',
+      text: 'This is a test message from the Sylva Technologies administration dashboard. No customer or order data is included.',
+      html: '<p>This is a test message from the <strong>Sylva Technologies</strong> administration dashboard.</p><p>No customer or order data is included.</p>',
+      sender: 'admin',
+    });
+  } catch (error) {
+    console.warn('[Sylva Mail health test] send failed:', String(error.code || error.name || 'MAIL_SEND_FAILED').slice(0, 100));
+    return res.status(502).json({ success: false, message: 'Sylva Mail test message could not be sent. Check backend mail logs and provider configuration.' });
+  }
   if (!result?.success) {
     return res.status(502).json({ success: false, message: 'Sylva Mail test message could not be sent. Check backend mail logs and provider configuration.' });
   }
