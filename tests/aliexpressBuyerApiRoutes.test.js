@@ -91,3 +91,40 @@ test('Protocol.TOP adapter continues to reject supplier order creation after ena
     appSecret: 'app-secret',
   }), (error) => error.code === 'ALIEXPRESS_METHOD_NOT_ALLOWED');
 });
+
+
+test('Protocol.TOP adapter permits documented read-only AliExpress text search', () => {
+  const request = buildTopProtocolRequest({
+    apiName: 'aliexpress.ds.text.search',
+    businessParams: { keyWord: 'laptop', local: 'en_US', countryCode: 'KE', currency: 'USD', pageSize: 20, pageIndex: 1 },
+    accessToken: 'buyer-token',
+    timestamp: 1730000000000,
+    appKey: 'app-key',
+    appSecret: 'app-secret',
+  });
+  assert.match(request.body, /keyWord=laptop/);
+  assert.match(request.body, /countryCode=KE/);
+});
+
+test('Protocol.TOP adapter permits documented read-only image search with param0 JSON', () => {
+  const request = buildTopProtocolRequest({
+    apiName: 'aliexpress.ds.image.searchV2',
+    businessParams: { param0: JSON.stringify({ search_type: 'similar', image_base64: 'aGVsbG8=', currency: 'USD', lang: 'en', sort_type: 'best', sort_order: 'desc', ship_to: 'KE' }) },
+    accessToken: 'buyer-token',
+    timestamp: 1730000000000,
+    appKey: 'app-key',
+    appSecret: 'app-secret',
+  });
+  assert.match(request.body, /param0=/);
+  assert.match(request.body, /search_type/);
+});
+
+test('Protocol.TOP adapter continues to reject supplier order creation after enabling catalogue search', () => {
+  assert.throws(() => buildTopProtocolRequest({
+    apiName: 'aliexpress.ds.order.create',
+    businessParams: { product_id: '1001' },
+    accessToken: 'buyer-token',
+    appKey: 'app-key',
+    appSecret: 'app-secret',
+  }), (error) => error.code === 'ALIEXPRESS_METHOD_NOT_ALLOWED');
+});

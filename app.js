@@ -27,6 +27,7 @@ const aliexpressRoutes = require('./routes/aliexpressRoutes');
 const aliexpressBuyerApiRoutes = require('./routes/aliexpressBuyerApiRoutes');
 const aliexpressOrderApiRoutes = require('./routes/aliexpressOrderApiRoutes');
 const aliexpressPaymentApiRoutes = require('./routes/aliexpressPaymentApiRoutes');
+const aliexpressSearchApiRoutes = require('./routes/aliexpressSearchApiRoutes');
 const aliexpressFulfillmentRoutes = require('./routes/aliexpressFulfillmentRoutes');
 const {
   cloudflareOriginGuard,
@@ -427,6 +428,7 @@ app.use('/api/support-inbox', supportInboxRoutes);
 app.use('/api/aliexpress', aliexpressBuyerApiRoutes);
 app.use('/api/aliexpress/orders', aliexpressOrderApiRoutes);
 app.use('/api/aliexpress/payment', aliexpressPaymentApiRoutes);
+app.use('/api/aliexpress/search', aliexpressSearchApiRoutes);
 app.use('/api/aliexpress', aliexpressRoutes);
 app.use('/api/aliexpress/fulfillment', aliexpressFulfillmentRoutes);
 
