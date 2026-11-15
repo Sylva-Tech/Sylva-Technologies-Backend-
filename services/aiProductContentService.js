@@ -84,6 +84,7 @@ const generateAliExpressProductContent = async (product) => {
     .slice(0, 40)
     .map((item) => ({ name: String(item.name).slice(0, 80), value: String(item.value).slice(0, 240) }));
   const safeInput = {
+    targetField: ['shortDescription', 'keyFeatures', 'description'].includes(product.targetField) ? product.targetField : 'all',
     productTitle: String(product.title || product.name || '').slice(0, 500),
     brand: (/^(aliexpress|sylva technologies|unknown|generic)$/i.test(String(product.supplierBrand || product.brand || '').trim()) ? '' : String(product.supplierBrand || product.brand || '').slice(0, 120)),
     category: String(product.categoryName || product.category || '').slice(0, 120),
@@ -115,6 +116,7 @@ const generateAliExpressProductContent = async (product) => {
         'Do not mention AliExpress, supplier costs, supplier links, supplier IDs, exchange rates, margins, internal metadata, or private business processes in customer-facing copy.',
         'Write clear, natural, professional English for Kenyan customers. Avoid keyword stuffing, exaggerated claims, fake urgency, emojis, and unsupported superlatives.',
         'Use existingCustomerFacingContent as a draft to review, not as verified evidence. Preserve useful accurate wording, improve clarity, and fill genuinely missing parts. Do not discard relevant existing information without a reason.',
+        'The targetField value indicates whether the administrator requested a focused inline rewrite of shortDescription, keyFeatures, description, or all fields. When one field is requested, prioritize making that field complete and ready to insert while still returning valid values for the other required schema fields.');
         'Return up to eight concise, non-repeating factual key features. Keep the short description concise (ideally 1–2 sentences and under 300 characters). Write the full description in clean, readable paragraphs with a brief overview followed by useful factual detail. Keep technical specifications out of marketing prose because the storefront displays verified specifications in a separate structured section. Do not add prices or shipping charges.',
         'Provide practical suggestions for improving the listing and list missingSections such as short description, key features, or full description only when they are actually missing or materially incomplete. Suggestions must not invent product facts.',
         'Return only the requested structured content.',
