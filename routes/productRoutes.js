@@ -18,6 +18,49 @@ const { sendSalesNotificationEmail } = require('../services/emailService');
 
 const router = express.Router();
 
+const PUBLIC_PRODUCT_FIELDS = [
+  '_id', 'name', 'slug', 'sku', 'brand', 'subcategory', 'description',
+  'shortDescription', 'price', 'oldPrice', 'discount', 'images', 'stock',
+  'condition', 'warranty', 'warrantyDuration', 'warrantyTerms',
+  'deliveryDuration', 'deliveryFee', 'deliveryTerms', 'deliveryLocations',
+  'returnPeriod', 'returnPolicy', 'returnConditions', 'whatsIncluded',
+  'keyFeatures', 'featured', 'isNew', 'flashSale', 'offer', 'offerMessage',
+  'offerStartDate', 'offerEndDate', 'createdAt', 'updatedAt',
+];
+
+const PRIVATE_SPECIFICATION_KEY = /supplier|aliexpress|wholesale|purchase|cost|margin|markup|profit|exchange|currency|source|raw|internal|secret|token|url|seller|shippingprice/i;
+
+const toPublicProduct = (value) => {
+  if (!value) return null;
+  const product = typeof value.toObject === 'function' ? value.toObject() : value;
+  const result = {};
+  for (const field of PUBLIC_PRODUCT_FIELDS) {
+    if (product[field] !== undefined) result[field] = product[field];
+  }
+  result.specifications = Object.fromEntries(
+    Object.entries(product.specifications && typeof product.specifications === 'object' && !Array.isArray(product.specifications) ? product.specifications : {})
+      .filter(([key]) => !PRIVATE_SPECIFICATION_KEY.test(key))
+  );
+  const category = product.category;
+  result.category = category && typeof category === 'object'
+    ? { _id: category._id, name: category.name, slug: category.slug }
+    : category || null;
+  const seller = product.seller;
+  result.seller = seller && typeof seller === 'object'
+    ? {
+        _id: seller._id,
+        name: seller.name,
+        storeName: seller.sellerProfile?.storeName || '',
+        storeProfile: seller.sellerProfile?.storeProfile || '',
+        storeLocation: seller.sellerProfile?.storeLocation || '',
+        storeLogo: seller.sellerProfile?.storeLogo || '',
+      }
+    : null;
+  return result;
+};
+
+
+
 const { generateAliExpressProductContent } = require('../services/aiProductContentService');
 
 router.post('/:id/ai-content-draft', protect, adminOnly, async (req, res) => {
@@ -462,7 +505,7 @@ router.get('/', async (req, res) => {
       const [pageProducts, totalProducts] = await Promise.all([
         Product.find(filter)
           .populate('category', 'name slug')
-          .populate('seller', 'name email sellerProfile.storeName')
+          .populate('seller', 'name sellerProfile.storeName sellerProfile.storeProfile sellerProfile.storeLocation sellerProfile.storeLogo')
           .sort(sortOption)
           .skip((safePage - 1) * safeLimit)
           .limit(safeLimit)
@@ -471,7 +514,7 @@ router.get('/', async (req, res) => {
       ]);
 
       return res.json({
-        products: pageProducts,
+        products: pageProducts.map(toPublicProduct),
         page: safePage,
         totalPages: Math.ceil(totalProducts / safeLimit),
         totalProducts,
@@ -496,7 +539,7 @@ router.get('/', async (req, res) => {
     const totalPages = Math.ceil(totalProducts / safeLimit);
     const startIndex = (safePage - 1) * safeLimit;
     return res.json({
-      products: products.slice(startIndex, startIndex + safeLimit),
+      products: products.slice(startIndex, startIndex + safeLimit).map(toPublicProduct),
       page: safePage,
       totalPages,
       totalProducts,
@@ -534,7 +577,7 @@ router.get(
           .populate('category')
           .populate(
             'seller',
-            'name email sellerProfile.storeName'
+            'name sellerProfile.storeName sellerProfile.storeProfile sellerProfile.storeLocation sellerProfile.storeLogo'
           );
 
       if (!product) {
@@ -544,7 +587,7 @@ router.get(
         });
       }
 
-      res.json(product);
+      res.json(toPublicProduct(product));
     } catch (error) {
       res.status(500).json({
         success: false,
@@ -573,7 +616,7 @@ router.get('/store/:sellerId/products', async (req, res) => {
       _id: req.params.sellerId,
       sellerStatus: 'approved',
       accountStatus: mongoose.trusted({ $nin: ['suspended', 'banned'] }),
-    }).select('name email createdAt sellerProfile.storeName sellerProfile.storeProfile sellerProfile.storeLocation sellerProfile.storeLogo');
+    }).select('name createdAt sellerProfile.storeName sellerProfile.storeProfile sellerProfile.storeLocation sellerProfile.storeLogo');
     if (!seller) {
       return res.status(404).json({ success: false, message: 'Store not found or unavailable.' });
     }
@@ -587,14 +630,13 @@ router.get('/store/:sellerId/products', async (req, res) => {
       seller: {
         _id: seller._id,
         name: seller.name,
-        email: seller.email,
         createdAt: seller.createdAt,
         storeName: seller.sellerProfile?.storeName || 'Seller Store',
         storeProfile: seller.sellerProfile?.storeProfile || '',
         storeLocation: seller.sellerProfile?.storeLocation || '',
         storeLogo: seller.sellerProfile?.storeLogo || '',
       },
-      data: products,
+      data: products.map(toPublicProduct),
     });
   } catch (error) {
     console.error('Public seller store catalogue error:', error);
@@ -2129,42 +2171,43 @@ router.put(
 );
 
 /* =========================================================
-   PUBLIC PRODUCT BY ID
+   ADMIN PRODUCT EDITOR LOOKUP
    ========================================================= */
-
-router.get(
-  '/:id',
-  async (req, res) => {
-    try {
-      const product =
-        await Product.findById(
-          req.params.id
-        )
-          .populate('category')
-          .populate(
-            'seller',
-            'name email sellerProfile.storeName'
-          );
-
-      if (!product) {
-        return res.status(404).json({
-          success: false,
-          message:
-            'Product not found.',
-        });
-      }
-
-      res.json(product);
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message:
-          error.message ||
-          'Unable to fetch product.',
-      });
-    }
+router.get('/admin/:id', protect, adminOnly, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+    const product = await Product.findById(req.params.id)
+      .populate('category')
+      .populate('seller', 'name email sellerProfile.storeName');
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found.' });
+    res.set('Cache-Control', 'no-store, private').json({ success: true, product });
+  } catch (error) {
+    console.error('Admin product lookup failed:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to fetch product.' });
   }
-);
+});
+
+/* =========================================================
+   PUBLIC PRODUCT BY ID — APPROVED STOREFRONT DATA ONLY
+   ========================================================= */
+router.get('/:id', async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ success: false, message: 'Product not found.' });
+    const product = await Product.findOne({
+      _id: req.params.id,
+      isActive: mongoose.trusted({ $ne: false }),
+      approvalStatus: 'approved',
+    })
+      .populate('category', 'name slug')
+      .populate('seller', 'name sellerProfile.storeName sellerProfile.storeProfile sellerProfile.storeLocation sellerProfile.storeLogo')
+      .lean();
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found.' });
+    return res.json(toPublicProduct(product));
+  } catch (error) {
+    console.error('Public product lookup failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to fetch product.' });
+  }
+});
 
 /* =========================================================
    ADMIN PRODUCT MANAGEMENT
