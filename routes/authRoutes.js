@@ -91,7 +91,7 @@ const googleCookie = (name, value, maxAge = 600) =>
 
 const clearGoogleOAuthCookies = (res) => {
   const expire = (name) => name + '=; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/google; Max-Age=0';
-  res.append('Set-Cookie', [expire(GOOGLE_STATE_COOKIE), expire(GOOGLE_VERIFIER_COOKIE), expire(GOOGLE_NONCE_COOKIE)]);
+  res.setHeader('Set-Cookie', [expire(GOOGLE_STATE_COOKIE), expire(GOOGLE_VERIFIER_COOKIE), expire(GOOGLE_NONCE_COOKIE)]);
 };
 
 const getGoogleSigningCertificates = async () => {
@@ -270,7 +270,7 @@ router.get('/google', googleLoginLimiter, (req, res) => {
   const nonce = crypto.randomBytes(32).toString('base64url');
   const verifier = crypto.randomBytes(48).toString('base64url');
   const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
-  res.append('Set-Cookie', [
+  res.setHeader('Set-Cookie', [
     googleCookie(GOOGLE_STATE_COOKIE, state),
     googleCookie(GOOGLE_VERIFIER_COOKIE, verifier),
     googleCookie(GOOGLE_NONCE_COOKIE, nonce),
@@ -356,6 +356,8 @@ router.get('/google/callback', googleLoginLimiter, async (req, res) => {
       }
       if (changed) await user.save();
     }
+
+    await VerificationToken.deleteMany({ purpose: 'google-login', expiresAt: { $lt: new Date() } });
 
     const loginCode = crypto.randomBytes(32).toString('base64url');
     await VerificationToken.create({
