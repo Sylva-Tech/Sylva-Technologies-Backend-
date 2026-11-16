@@ -100,7 +100,7 @@ const getGoogleSigningCertificates = async () => {
   if (!response.ok) throw new Error('Google signing certificates are temporarily unavailable.');
   const certificates = await response.json();
   const cacheControl = response.headers.get('cache-control') || '';
-  const maxAge = Number(cacheControl.match(/max-age=(\\d+)/i)?.[1] || 3600);
+  const maxAge = Number(cacheControl.match(/max-age=(\d+)/i)?.[1] || 3600);
   googleSigningCertificates = certificates;
   googleCertificatesExpiresAt = Date.now() + Math.max(60, Math.min(maxAge, 86400)) * 1000;
   return certificates;
@@ -125,7 +125,7 @@ const verifyGoogleIdentityToken = async (idToken, expectedNonce) => {
   const validSignature = crypto.verify(
     'RSA-SHA256',
     signedPayload,
-    crypto.createPublicKey(certificate),
+    new crypto.X509Certificate(certificate).publicKey,
     Buffer.from(parts[2], 'base64url')
   );
   if (!validSignature) throw new Error('Google identity token signature is invalid.');
@@ -140,7 +140,7 @@ const verifyGoogleIdentityToken = async (idToken, expectedNonce) => {
       claims.nonce !== expectedNonce ||
       claims.email_verified !== true ||
       typeof claims.email !== 'string' ||
-      !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(claims.email)) {
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(claims.email)) {
     throw new Error('Google could not verify this sign-in. Please try again.');
   }
   return claims;
