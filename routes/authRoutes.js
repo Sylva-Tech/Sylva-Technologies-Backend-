@@ -267,7 +267,7 @@ router.get('/google', googleLoginLimiter, (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    return res.status(503).json({ success: false, message: 'Google sign-in is not configured yet.' });
+    return res.redirect(302, getFrontendUrl() + '/login?google_error=google_not_configured');
   }
 
   const state = crypto.randomBytes(32).toString('base64url');
