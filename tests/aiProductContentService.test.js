@@ -65,7 +65,7 @@ test('validateContent preserves safe HTML and strips scripts, event attributes a
   });
   assert.match(result.description, /<h3>Overview<\/h3>/);
   assert.match(result.description, /<p>A sufficiently detailed description/);
-  assert.doesNotMatch(result.description, /script|iframe|onclick|alert/);
+  assert.doesNotMatch(result.description, /<script\b|<iframe\b|\bonclick\s*=|alert\s*\(/i);
 });
 
 test('Gemini generation sends the Sylva writing rules and uses the configured model', async (t) => {

@@ -68,6 +68,97 @@ const getFrontendUrl = () => {
   ).replace(/\/$/, '');
 };
 
+const GOOGLE_STATE_COOKIE = 'sylva_google_state';
+const GOOGLE_VERIFIER_COOKIE = 'sylva_google_verifier';
+const GOOGLE_NONCE_COOKIE = 'sylva_google_nonce';
+let googleSigningCertificates = null;
+let googleCertificatesExpiresAt = 0;
+
+const getGoogleRedirectUri = () => (
+  process.env.GOOGLE_REDIRECT_URI ||
+  'https://api.sylvatechnologies.co.ke/api/auth/google/callback'
+);
+
+const cookieValue = (req, name) => {
+  const cookieHeader = String(req.headers.cookie || '');
+  const item = cookieHeader.split(';').map((part) => part.trim()).find((part) => part.startsWith(name + '='));
+  if (!item) return '';
+  try { return decodeURIComponent(item.slice(name.length + 1)); } catch { return ''; }
+};
+
+const googleCookie = (name, value, maxAge = 600) =>
+  name + '=' + encodeURIComponent(value) + '; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/google; Max-Age=' + maxAge;
+
+const clearGoogleOAuthCookies = (res) => {
+  const expire = (name) => name + '=; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/google; Max-Age=0';
+  res.setHeader('Set-Cookie', [expire(GOOGLE_STATE_COOKIE), expire(GOOGLE_VERIFIER_COOKIE), expire(GOOGLE_NONCE_COOKIE)]);
+};
+
+const getGoogleSigningCertificates = async () => {
+  if (googleSigningCertificates && Date.now() < googleCertificatesExpiresAt) return googleSigningCertificates;
+  const response = await fetch('https://www.googleapis.com/oauth2/v3/certs');
+  if (!response.ok) throw new Error('Google signing certificates are temporarily unavailable.');
+  const certificates = await response.json();
+  const cacheControl = response.headers.get('cache-control') || '';
+  const maxAge = Number(cacheControl.match(/max-age=(\d+)/i)?.[1] || 3600);
+  googleSigningCertificates = certificates;
+  googleCertificatesExpiresAt = Date.now() + Math.max(60, Math.min(maxAge, 86400)) * 1000;
+  return certificates;
+};
+
+const verifyGoogleIdentityToken = async (idToken, expectedNonce) => {
+  const parts = String(idToken || '').split('.');
+  if (parts.length !== 3) throw new Error('Google returned an invalid identity token.');
+  const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+  const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  if (header.alg !== 'RS256' || typeof header.kid !== 'string') throw new Error('Google identity token uses an unsupported signature.');
+  let certificates = await getGoogleSigningCertificates();
+  let signingKey = Array.isArray(certificates.keys)
+    ? certificates.keys.find((key) => key.kid === header.kid && key.alg === 'RS256' && key.use === 'sig')
+    : null;
+  if (!signingKey) {
+    googleSigningCertificates = null;
+    certificates = await getGoogleSigningCertificates();
+    signingKey = Array.isArray(certificates.keys)
+      ? certificates.keys.find((key) => key.kid === header.kid && key.alg === 'RS256' && key.use === 'sig')
+      : null;
+  }
+  if (!signingKey) throw new Error('Google identity token signing key is not recognized.');
+
+  const signedPayload = Buffer.from(parts[0] + '.' + parts[1]);
+  const validSignature = crypto.verify(
+    'RSA-SHA256',
+    signedPayload,
+    crypto.createPublicKey({ key: signingKey, format: 'jwk' }),
+    Buffer.from(parts[2], 'base64url')
+  );
+  if (!validSignature) throw new Error('Google identity token signature is invalid.');
+
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const now = Math.floor(Date.now() / 1000);
+  const audienceMatches = claims.aud === clientId || (Array.isArray(claims.aud) && claims.aud.includes(clientId));
+  if (!audienceMatches ||
+      !['accounts.google.com', 'https://accounts.google.com'].includes(claims.iss) ||
+      !Number.isFinite(claims.exp) || claims.exp <= now ||
+      !Number.isFinite(claims.iat) || claims.iat > now + 60 ||
+      claims.nonce !== expectedNonce ||
+      claims.email_verified !== true ||
+      typeof claims.email !== 'string' ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(claims.email)) {
+    throw new Error('Google could not verify this sign-in. Please try again.');
+  }
+  return claims;
+};
+
+const googleLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many Google sign-in attempts. Please wait and try again.' },
+});
+
+
 /* ============================================================
  * HELPERS
  * ============================================================ */
@@ -164,6 +255,162 @@ const safeUser = (user) => {
     isVerified: user.isVerified,
   };
 };
+
+/* ============================================================
+ * GOOGLE OAUTH
+ * GET /api/auth/google
+ * GET /api/auth/google/callback
+ * POST /api/auth/google/exchange
+ * ============================================================ */
+
+router.get('/google', googleLoginLimiter, (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return res.status(503).json({ success: false, message: 'Google sign-in is not configured yet.' });
+  }
+
+  const state = crypto.randomBytes(32).toString('base64url');
+  const nonce = crypto.randomBytes(32).toString('base64url');
+  const verifier = crypto.randomBytes(48).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  res.setHeader('Set-Cookie', [
+    googleCookie(GOOGLE_STATE_COOKIE, state),
+    googleCookie(GOOGLE_VERIFIER_COOKIE, verifier),
+    googleCookie(GOOGLE_NONCE_COOKIE, nonce),
+  ]);
+
+  const authorizationUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authorizationUrl.search = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: getGoogleRedirectUri(),
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    nonce,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    prompt: 'select_account',
+  }).toString();
+  return res.redirect(302, authorizationUrl.toString());
+});
+
+router.get('/google/callback', googleLoginLimiter, async (req, res) => {
+  const fail = (reason = 'google_sign_in_failed') => {
+    clearGoogleOAuthCookies(res);
+    return res.redirect(302, getFrontendUrl() + '/login?google_error=' + encodeURIComponent(reason));
+  };
+
+  try {
+    if (req.query?.error) return fail('google_sign_in_cancelled');
+    const code = typeof req.query?.code === 'string' ? req.query.code : '';
+    const returnedState = typeof req.query?.state === 'string' ? req.query.state : '';
+    const expectedState = cookieValue(req, GOOGLE_STATE_COOKIE);
+    const verifier = cookieValue(req, GOOGLE_VERIFIER_COOKIE);
+    const nonce = cookieValue(req, GOOGLE_NONCE_COOKIE);
+    if (!code || !returnedState || !expectedState || !verifier || !nonce ||
+        returnedState.length !== expectedState.length ||
+        !crypto.timingSafeEqual(Buffer.from(returnedState), Buffer.from(expectedState))) {
+      return fail('google_state_invalid');
+    }
+
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID || '',
+        client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+        redirect_uri: getGoogleRedirectUri(),
+        grant_type: 'authorization_code',
+        code_verifier: verifier,
+      }),
+    });
+    const tokenPayload = await tokenResponse.json();
+    if (!tokenResponse.ok || !tokenPayload.id_token) {
+      console.error('Google token exchange rejected:', tokenPayload.error || tokenResponse.status);
+      return fail('google_token_exchange_failed');
+    }
+
+    const identity = await verifyGoogleIdentityToken(tokenPayload.id_token, nonce);
+    const email = normalizeEmail(identity.email);
+    let user = await User.findOne({ email });
+    if (user?.accountDeleted) return fail('account_unavailable');
+
+    if (!user) {
+      user = await User.create({
+        name: String(identity.name || identity.given_name || email.split('@')[0]).trim().slice(0, 100) || 'Sylva Customer',
+        email,
+        password: crypto.randomBytes(48).toString('base64url'),
+        role: 'customer',
+        sellerStatus: 'none',
+        accountStatus: 'active',
+        storeStatus: 'inactive',
+        isVerified: true,
+        verificationMethod: 'email',
+        profilePicture: typeof identity.picture === 'string' ? identity.picture.slice(0, 1000) : '',
+      });
+    } else {
+      if (['suspended', 'banned'].includes(user.accountStatus)) return fail('account_restricted');
+      let changed = false;
+      if (!user.isVerified) { user.isVerified = true; changed = true; }
+      if (!user.profilePicture && typeof identity.picture === 'string') {
+        user.profilePicture = identity.picture.slice(0, 1000);
+        changed = true;
+      }
+      if (changed) await user.save();
+    }
+
+    await VerificationToken.deleteMany({ purpose: 'google-login', expiresAt: { $lt: new Date() } });
+
+    const loginCode = crypto.randomBytes(32).toString('base64url');
+    await VerificationToken.create({
+      user: user._id,
+      purpose: 'google-login',
+      tokenHash: hashToken(loginCode),
+      expiresAt: new Date(Date.now() + 2 * 60 * 1000),
+      method: 'email',
+    });
+
+    clearGoogleOAuthCookies(res);
+    return res.redirect(302, getFrontendUrl() + '/login?google_code=' + encodeURIComponent(loginCode));
+  } catch (error) {
+    console.error('Google OAuth callback failed:', error.message);
+    return fail('google_sign_in_failed');
+  }
+});
+
+router.post('/google/exchange', googleLoginLimiter, async (req, res) => {
+  try {
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    if (!/^[A-Za-z0-9_-]{40,100}$/.test(code)) {
+      return res.status(400).json({ success: false, message: 'Google sign-in session is invalid. Please try again.' });
+    }
+
+    const ticket = await VerificationToken.findOneAndDelete({
+      purpose: 'google-login',
+      tokenHash: hashToken(code),
+    });
+    if (!ticket || ticket.expiresAt <= new Date()) {
+      return res.status(401).json({ success: false, message: 'Google sign-in session has expired. Please sign in again.' });
+    }
+
+    const user = await User.findById(ticket.user);
+    if (!user || user.accountDeleted || !user.isVerified || ['suspended', 'banned'].includes(user.accountStatus)) {
+      return res.status(403).json({ success: false, message: 'This Sylva account cannot sign in at the moment.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Google sign-in successful.',
+      token: createJwt(user),
+      user: safeUser(user),
+    });
+  } catch (error) {
+    console.error('Google sign-in exchange failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to complete Google sign-in. Please try again.' });
+  }
+});
 
 /* ============================================================
  * REGISTER
@@ -674,31 +921,26 @@ router.post('/register', async (req, res) => {
       `?token=${encodeURIComponent(rawVerificationToken)}` +
       `&email=${encodeURIComponent(normalizedEmail)}`;
 
-    try {
-      await sendVerificationCodeAndLinkEmail({
-        to: normalizedEmail,
-        name: user.name,
-        otp: verificationCode,
-        verifyLink,
-        expiresInMinutes: 24 * 60,
+    const verificationEmailResult = await sendVerificationCodeAndLinkEmail({
+      to: normalizedEmail,
+      name: user.name,
+      otp: verificationCode,
+      verifyLink,
+      expiresInMinutes: 24 * 60,
+    });
+    if (!verificationEmailResult?.success) {
+      return res.status(503).json({
+        success: false,
+        emailSent: false,
+        message: 'Your account was created, but the verification email could not be delivered. Use Resend verification on this page before signing in.',
       });
-    } catch (emailError) {
-      console.error(
-        'Verification email error:',
-        emailError
-      );
     }
 
     return res.status(201).json({
-      message:
-        'Verification code and link have been sent to your email. Please check your inbox and verify your account before continuing.',
+      success: true,
+      message: 'Verification code and link have been sent to your email. Please check your inbox and verify your account before continuing.',
+      emailSent: true,
       user: safeUser(user),
-
-      /*
-       * Kept temporarily to preserve your existing
-       * registration response behavior.
-       */
-      verificationCode,
     });
   } catch (error) {
     console.error('Register error:', error);
@@ -929,6 +1171,15 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(401).json({
         message:
           'Invalid email or password.',
+      });
+    }
+
+    if (!user.isVerified) {
+      return res.status(403).json({
+        success: false,
+        requiresEmailVerification: true,
+        email: normalizedEmail,
+        message: 'Please verify your email address before signing in. You can request a new verification email below.',
       });
     }
 
