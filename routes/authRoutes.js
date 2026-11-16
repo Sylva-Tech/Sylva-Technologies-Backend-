@@ -113,19 +113,23 @@ const verifyGoogleIdentityToken = async (idToken, expectedNonce) => {
   const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
   if (header.alg !== 'RS256' || typeof header.kid !== 'string') throw new Error('Google identity token uses an unsupported signature.');
   let certificates = await getGoogleSigningCertificates();
-  let certificate = certificates[header.kid];
-  if (!certificate) {
+  let signingKey = Array.isArray(certificates.keys)
+    ? certificates.keys.find((key) => key.kid === header.kid && key.alg === 'RS256' && key.use === 'sig')
+    : null;
+  if (!signingKey) {
     googleSigningCertificates = null;
     certificates = await getGoogleSigningCertificates();
-    certificate = certificates[header.kid];
+    signingKey = Array.isArray(certificates.keys)
+      ? certificates.keys.find((key) => key.kid === header.kid && key.alg === 'RS256' && key.use === 'sig')
+      : null;
   }
-  if (!certificate) throw new Error('Google identity token signing key is not recognized.');
+  if (!signingKey) throw new Error('Google identity token signing key is not recognized.');
 
   const signedPayload = Buffer.from(parts[0] + '.' + parts[1]);
   const validSignature = crypto.verify(
     'RSA-SHA256',
     signedPayload,
-    new crypto.X509Certificate(certificate).publicKey,
+    crypto.createPublicKey({ key: signingKey, format: 'jwk' }),
     Buffer.from(parts[2], 'base64url')
   );
   if (!validSignature) throw new Error('Google identity token signature is invalid.');
