@@ -18,6 +18,7 @@ const verificationTokenSchema = new mongoose.Schema(
         'password-reset',
         'password-reset-code',
         'password-reset-verified',
+        'google-login',
       ],
       required: true,
     },
