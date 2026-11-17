@@ -5,8 +5,8 @@ const DEFAULT_COOLDOWN_MINUTES = 360;
 const isQuotaExhaustion = (error = {}) => {
   if (Number(error.providerStatus || error.status) !== 429) return false;
   const message = String(error.providerMessage || error.message || '').toLowerCase();
-  const code = String(error.providerCode || '').toLowerCase();
-  return /quota|billing|exceeded.*limit|limit.*exceeded|resource_exhausted/.test(message + ' ' + code);
+  if (/requests? per minute|tokens? per minute|rate.?limit|too many requests|requests? per second/.test(message)) return false;
+  return /quota|billing|payment required|daily limit|spending limit|exceeded.*current quota|current quota.*exceeded/.test(message);
 };
 const getCooldownMinutes = () => {
   const value = Number.parseInt(process.env.GEMINI_QUOTA_COOLDOWN_MINUTES, 10);
