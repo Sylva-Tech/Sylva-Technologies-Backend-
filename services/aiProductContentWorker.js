@@ -7,10 +7,10 @@ let running = false;
 
 const processOnePendingProduct = async () => {
   if (!process.env.GEMINI_API_KEY || running) return false;
-  const providerState = await readGeminiProviderState();
-  if (providerState.paused) return false;
   running = true;
   try {
+    const providerState = await readGeminiProviderState();
+    if (providerState.paused) return false;
     const now = new Date();
     const retryCutoff = now;
     const staleProcessingCutoff = new Date(now.getTime() - 10 * 60 * 1000);
