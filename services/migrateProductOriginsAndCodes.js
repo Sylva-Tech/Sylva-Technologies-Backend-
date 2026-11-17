@@ -4,17 +4,18 @@ const { generateUniqueProductCode } = require('./productIdentityService');
 /**
  * Idempotently classify existing products and backfill codes for legacy
  * seller/AliExpress products. Google Sheet codes (SYLT-###) are never changed.
- * The Product.source field remains the ingestion channel; Product.origin is
- * the canonical business ownership classification.
+ * Product.source remains the ingestion channel; Product.origin is the
+ * canonical business ownership classification.
  */
 async function migrateProductOriginsAndCodes() {
   let updated = 0;
   let codesAssigned = 0;
 
-  const cursor = Product.find({})
-    .select('_id source origin seller code')
-    .sort({ _id: 1 })
-    .cursor();
+  // Use the native collection cursor so Mongoose schema defaults do not mask
+  // legacy documents that are missing the origin field in MongoDB.
+  const cursor = Product.collection.find({})
+    .project({ _id: 1, source: 1, origin: 1, seller: 1, code: 1 })
+    .sort({ _id: 1 });
 
   for await (const product of cursor) {
     const isAliExpress = product.source === 'aliexpress';
@@ -28,7 +29,8 @@ async function migrateProductOriginsAndCodes() {
     const changes = {};
     if (product.origin !== origin) changes.origin = origin;
 
-    if (isSeller && product.source === 'manual') {
+    // Older seller listings created before source tracking may have source=manual.
+    if (isSeller && (!product.source || product.source === 'manual')) {
       changes.source = 'seller';
     }
 
@@ -41,11 +43,11 @@ async function migrateProductOriginsAndCodes() {
     }
 
     if (Object.keys(changes).length) {
-      const result = await Product.updateOne(
+      const result = await Product.collection.updateOne(
         { _id: product._id },
         { $set: changes }
       );
-      if (result.modifiedCount || result.nModified) updated += 1;
+      if (result.modifiedCount) updated += 1;
     }
   }
 
