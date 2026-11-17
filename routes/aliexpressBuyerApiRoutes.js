@@ -848,7 +848,7 @@ router.post('/catalog/review/:id/generate-content', protect, adminOnly, async (r
     const generated = await generateAliExpressProductContent({
       title: record.title, supplierBrand: record.supplierBrand,
       categoryName: record.categoryName, productAttributes: record.productAttributes,
-      rawDescription: record.sourcePayload?.rawDescription || '', targetField: 'all',
+      rawDescription: record.sourcePayload?.rawDescription || '', productUrl: record.productUrl || '', targetField: 'all',
     });
     record.aiContentDraft = {
       ...generated, attempts: Number(record.aiContentDraft?.attempts || 0),
@@ -943,9 +943,9 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const aiDraft = record.aiContentDraft?.status === 'generated' ? record.aiContentDraft : null;
     const description = String(req.body?.description || aiDraft?.description || title).trim().slice(0, 12000);
     const requestedBrand = String(req.body?.brand || '').trim();
-    const titleBrand = title.match(/^(HP|Lenovo|Dell|Samsung|Apple|Xiaomi|JBL|Sony|Anker|Baseus|Ugreen|Logitech|Asus|Acer|Huawei|Microsoft|Canon|Epson|TP-Link|KZ|AOC|MSI|Gigabyte|Razer|Hikvision|Dahua)\b/i)?.[1] || '';
+    const titleBrand = title.match(/^(HP|Lenovo|Dell|Samsung|Apple|Xiaomi|JBL|Sony|Anker|Baseus|Ugreen|Logitech|Asus|Acer|Huawei|Microsoft|Canon|Epson|D-Link|TP-Link|Netgear|Tenda|Mercusys|KZ|AOC|MSI|Gigabyte|Razer|Hikvision|Dahua)\b/i)?.[1] || '';
     const validBrand = (value) => { const candidate = String(value || '').trim(); return candidate && !/^(aliexpress|sylva technologies|unknown|generic)$/i.test(candidate) ? candidate : ''; };
-    const brand = String(titleBrand || validBrand(record.supplierBrand) || validBrand(requestedBrand) || '').trim().slice(0, 120);
+    const brand = String(titleBrand || validBrand(aiDraft?.verifiedBrand) || validBrand(record.supplierBrand) || validBrand(requestedBrand) || '').trim().slice(0, 120);
     let category = null;
     const chosenCategoryId = String(req.body?.categoryId || record.sylvaCategoryId || '');
     if (chosenCategoryId && mongoose.isValidObjectId(chosenCategoryId)) {
@@ -966,11 +966,12 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const requestedStock = Number.parseInt(req.body?.stock, 10);
     const approvedStock = Number.isInteger(requestedStock) && requestedStock >= 0 ? requestedStock : 10;
 
-    const publicSpecifications = Object.fromEntries(
-      (Array.isArray(record.productAttributes) ? record.productAttributes : [])
-        .filter((attribute) => attribute?.name && attribute?.value)
-        .map((attribute) => [String(attribute.name).slice(0, 80), String(attribute.value).slice(0, 240)])
-    );
+    const publicSpecifications = Object.fromEntries([
+      ...(Array.isArray(record.productAttributes) ? record.productAttributes : []),
+      ...(Array.isArray(aiDraft?.specifications) ? aiDraft.specifications : []),
+    ]
+      .filter((attribute) => attribute?.name && attribute?.value)
+      .map((attribute) => [String(attribute.name).slice(0, 80), String(attribute.value).slice(0, 240)]));
     const keyFeatures = (Array.isArray(record.productAttributes) ? record.productAttributes : [])
       .filter((attribute) => attribute?.name && attribute?.value)
       .slice(0, 8)
@@ -989,6 +990,13 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       description, shortDescription: approvedShortDescription,
       keyFeatures: approvedKeyFeatures,
       seoTitle, seoMetaDescription, marketingTags, socialPromoCaption,
+      returnPolicy: String(aiDraft?.returnPolicyNote || 'Returns and refunds are governed by the Sylva Technologies store Returns & Refunds policy. Confirm eligibility and conditions under the published store policy before purchase.').slice(0, 500),
+      contentGeneration: aiDraft ? {
+        provider: 'google_gemini', model: aiDraft.model || '', sourceHash: aiDraft.sourceHash || '',
+        generatedAt: aiDraft.generatedAt || null,
+        generatedFields: ['brand', 'specifications', 'keyFeatures', 'shortDescription', 'description', 'seoTitle', 'seoMetaDescription', 'marketingTags', 'socialPromoCaption', 'returnPolicy'],
+        warnings: aiDraft.warnings || [], researchSources: aiDraft.researchSources || [],
+      } : undefined,
       price, oldPrice: Number(req.body?.oldPrice) > price ? Number(req.body.oldPrice) : 0,
       images, stock: approvedStock, condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
