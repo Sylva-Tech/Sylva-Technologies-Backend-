@@ -121,6 +121,12 @@ const matchSylvaCategory = (title, categories) => {
 router.get('/status', protect, adminOnly, async (req, res) => {
   try {
     const connection = await AliExpressConnection.findOne({ provider: 'aliexpress' }).lean();
+    const [aiPending, aiProcessing, aiGenerated, aiFailed] = await Promise.all([
+      AliExpressCatalogProduct.countDocuments({ status: { $in: ['pending', 'approved'] }, 'aiContentDraft.status': { $in: ['pending', 'not_generated'] } }),
+      AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'processing' }),
+      AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'generated' }),
+      AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'failed' }),
+    ]);
     const configured = Boolean(process.env.ALIEXPRESS_APP_KEY && process.env.ALIEXPRESS_APP_SECRET &&
       process.env.ALIEXPRESS_REDIRECT_URI && /^[a-f0-9]{64}$/i.test(process.env.ALIEXPRESS_TOKEN_ENCRYPTION_KEY || ''));
     const connected = connection?.status === 'connected';
@@ -187,7 +193,7 @@ router.get('/status', protect, adminOnly, async (req, res) => {
           lastTestError: connection?.catalogLastTestError || '',
         },
         supplierOrderingEnabled: false,
-      outputFields: ['shortDescription', 'keyFeatures', 'description', 'seoTitle', 'seoMetaDescription', 'marketingTags', 'socialPromoCaption', 'suggestedCategory'],
+      outputFields: ['verifiedBrand', 'modelNumber', 'specifications', 'keyFeatures', 'shortDescription', 'description', 'seoTitle', 'seoMetaDescription', 'marketingTags', 'socialPromoCaption', 'returnPolicyNote'],
         supplierOrderingReason: 'Supplier order placement and payment remain disabled until product sourcing, supplier payment, duplicate-order handling, cancellation and tracking are independently verified.',
         apiGeneration: 'iop-protocol-top-sdk-verified-product-entitlement-pending',
         dropshipGateway: null,
@@ -833,6 +839,8 @@ router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
       scope: 'product_content_only',
       automaticEnrichmentAfterSync: true,
       workerIntervalSeconds: 5,
+      queue: { pending: aiPending, processing: aiProcessing, generated: aiGenerated, failed: aiFailed },
+      maxAutomaticAttempts: 5,
       webResearchEnabled: Boolean(process.env.GEMINI_API_KEY),
       webResearchProvider: 'Google Search grounding',
       sourcePreference: 'manufacturer official pages first; reputable technical sources only as fallback',
@@ -1256,6 +1264,7 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
           title: normalized.title,
           supplierBrand: normalized.supplierBrand,
           rawDescription: normalized.sourcePayload?.rawDescription || '',
+          productUrl: normalized.productUrl || '',
           productAttributes: normalized.productAttributes,
         });
         operations.push({
