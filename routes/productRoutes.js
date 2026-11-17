@@ -15,6 +15,7 @@ const {
 const sellerUpload = require('../middleware/sellerUpload');
 const uploadProductImage = require('../utils/uploadProductImage');
 const { sendSalesNotificationEmail } = require('../services/emailService');
+const { generateUniqueProductCode } = require('../services/productIdentityService');
 
 const router = express.Router();
 
@@ -977,11 +978,14 @@ router.post('/seller/import', protect, approvedSellerOnly, async (req, res) => {
           throw new Error('Spreadsheet link must be a valid HTTP or HTTPS URL no longer than 1000 characters.');
         }
 
+        const productCode = await generateUniqueProductCode('SELL');
         const product = await Product.create({
           name,
           slug,
-          code: normalizedSku,
+          code: productCode,
           sku: normalizedSku,
+          source: 'seller',
+          origin: 'seller_store',
           brand,
           category: categoryRecord._id,
           subcategory: String(row.subcategory || '').trim(),
@@ -1022,7 +1026,7 @@ router.post('/seller/import', protect, approvedSellerOnly, async (req, res) => {
           offerStartDate: null,
           offerEndDate: null,
         });
-        importedProducts.push({ rowNumber, id: product._id, name: product.name, sku: product.sku });
+        importedProducts.push({ rowNumber, id: product._id, name: product.name, code: product.code, sku: product.sku });
       } catch (error) {
         errors.push({ rowNumber, message: error.message || 'Could not import this product.' });
       }
@@ -1280,13 +1284,20 @@ router.post(
         hostedImageCount: imageUrls.length,
       });
 
+      const productCode = await generateUniqueProductCode('SELL');
       const product =
         await Product.create({
           name: name.trim(),
 
           slug: productSlug,
 
+          code: productCode,
+
           sku: normalizedSku,
+
+          source: 'seller',
+
+          origin: 'seller_store',
 
           brand: brand.trim(),
 
@@ -2412,6 +2423,9 @@ router.post(
         sellerId = seller;
       }
 
+      const productCode = sellerId
+        ? await generateUniqueProductCode('SELL')
+        : normalizedCode;
       const product =
         await Product.create({
           name,
@@ -2420,7 +2434,11 @@ router.post(
             productSlug,
 
           code:
-            normalizedCode,
+            productCode,
+
+          source: sellerId ? 'seller' : 'manual',
+
+          origin: sellerId ? 'seller_store' : 'sylva_owned',
 
           ...(normalizedSku ? { sku: normalizedSku } : {}),
 
