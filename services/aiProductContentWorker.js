@@ -56,6 +56,7 @@ const processOnePendingProduct = async () => {
         categoryName: claimed.categoryName,
         productAttributes: claimed.productAttributes,
         rawDescription: claimed.sourcePayload?.rawDescription || '',
+        productUrl: claimed.productUrl || '',
       });
       claimed.aiContentDraft = {
         ...generated,

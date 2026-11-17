@@ -8,7 +8,7 @@ const Product = require('../models/Product');
 const Category = require('../models/Category');
 const AliExpressCatalogSettings = require('../models/AliExpressCatalogSettings');
 const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
-const { generateAliExpressProductContent } = require('../services/aiProductContentService');
+const { generateAliExpressProductContent, hashSource } = require('../services/aiProductContentService');
 const { sendSalesNotificationEmail } = require('../services/emailService');
 const {
   getDropshipApiConfig,
@@ -831,6 +831,12 @@ router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
       provider: 'google_gemini',
       model: String(process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'),
       scope: 'product_content_only',
+      automaticEnrichmentAfterSync: true,
+      workerIntervalSeconds: 5,
+      webResearchEnabled: Boolean(process.env.GEMINI_API_KEY),
+      webResearchProvider: 'Google Search grounding',
+      sourcePreference: 'manufacturer official pages first; reputable technical sources only as fallback',
+      draftsRequireAdminApproval: true,
       mayPublishProducts: false,
       mayChangePricingOrStock: false,
       mayAccessCustomerOrFinancialData: false,
@@ -848,7 +854,7 @@ router.post('/catalog/review/:id/generate-content', protect, adminOnly, async (r
     const generated = await generateAliExpressProductContent({
       title: record.title, supplierBrand: record.supplierBrand,
       categoryName: record.categoryName, productAttributes: record.productAttributes,
-      rawDescription: record.sourcePayload?.rawDescription || '', targetField: 'all',
+      rawDescription: record.sourcePayload?.rawDescription || '', productUrl: record.productUrl || '', targetField: 'all',
     });
     record.aiContentDraft = {
       ...generated, attempts: Number(record.aiContentDraft?.attempts || 0),
@@ -943,9 +949,9 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const aiDraft = record.aiContentDraft?.status === 'generated' ? record.aiContentDraft : null;
     const description = String(req.body?.description || aiDraft?.description || title).trim().slice(0, 12000);
     const requestedBrand = String(req.body?.brand || '').trim();
-    const titleBrand = title.match(/^(HP|Lenovo|Dell|Samsung|Apple|Xiaomi|JBL|Sony|Anker|Baseus|Ugreen|Logitech|Asus|Acer|Huawei|Microsoft|Canon|Epson|TP-Link|KZ|AOC|MSI|Gigabyte|Razer|Hikvision|Dahua)\b/i)?.[1] || '';
+    const titleBrand = title.match(/^(HP|Lenovo|Dell|Samsung|Apple|Xiaomi|JBL|Sony|Anker|Baseus|Ugreen|Logitech|Asus|Acer|Huawei|Microsoft|Canon|Epson|D-Link|TP-Link|Netgear|Tenda|Mercusys|KZ|AOC|MSI|Gigabyte|Razer|Hikvision|Dahua)\b/i)?.[1] || '';
     const validBrand = (value) => { const candidate = String(value || '').trim(); return candidate && !/^(aliexpress|sylva technologies|unknown|generic)$/i.test(candidate) ? candidate : ''; };
-    const brand = String(titleBrand || validBrand(record.supplierBrand) || validBrand(requestedBrand) || '').trim().slice(0, 120);
+    const brand = String(titleBrand || validBrand(aiDraft?.verifiedBrand) || validBrand(record.supplierBrand) || validBrand(requestedBrand) || '').trim().slice(0, 120);
     let category = null;
     const chosenCategoryId = String(req.body?.categoryId || record.sylvaCategoryId || '');
     if (chosenCategoryId && mongoose.isValidObjectId(chosenCategoryId)) {
@@ -966,11 +972,12 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const requestedStock = Number.parseInt(req.body?.stock, 10);
     const approvedStock = Number.isInteger(requestedStock) && requestedStock >= 0 ? requestedStock : 10;
 
-    const publicSpecifications = Object.fromEntries(
-      (Array.isArray(record.productAttributes) ? record.productAttributes : [])
-        .filter((attribute) => attribute?.name && attribute?.value)
-        .map((attribute) => [String(attribute.name).slice(0, 80), String(attribute.value).slice(0, 240)])
-    );
+    const publicSpecifications = Object.fromEntries([
+      ...(Array.isArray(record.productAttributes) ? record.productAttributes : []),
+      ...(Array.isArray(aiDraft?.specifications) ? aiDraft.specifications : []),
+    ]
+      .filter((attribute) => attribute?.name && attribute?.value)
+      .map((attribute) => [String(attribute.name).slice(0, 80), String(attribute.value).slice(0, 240)]));
     const keyFeatures = (Array.isArray(record.productAttributes) ? record.productAttributes : [])
       .filter((attribute) => attribute?.name && attribute?.value)
       .slice(0, 8)
@@ -989,6 +996,13 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       description, shortDescription: approvedShortDescription,
       keyFeatures: approvedKeyFeatures,
       seoTitle, seoMetaDescription, marketingTags, socialPromoCaption,
+      returnPolicy: String(aiDraft?.returnPolicyNote || 'Returns and refunds are governed by the Sylva Technologies store Returns & Refunds policy. Confirm eligibility and conditions under the published store policy before purchase.').slice(0, 500),
+      contentGeneration: aiDraft ? {
+        provider: 'google_gemini', model: aiDraft.model || '', sourceHash: aiDraft.sourceHash || '',
+        generatedAt: aiDraft.generatedAt || null,
+        generatedFields: ['brand', 'specifications', 'keyFeatures', 'shortDescription', 'description', 'seoTitle', 'seoMetaDescription', 'marketingTags', 'socialPromoCaption', 'returnPolicy'],
+        warnings: aiDraft.warnings || [], researchSources: aiDraft.researchSources || [],
+      } : undefined,
       price, oldPrice: Number(req.body?.oldPrice) > price ? Number(req.body.oldPrice) : 0,
       images, stock: approvedStock, condition: 'New',
       isActive: true, approvalStatus: 'approved', approvedAt: new Date(), approvedBy: req.user._id,
@@ -1238,13 +1252,49 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
         normalized.categoryName = categoryMatch?.category?.name || '';
         normalized.categoryMatchStatus = categoryMatch ? 'matched' : 'needs_review';
 
+        const nextContentHash = hashSource({
+          title: normalized.title,
+          supplierBrand: normalized.supplierBrand,
+          rawDescription: normalized.sourcePayload?.rawDescription || '',
+          productAttributes: normalized.productAttributes,
+        });
         operations.push({
           updateOne: {
             filter: { providerProductId: normalized.providerProductId },
-            update: {
-              $set: { ...normalized, syncedAt: new Date() },
-              $setOnInsert: { status: 'pending' },
-            },
+            update: [
+              { $set: { ...normalized, syncedAt: new Date() } },
+              { $set: {
+                status: { $ifNull: ['$status', 'pending'] },
+                'aiContentDraft.status': {
+                  $cond: [
+                    { $ne: [{ $ifNull: ['$aiContentDraft.sourceHash', ''] }, nextContentHash] },
+                    'pending',
+                    { $ifNull: ['$aiContentDraft.status', 'pending'] },
+                  ],
+                },
+                'aiContentDraft.attempts': {
+                  $cond: [
+                    { $ne: [{ $ifNull: ['$aiContentDraft.sourceHash', ''] }, nextContentHash] },
+                    0,
+                    { $ifNull: ['$aiContentDraft.attempts', 0] },
+                  ],
+                },
+                'aiContentDraft.lastError': {
+                  $cond: [
+                    { $ne: [{ $ifNull: ['$aiContentDraft.sourceHash', ''] }, nextContentHash] },
+                    '',
+                    { $ifNull: ['$aiContentDraft.lastError', ''] },
+                  ],
+                },
+                'aiContentDraft.nextAttemptAt': {
+                  $cond: [
+                    { $ne: [{ $ifNull: ['$aiContentDraft.sourceHash', ''] }, nextContentHash] },
+                    null,
+                    '$aiContentDraft.nextAttemptAt',
+                  ],
+                },
+              } },
+            ],
             upsert: true,
           },
         });
