@@ -42,7 +42,7 @@ test('Google Sheets sync authenticates with service-account JWT and reads the co
       assert.match(String(options.body), /jwt-bearer/);
       return new Response(JSON.stringify({ access_token: 'unit-test-access-token' }), { status: 200 });
     }
-    assert.match(String(url), /sheets\.googleapis\.com\/v4\/spreadsheets\/spreadsheet-id\/values\/Sylva%20Auto%21A%3AAL$/);
+    assert.match(String(url), /sheets\.googleapis\.com\/v4\/spreadsheets\/spreadsheet-id\/values\/Sylva%20Auto!A%3AAL$/);
     assert.equal(options.headers.Authorization, 'Bearer unit-test-access-token');
     return new Response(JSON.stringify({
       values: [
