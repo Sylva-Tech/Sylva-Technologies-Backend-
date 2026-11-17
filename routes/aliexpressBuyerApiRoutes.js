@@ -8,7 +8,7 @@ const Product = require('../models/Product');
 const Category = require('../models/Category');
 const AliExpressCatalogSettings = require('../models/AliExpressCatalogSettings');
 const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
-const { generateAliExpressProductContent } = require('../services/aiProductContentService');
+const { generateAliExpressProductContent, hashSource } = require('../services/aiProductContentService');
 const { sendSalesNotificationEmail } = require('../services/emailService');
 const {
   getDropshipApiConfig,
@@ -1246,13 +1246,49 @@ router.post('/catalog/sync', protect, adminOnly, limiter, async (req, res) => {
         normalized.categoryName = categoryMatch?.category?.name || '';
         normalized.categoryMatchStatus = categoryMatch ? 'matched' : 'needs_review';
 
+        const nextContentHash = hashSource({
+          title: normalized.title,
+          supplierBrand: normalized.supplierBrand,
+          rawDescription: normalized.sourcePayload?.rawDescription || '',
+          productAttributes: normalized.productAttributes,
+        });
         operations.push({
           updateOne: {
             filter: { providerProductId: normalized.providerProductId },
-            update: {
-              $set: { ...normalized, syncedAt: new Date() },
-              $setOnInsert: { status: 'pending' },
-            },
+            update: [
+              { $set: { ...normalized, syncedAt: new Date() } },
+              { $set: {
+                status: { $ifNull: ['$status', 'pending'] },
+                'aiContentDraft.status': {
+                  $cond: [
+                    { $ne: [{ $ifNull: ['$aiContentDraft.sourceHash', ''] }, nextContentHash] },
+                    'pending',
+                    { $ifNull: ['$aiContentDraft.status', 'pending'] },
+                  ],
+                },
+                'aiContentDraft.attempts': {
+                  $cond: [
+                    { $ne: [{ $ifNull: ['$aiContentDraft.sourceHash', ''] }, nextContentHash] },
+                    0,
+                    { $ifNull: ['$aiContentDraft.attempts', 0] },
+                  ],
+                },
+                'aiContentDraft.lastError': {
+                  $cond: [
+                    { $ne: [{ $ifNull: ['$aiContentDraft.sourceHash', ''] }, nextContentHash] },
+                    '',
+                    { $ifNull: ['$aiContentDraft.lastError', ''] },
+                  ],
+                },
+                'aiContentDraft.nextAttemptAt': {
+                  $cond: [
+                    { $ne: [{ $ifNull: ['$aiContentDraft.sourceHash', ''] }, nextContentHash] },
+                    null,
+                    '$aiContentDraft.nextAttemptAt',
+                  ],
+                },
+              } },
+            ],
             upsert: true,
           },
         });
