@@ -524,8 +524,9 @@ async function syncProductRow(
     await findSeller(row.seller);
 
   const productData = {
-    // Explicitly mark records managed by the Google Sheets import.
+    // Keep the sheet as the ingestion source, while recording who owns the listing.
     source: 'google_sheet',
+    origin: seller ? 'seller_store' : 'sylva_owned',
     name,
     brand,
     category: category._id,
