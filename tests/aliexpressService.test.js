@@ -237,3 +237,48 @@ test('Protocol.TOP adapter signs and permits both documented feed discovery meth
   });
   assert.equal(itemRequest.body, 'feed_name=DS+bestseller&page_size=20&search_id=cursor-1');
 });
+
+
+test('read-only catalogue request backs off and retries a brief AliExpress ApiCallLimit response', async () => {
+  await withEnv({
+    ALIEXPRESS_APP_KEY: 'test-app-key',
+    ALIEXPRESS_APP_SECRET: 'test-app-secret',
+    ALIEXPRESS_REDIRECT_URI: 'https://example.test/callback',
+    ALIEXPRESS_TOKEN_ENCRYPTION_KEY: 'c'.repeat(64),
+  }, async () => {
+    const previousFetch = global.fetch;
+    const previousTimeout = global.setTimeout;
+    let attempts = 0;
+    global.setTimeout = (callback) => previousTimeout(callback, 0);
+    global.fetch = async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            error_response: {
+              code: 'ApiCallLimit',
+              msg: 'Api access frequency exceeds the limit. this ban will last 1 seconds',
+            },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          aliexpress_ds_product_get_response: { rsp_code: 200, ret: true, result: {} },
+        }),
+      };
+    };
+    try {
+      const result = await callDropshipApi('aliexpress.ds.product.get', { product_id: '1001' }, 'buyer-access-token');
+      assert.equal(attempts, 2);
+      assert.equal(result.aliexpress_ds_product_get_response.rsp_code, 200);
+    } finally {
+      global.fetch = previousFetch;
+      global.setTimeout = previousTimeout;
+    }
+  });
+});

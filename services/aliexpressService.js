@@ -174,41 +174,58 @@ const callDropshipApi = async (apiName, businessParams, accessToken) => {
     appKey: process.env.ALIEXPRESS_APP_KEY,
     appSecret: process.env.ALIEXPRESS_APP_SECRET,
   });
-  const response = await fetch(request.url, {
-    method: 'POST',
-    headers: request.headers,
-    body: request.body,
-    signal: AbortSignal.timeout(20000),
-  });
-  const raw = await response.text();
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch {
-    const error = new Error('AliExpress returned a non-JSON response to the read-only catalogue request.');
-    error.code = 'ALIEXPRESS_INVALID_RESPONSE';
-    error.status = 502;
-    throw error;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetch(request.url, {
+      method: 'POST',
+      headers: request.headers,
+      body: request.body,
+      signal: AbortSignal.timeout(20000),
+    });
+    const raw = await response.text();
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      const error = new Error('AliExpress returned a non-JSON response to the read-only catalogue request.');
+      error.code = 'ALIEXPRESS_INVALID_RESPONSE';
+      error.status = 502;
+      throw error;
+    }
+
+    let apiError = null;
+    if (!response.ok || payload.error_response || (payload.code && String(payload.code) !== '0')) {
+      const detail = payload.error_response || payload;
+      apiError = new Error(String(detail.msg || detail.message || detail.sub_msg || 'AliExpress rejected the catalogue request.'));
+      apiError.code = 'ALIEXPRESS_API_ERROR';
+      apiError.status = response.status === 429 ? 429 : 502;
+      apiError.aliexpressCode = String(detail.code || detail.error_code || '');
+    } else {
+      const envelope = payload[`${apiName.split('.').join('_')}_response`] || payload;
+      const methodCode = envelope.rsp_code ?? envelope.resp_result?.resp_code;
+      const methodRet = envelope.ret;
+      if (methodRet === false || (methodCode !== undefined && !['rsp_code', 200, '200', 0, '0'].includes(methodCode))) {
+        apiError = new Error(String(envelope.rsp_msg || envelope.resp_result?.resp_msg || 'AliExpress catalogue method returned an unsuccessful result.'));
+        apiError.code = 'ALIEXPRESS_API_ERROR';
+        apiError.status = 502;
+        apiError.aliexpressCode = String(methodCode ?? '');
+      }
+    }
+
+    if (!apiError) return payload;
+
+    const frequencyLimited = /ApiCallLimit/i.test(apiError.aliexpressCode) ||
+      /api access frequency exceeds the limit/i.test(apiError.message);
+    if (frequencyLimited && attempt < 2) {
+      // AliExpress reports short bans (often one second). Back off before
+      // retrying this same read-only request; supplier write methods stay blocked.
+      await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+      continue;
+    }
+    throw apiError;
   }
-  if (!response.ok || payload.error_response || payload.code && String(payload.code) !== '0') {
-    const detail = payload.error_response || payload;
-    const error = new Error(String(detail.msg || detail.message || detail.sub_msg || 'AliExpress rejected the catalogue request.'));
-    error.code = 'ALIEXPRESS_API_ERROR';
-    error.status = 502;
-    error.aliexpressCode = String(detail.code || detail.error_code || '');
-    throw error;
-  }
-  const envelope = payload[`${apiName.split('.').join('_')}_response`] || payload;
-  const methodCode = envelope.rsp_code ?? envelope.resp_result?.resp_code;
-  const methodRet = envelope.ret;
-  if (methodRet === false || (methodCode !== undefined && !['rsp_code', 200, '200', 0, '0'].includes(methodCode))) {
-    const error = new Error(String(envelope.rsp_msg || envelope.resp_result?.resp_msg || 'AliExpress catalogue method returned an unsuccessful result.'));
-    error.code = 'ALIEXPRESS_API_ERROR';
-    error.status = 502;
-    error.aliexpressCode = String(methodCode ?? '');
-    throw error;
-  }
-  return payload;
+
+  throw new Error('AliExpress catalogue request could not be completed.');
 };
 
 const encryptSecret = (value) => {
