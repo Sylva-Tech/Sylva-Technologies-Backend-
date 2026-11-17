@@ -29,6 +29,7 @@ const hashSource = (product) => crypto.createHash('sha256')
     title: String(product.title || product.name || '').slice(0, 500),
     brand: String(product.brand || product.supplierBrand || '').slice(0, 120),
     rawDescription: String(product.rawDescription || '').slice(0, 2500),
+    productUrl: String(product.productUrl || '').slice(0, 2000),
     attributes: (Array.isArray(product.productAttributes) ? product.productAttributes : [])
       .slice(0, 40).map((item) => [String(item?.name || '').slice(0, 80), String(item?.value || '').slice(0, 240)]),
   }))
