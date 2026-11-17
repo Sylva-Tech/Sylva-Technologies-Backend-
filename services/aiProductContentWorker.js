@@ -20,7 +20,17 @@ const processOnePendingProduct = async () => {
       $or: [
         {
           status: { $in: ['pending', 'approved'] },
-          'aiContentDraft.status': 'pending',
+          'aiContentDraft.status': { $in: ['pending', 'not_generated'] },
+          'aiContentDraft.attempts': { $lt: 5 },
+          $or: [
+            { 'aiContentDraft.nextAttemptAt': null },
+            { 'aiContentDraft.nextAttemptAt': { $lte: retryCutoff } },
+          ],
+        },
+        {
+          status: { $in: ['pending', 'approved'] },
+          'aiContentDraft.status': 'failed',
+          'aiContentDraft.attempts': { $lt: 5 },
           $or: [
             { 'aiContentDraft.nextAttemptAt': null },
             { 'aiContentDraft.nextAttemptAt': { $lte: retryCutoff } },
@@ -66,12 +76,13 @@ const processOnePendingProduct = async () => {
         processingAt: null,
       };
       await claimed.save();
+      console.info('[AI product enrichment] draft generated:', JSON.stringify({ productId: String(claimed._id), sourceHash: generated.sourceHash, researchStatus: generated.researchStatus, sources: generated.researchSources?.length || 0, specifications: generated.specifications?.length || 0 }));
     } catch (error) {
       const attempts = Number(claimed.aiContentDraft?.attempts || 1);
-      const retry = attempts < 3 && error.code !== 'AI_CONTENT_NOT_CONFIGURED' && error.code !== 'AI_CONTENT_REFUSED';
+      const retry = attempts < 5 && error.code !== 'AI_CONTENT_NOT_CONFIGURED' && error.code !== 'AI_CONTENT_REFUSED';
       claimed.aiContentDraft.status = retry ? 'pending' : 'failed';
       claimed.aiContentDraft.lastError = String(error.code || 'AI_CONTENT_FAILED').slice(0, 240);
-      claimed.aiContentDraft.nextAttemptAt = retry ? new Date(Date.now() + attempts * 60000) : null;
+      claimed.aiContentDraft.nextAttemptAt = retry ? new Date(Date.now() + Math.min(15, 2 ** attempts) * 60000) : null;
       claimed.aiContentDraft.processingAt = null;
       await claimed.save();
       console.warn('[AI product enrichment] job did not complete:', JSON.stringify({
