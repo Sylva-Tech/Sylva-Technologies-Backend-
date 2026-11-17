@@ -15,6 +15,7 @@ const {
 const sellerUpload = require('../middleware/sellerUpload');
 const uploadProductImage = require('../utils/uploadProductImage');
 const { sendSalesNotificationEmail } = require('../services/emailService');
+const { generateUniqueProductCode } = require('../services/productIdentityService');
 
 const router = express.Router();
 
@@ -977,11 +978,14 @@ router.post('/seller/import', protect, approvedSellerOnly, async (req, res) => {
           throw new Error('Spreadsheet link must be a valid HTTP or HTTPS URL no longer than 1000 characters.');
         }
 
+        const productCode = await generateUniqueProductCode('SELL');
         const product = await Product.create({
           name,
           slug,
-          code: normalizedSku,
+          code: productCode,
           sku: normalizedSku,
+          source: 'seller',
+          origin: 'seller_store',
           brand,
           category: categoryRecord._id,
           subcategory: String(row.subcategory || '').trim(),
@@ -1022,7 +1026,7 @@ router.post('/seller/import', protect, approvedSellerOnly, async (req, res) => {
           offerStartDate: null,
           offerEndDate: null,
         });
-        importedProducts.push({ rowNumber, id: product._id, name: product.name, sku: product.sku });
+        importedProducts.push({ rowNumber, id: product._id, name: product.name, code: product.code, sku: product.sku });
       } catch (error) {
         errors.push({ rowNumber, message: error.message || 'Could not import this product.' });
       }
@@ -1280,13 +1284,20 @@ router.post(
         hostedImageCount: imageUrls.length,
       });
 
+      const productCode = await generateUniqueProductCode('SELL');
       const product =
         await Product.create({
           name: name.trim(),
 
           slug: productSlug,
 
+          code: productCode,
+
           sku: normalizedSku,
+
+          source: 'seller',
+
+          origin: 'seller_store',
 
           brand: brand.trim(),
 
@@ -2190,6 +2201,50 @@ router.put(
 );
 
 /* =========================================================
+   ADMIN PRODUCT CATALOG — PRIVATE SOURCE AND CODE METADATA
+   ========================================================= */
+router.get('/admin/catalog', protect, adminOnly, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit, 10) || 100));
+    const search = String(req.query.search || '').trim().slice(0, 120);
+    const filter = {};
+
+    if (search) {
+      const escaped = [...search].map((character) => '.*+?^$()|[]{}\\'.includes(character) ? '\\' + character : character).join('');
+      const matcher = new RegExp(escaped, 'i');
+      filter.$or = [
+        { name: matcher },
+        { brand: matcher },
+        { code: matcher },
+        { sku: matcher },
+      ];
+    }
+
+    const [products, totalProducts] = await Promise.all([
+      Product.find(filter)
+        .populate('category', 'name slug')
+        .populate('seller', 'name email sellerProfile.storeName')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Product.countDocuments(filter),
+    ]);
+
+    return res.set('Cache-Control', 'no-store, private').json({
+      products,
+      page,
+      totalPages: Math.ceil(totalProducts / limit),
+      totalProducts,
+    });
+  } catch (error) {
+    console.error('Admin product catalogue load failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to load the admin product catalogue.' });
+  }
+});
+
+/* =========================================================
    ADMIN PRODUCT EDITOR LOOKUP
    ========================================================= */
 router.get('/admin/:id', protect, adminOnly, async (req, res) => {
@@ -2412,6 +2467,9 @@ router.post(
         sellerId = seller;
       }
 
+      const productCode = sellerId
+        ? await generateUniqueProductCode('SELL')
+        : normalizedCode;
       const product =
         await Product.create({
           name,
@@ -2420,7 +2478,11 @@ router.post(
             productSlug,
 
           code:
-            normalizedCode,
+            productCode,
+
+          source: sellerId ? 'seller' : 'manual',
+
+          origin: sellerId ? 'seller_store' : 'sylva_owned',
 
           ...(normalizedSku ? { sku: normalizedSku } : {}),
 

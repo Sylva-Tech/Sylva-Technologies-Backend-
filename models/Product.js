@@ -53,6 +53,14 @@ const productSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Canonical business ownership/origin, independent of the ingestion channel above.
+    origin: {
+      type: String,
+      enum: ['sylva_owned', 'seller_store', 'aliexpress'],
+      default: 'sylva_owned',
+      index: true,
+    },
+
     brand: {
       type: String,
       required: [

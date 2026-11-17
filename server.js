@@ -5,6 +5,7 @@ const connectDB = require('./config/db');
 const { startAliExpressTokenRefresh } = require('./services/aliexpressTokenManager');
 const { startAIProductContentWorker } = require('./services/aiProductContentWorker');
 const migrateProductCodeIndex = require('./services/migrateProductCodeIndex');
+const migrateProductOriginsAndCodes = require('./services/migrateProductOriginsAndCodes');
 
 const PORT = process.env.PORT || 5000;
 
@@ -14,6 +15,7 @@ const startServer = async () => {
     if (mongoUri) {
       await connectDB();
       await migrateProductCodeIndex();
+      await migrateProductOriginsAndCodes();
       startAliExpressTokenRefresh();
       startAIProductContentWorker();
     } else {
