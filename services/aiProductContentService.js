@@ -232,8 +232,12 @@ const generateAliExpressProductContent = async (product) => {
     .filter((source) => /^https:\/\//i.test(String(source?.uri || source?.url || '')))
     .map((source) => [String(source.uri || source.url), { title: String(source.title || source.displayName || source.uri || source.url).slice(0, 240), url: String(source.uri || source.url).slice(0, 2000) }])).values()].slice(0, 12);
   const researchQueries = (grounding.webSearchQueries || grounding.web_search_queries || []).map((query) => String(query).slice(0, 240)).filter(Boolean).slice(0, 8);
+  const validated = validateContent(parsed);
+  if (!researchSources.length) {
+    validated.warnings = [...validated.warnings, 'No verifiable web research sources were returned for this product. Review specifications against the manufacturer before approval.'].slice(0, 8);
+  }
   return {
-    ...validateContent(parsed),
+    ...validated,
     researchSources,
     researchQueries,
     researchStatus: researchSources.length ? 'grounded' : 'no_sources_found',
