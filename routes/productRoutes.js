@@ -2211,7 +2211,7 @@ router.get('/admin/catalog', protect, adminOnly, async (req, res) => {
     const filter = {};
 
     if (search) {
-      const escaped = search.replace(/[.*+?^$()|[\\]{}]/g, (character) => '\\' + character);
+      const escaped = search.replace(/[.*+?^$()|[\]\\{}]/g, (character) => '\\' + character);
       const matcher = new RegExp(escaped, 'i');
       filter.$or = [
         { name: matcher },
