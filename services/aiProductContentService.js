@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { assertGeminiAvailable, isQuotaExhaustion, pauseGeminiForQuota } = require('./aiProviderCircuitBreaker');
 
 const MODEL_DEFAULT = 'gemini-3.5-flash-lite';
 const CONTENT_SCHEMA = {
@@ -126,6 +127,7 @@ const validateContent = (value) => {
 };
 
 const generateAliExpressProductContent = async (product) => {
+  await assertGeminiAvailable();
   const apiKey = String(process.env.GEMINI_API_KEY || '').trim();
   if (!apiKey) {
     const error = new Error('Gemini product enrichment is not configured.');
@@ -209,6 +211,17 @@ const generateAliExpressProductContent = async (product) => {
     error.providerParam = '';
     error.providerMessage = String(providerError.message || '').replace(/(?:key|token)[=: ]+\S+/gi, '[redacted]').slice(0, 240);
     error.status = response.status === 429 || response.status >= 500 ? 503 : 502;
+    if (isQuotaExhaustion(error)) {
+      const pause = await pauseGeminiForQuota(error).catch((storageError) => {
+        console.error('[Gemini circuit breaker] could not persist quota pause:', storageError.message);
+        return { pauseUntil: new Date(Date.now() + 6 * 60 * 60 * 1000), persistenceAvailable: false };
+      });
+      error.code = 'AI_CONTENT_QUOTA_EXHAUSTED';
+      error.retryAt = pause.pauseUntil;
+      error.status = 503;
+    } else if (response.status === 429) {
+      error.code = 'AI_CONTENT_RATE_LIMITED';
+    }
     throw error;
   }
 
