@@ -2201,6 +2201,53 @@ router.put(
 );
 
 /* =========================================================
+   ADMIN PRODUCT CATALOG — PRIVATE SOURCE AND CODE METADATA
+   ========================================================= */
+router.get('/admin/catalog', protect, adminOnly, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit, 10) || 100));
+    const search = String(req.query.search || '').trim().slice(0, 120);
+    const filter = {};
+
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\/* =========================================================
+   ADMIN PRODUCT EDITOR LOOKUP
+   ========================================================= */
+router.get('/admin/:id', protect, adminOnly, async (req, res) => {');
+      const matcher = new RegExp(escaped, 'i');
+      filter.$or = [
+        { name: matcher },
+        { brand: matcher },
+        { code: matcher },
+        { sku: matcher },
+      ];
+    }
+
+    const [products, totalProducts] = await Promise.all([
+      Product.find(filter)
+        .populate('category', 'name slug')
+        .populate('seller', 'name email sellerProfile.storeName')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Product.countDocuments(filter),
+    ]);
+
+    return res.set('Cache-Control', 'no-store, private').json({
+      products,
+      page,
+      totalPages: Math.ceil(totalProducts / limit),
+      totalProducts,
+    });
+  } catch (error) {
+    console.error('Admin product catalogue load failed:', error.message);
+    return res.status(500).json({ success: false, message: 'Unable to load the admin product catalogue.' });
+  }
+});
+
+/* =========================================================
    ADMIN PRODUCT EDITOR LOOKUP
    ========================================================= */
 router.get('/admin/:id', protect, adminOnly, async (req, res) => {
