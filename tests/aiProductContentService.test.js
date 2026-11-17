@@ -82,6 +82,10 @@ test('Gemini generation sends the Sylva writing rules and uses the configured mo
   process.env.GEMINI_API_KEY = 'unit-test-key';
   process.env.GEMINI_MODEL = 'gemini-3.5-flash-lite';
   const draft = {
+    verifiedBrand: 'Example Brand',
+    modelNumber: 'EX-100',
+    specifications: [{ name: 'Connectivity', value: 'Wireless' }, { name: 'Display', value: 'Touch display' }],
+    researchSources: [],
     keyFeatures: ['Wireless connectivity', 'Touch display', 'Activity tracking', 'Rechargeable design', 'Mobile notifications'],
     shortDescription: 'A practical wearable with a touch display and activity tracking.',
     fullDescription: '<h3>Overview</h3><p>A wearable with a touch display and activity tracking features for everyday use.</p>',
@@ -99,7 +103,7 @@ test('Gemini generation sends the Sylva writing rules and uses the configured mo
   global.fetch = async (url, options) => {
     requestUrl = String(url);
     requestBody = JSON.parse(options.body);
-    return { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(draft) }] } }] }) };
+    return { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(draft) }] }, groundingMetadata: { webSearchQueries: ['Example Brand EX-100 official specifications'], groundingChunks: [{ web: { title: 'Example Brand official specifications', uri: 'https://www.example.com/products/ex-100' } }] } }] }) };
   };
   const result = await generateAliExpressProductContent({
     title: 'Smart Wearable',
@@ -113,6 +117,12 @@ test('Gemini generation sends the Sylva writing rules and uses the configured mo
   assert.match(instructions, /Never invent missing technical specifications, RAM, storage, battery capacity, model numbers/);
   assert.match(instructions, /clean, semantic HTML/);
   assert.match(instructions, /administrator must review and approve every draft/);
+  assert.match(instructions, /Google Search grounding/);
+  assert.deepEqual(requestBody.tools, [{ google_search: {} }]);
+  assert.equal(result.researchStatus, 'grounded');
+  assert.equal(result.researchSources[0].url, 'https://www.example.com/products/ex-100');
+  assert.equal(result.specifications[0].name, 'Connectivity');
+  assert.equal(result.verifiedBrand, 'Example Brand');
   assert.equal(result.model, 'gemini-3.5-flash-lite');
   assert.equal(result.marketingTags.length, 5);
 });
