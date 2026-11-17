@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const STATE_ID = 'google-gemini-product-content';
-const DEFAULT_COOLDOWN_MINUTES = 360;
+const DEFAULT_COOLDOWN_MINUTES = 1440;
 
 const isQuotaExhaustion = (error = {}) => {
   if (Number(error.providerStatus || error.status) !== 429) return false;
@@ -52,6 +52,16 @@ const pauseGeminiForQuota = async (error = {}) => {
   return { paused: true, pauseUntil, persistenceAvailable: Boolean(collection) };
 };
 
+const resumeGeminiProvider = async () => {
+  const collection = getCollection();
+  if (!collection) throw new Error('MongoDB is not available to resume the Gemini provider.');
+  await collection.updateOne({ _id: STATE_ID }, {
+    $set: { status: 'available', updatedAt: new Date() },
+    $unset: { pauseUntil: '', pauseReason: '', pausedAt: '' },
+  }, { upsert: true });
+  return { resumed: true };
+};
+
 const assertGeminiAvailable = async () => {
   const state = await readGeminiProviderState();
   if (!state.paused) return state;
@@ -62,4 +72,4 @@ const assertGeminiAvailable = async () => {
   throw error;
 };
 
-module.exports = { isQuotaExhaustion, getCooldownMinutes, readGeminiProviderState, pauseGeminiForQuota, assertGeminiAvailable };
+module.exports = { isQuotaExhaustion, getCooldownMinutes, readGeminiProviderState, pauseGeminiForQuota, resumeGeminiProvider, assertGeminiAvailable };
