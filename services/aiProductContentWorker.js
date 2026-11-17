@@ -1,11 +1,14 @@
 const AliExpressCatalogProduct = require('../models/AliExpressCatalogProduct');
 const { generateAliExpressProductContent } = require('./aiProductContentService');
+const { readGeminiProviderState } = require('./aiProviderCircuitBreaker');
 
 let timer = null;
 let running = false;
 
 const processOnePendingProduct = async () => {
   if (!process.env.GEMINI_API_KEY || running) return false;
+  const providerState = await readGeminiProviderState();
+  if (providerState.paused) return false;
   running = true;
   try {
     const now = new Date();
@@ -79,10 +82,15 @@ const processOnePendingProduct = async () => {
       console.info('[AI product enrichment] draft generated:', JSON.stringify({ productId: String(claimed._id), sourceHash: generated.sourceHash, researchStatus: generated.researchStatus, sources: generated.researchSources?.length || 0, specifications: generated.specifications?.length || 0 }));
     } catch (error) {
       const attempts = Number(claimed.aiContentDraft?.attempts || 1);
-      const retry = attempts < 5 && error.code !== 'AI_CONTENT_NOT_CONFIGURED' && error.code !== 'AI_CONTENT_REFUSED';
+      const quotaPaused = error.code === 'AI_CONTENT_QUOTA_EXHAUSTED' || error.code === 'AI_CONTENT_PROVIDER_PAUSED';
+      const retry = quotaPaused || (attempts < 5 && error.code !== 'AI_CONTENT_NOT_CONFIGURED' && error.code !== 'AI_CONTENT_REFUSED');
+      const providerState = quotaPaused ? await readGeminiProviderState() : null;
       claimed.aiContentDraft.status = retry ? 'pending' : 'failed';
       claimed.aiContentDraft.lastError = String(error.code || 'AI_CONTENT_FAILED').slice(0, 240);
-      claimed.aiContentDraft.nextAttemptAt = retry ? new Date(Date.now() + Math.min(15, 2 ** attempts) * 60000) : null;
+      if (quotaPaused) claimed.aiContentDraft.attempts = Math.max(0, attempts - 1);
+      claimed.aiContentDraft.nextAttemptAt = quotaPaused
+        ? (providerState?.pauseUntil || error.retryAt || new Date(Date.now() + 6 * 60 * 60 * 1000))
+        : (retry ? new Date(Date.now() + Math.min(15, 2 ** attempts) * 60000) : null);
       claimed.aiContentDraft.processingAt = null;
       await claimed.save();
       console.warn('[AI product enrichment] job did not complete:', JSON.stringify({
@@ -102,11 +110,12 @@ const processOnePendingProduct = async () => {
 
 const startAIProductContentWorker = () => {
   if (timer) return;
+  const intervalMs = Math.max(10000, Math.min(60000, Number.parseInt(process.env.GEMINI_WORKER_INTERVAL_MS, 10) || 15000));
   timer = setInterval(() => {
     processOnePendingProduct().catch((error) => {
       console.error('[AI product enrichment] worker cycle failed:', JSON.stringify({ code: error.code || error.name || 'WORKER_ERROR', message: String(error.message || '').slice(0, 500), path: error.path || '', valueType: error.valueType || typeof error.value || '', kind: error.kind || '' }));
     });
-  }, 5000);
+  }, intervalMs);
   timer.unref?.();
 };
 
