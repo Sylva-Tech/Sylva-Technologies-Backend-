@@ -11,6 +11,7 @@ const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
 const { generateAliExpressProductContent, hashSource } = require('../services/aiProductContentService');
 const { readGeminiProviderState, resumeGeminiProvider } = require('../services/aiProviderCircuitBreaker');
 const { sendSalesNotificationEmail } = require('../services/emailService');
+const { generateUniqueProductCode } = require('../services/productIdentityService');
 const {
   getDropshipApiConfig,
   requiredDropshipEnv,
@@ -1003,6 +1004,13 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const titleBrand = title.match(/^(HP|Lenovo|Dell|Samsung|Apple|Xiaomi|JBL|Sony|Anker|Baseus|Ugreen|Logitech|Asus|Acer|Huawei|Microsoft|Canon|Epson|D-Link|TP-Link|Netgear|Tenda|Mercusys|KZ|AOC|MSI|Gigabyte|Razer|Hikvision|Dahua)\b/i)?.[1] || '';
     const validBrand = (value) => { const candidate = String(value || '').trim(); return candidate && !/^(aliexpress|sylva technologies|unknown|generic)$/i.test(candidate) ? candidate : ''; };
     const brand = String(titleBrand || validBrand(aiDraft?.verifiedBrand) || validBrand(record.supplierBrand) || validBrand(requestedBrand) || '').trim().slice(0, 120);
+    if (!brand) {
+      return res.status(409).json({
+        success: false,
+        code: 'ALIEXPRESS_MANUFACTURER_BRAND_UNVERIFIED',
+        message: 'The manufacturer brand could not be verified from the supplier product data. Enter the actual manufacturer brand before approval; AliExpress and Sylva Technologies are not product brands.',
+      });
+    }
     let category = null;
     const chosenCategoryId = String(req.body?.categoryId || record.sylvaCategoryId || '');
     if (chosenCategoryId && mongoose.isValidObjectId(chosenCategoryId)) {
@@ -1013,6 +1021,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     }
 
     const sku = ('AE-' + record.providerProductId).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
+    const productCode = await generateUniqueProductCode('ALI');
     const slugBase = (title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 110) || 'aliexpress-product');
     const slug = slugBase + '-' + record.providerProductId.slice(-12);
     const existingSku = await Product.findOne({ sku });
@@ -1043,7 +1052,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     const marketingTags = (Array.isArray(req.body?.marketingTags) ? req.body.marketingTags : aiDraft?.marketingTags || []).map((tag) => String(tag).trim()).filter(Boolean).slice(0, 12);
     const socialPromoCaption = String(req.body?.socialPromoCaption ?? aiDraft?.socialPromoCaption ?? '').trim().slice(0, 1000);
     const published = await Product.create({
-      name: title, slug, sku, source: 'aliexpress', brand, category: category._id,
+      name: title, slug, sku, code: productCode, source: 'aliexpress', origin: 'aliexpress', brand, category: category._id,
       description, shortDescription: approvedShortDescription,
       keyFeatures: approvedKeyFeatures,
       seoTitle, seoMetaDescription, marketingTags, socialPromoCaption,
@@ -1129,8 +1138,10 @@ router.post('/catalog/refresh-published-metadata/:productId', protect, adminOnly
     if ((!product.shortDescription || product.shortDescription === product.name) && product.keyFeatures.length) {
       product.shortDescription = product.keyFeatures.join(' • ').slice(0, 300);
     }
-    if (!product.brand || /^aliexpress$/i.test(product.brand)) {
-      product.brand = normalized.supplierBrand || 'Sylva Technologies';
+    const refreshedManufacturerBrand = String(normalized.supplierBrand || '').trim();
+    if (refreshedManufacturerBrand && !/^(aliexpress|sylva technologies|unknown|generic)$/i.test(refreshedManufacturerBrand) &&
+        (!product.brand || /^(aliexpress|sylva technologies|unknown|generic)$/i.test(product.brand))) {
+      product.brand = refreshedManufacturerBrand.slice(0, 120);
     }
     await product.save();
 
