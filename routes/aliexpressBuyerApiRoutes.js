@@ -9,6 +9,7 @@ const Category = require('../models/Category');
 const AliExpressCatalogSettings = require('../models/AliExpressCatalogSettings');
 const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
 const { generateAliExpressProductContent, hashSource } = require('../services/aiProductContentService');
+const { readGeminiProviderState } = require('../services/aiProviderCircuitBreaker');
 const { sendSalesNotificationEmail } = require('../services/emailService');
 const {
   getDropshipApiConfig,
@@ -830,18 +831,25 @@ router.post('/catalog/verify-feeds', protect, adminOnly, limiter, async (req, re
  * authenticated Sylva administrator explicitly approves them.
  */
 router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
+  const providerState = await readGeminiProviderState().catch(() => ({ available: true, paused: false, persistenceAvailable: false }));
   return res.set('Cache-Control', 'no-store, private').json({
     success: true,
     data: {
       configured: Boolean(process.env.GEMINI_API_KEY),
+      providerStatus: providerState.paused ? 'paused' : (process.env.GEMINI_API_KEY ? 'available' : 'not_configured'),
+      pauseReason: providerState.pauseReason || '',
+      pausedAt: providerState.pausedAt || null,
+      resumeAt: providerState.pauseUntil || null,
+      circuitBreakerPersistenceAvailable: Boolean(providerState.persistenceAvailable),
+      quotaCooldownMinutes: providerState.cooldownMinutes || 360,
       provider: 'google_gemini',
       model: String(process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'),
       scope: 'product_content_only',
       automaticEnrichmentAfterSync: true,
-      workerIntervalSeconds: 5,
+      workerIntervalSeconds: Math.max(10, Math.min(60, Math.round((Number.parseInt(process.env.GEMINI_WORKER_INTERVAL_MS, 10) || 15000) / 1000))),
       queue: { pending: aiPending, processing: aiProcessing, generated: aiGenerated, failed: aiFailed },
       maxAutomaticAttempts: 5,
-      webResearchEnabled: Boolean(process.env.GEMINI_API_KEY),
+      webResearchEnabled: Boolean(process.env.GEMINI_API_KEY) && !providerState.paused,
       webResearchProvider: 'Google Search grounding',
       sourcePreference: 'manufacturer official pages first; reputable technical sources only as fallback',
       draftsRequireAdminApproval: true,
@@ -879,7 +887,11 @@ router.post('/catalog/review/:id/generate-content', protect, adminOnly, async (r
       success: false, code: error.code || 'AI_CONTENT_FAILED',
       message: error.code === 'AI_CONTENT_NOT_CONFIGURED'
         ? 'Gemini is not configured. Add GEMINI_API_KEY to the backend environment.'
-        : 'Gemini could not generate product content. Check the Gemini API key, quota and backend logs.',
+        : error.code === 'AI_CONTENT_QUOTA_EXHAUSTED' || error.code === 'AI_CONTENT_PROVIDER_PAUSED'
+          ? 'AI enrichment is paused because the Gemini project quota or billing limit has been reached. Pending products are saved and will resume automatically after the cooldown. Check Google AI Studio usage and billing.'
+          : error.code === 'AI_CONTENT_RATE_LIMITED'
+            ? 'Gemini is temporarily rate-limiting requests. Please wait before trying again.'
+            : 'Gemini could not generate product content. Check the Gemini API key, quota and backend logs.',
     });
   }
 });
