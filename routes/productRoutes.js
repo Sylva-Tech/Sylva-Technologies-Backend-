@@ -2211,7 +2211,7 @@ router.get('/admin/catalog', protect, adminOnly, async (req, res) => {
     const filter = {};
 
     if (search) {
-      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\/* =========================================================
+      const escaped = search.replace(/[.*+?^$()|[\\]{}]/g, (character) => '\\' + character);
    ADMIN PRODUCT EDITOR LOOKUP
    ========================================================= */
 router.get('/admin/:id', protect, adminOnly, async (req, res) => {');
