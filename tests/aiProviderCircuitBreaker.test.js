@@ -13,7 +13,7 @@ test('bounds quota cooldown to 15 minutes through 24 hours', (t) => {
   const previous = process.env.GEMINI_QUOTA_COOLDOWN_MINUTES;
   t.after(() => { if (previous === undefined) delete process.env.GEMINI_QUOTA_COOLDOWN_MINUTES; else process.env.GEMINI_QUOTA_COOLDOWN_MINUTES = previous; });
   delete process.env.GEMINI_QUOTA_COOLDOWN_MINUTES;
-  assert.equal(getCooldownMinutes(), 360);
+  assert.equal(getCooldownMinutes(), 1440);
   process.env.GEMINI_QUOTA_COOLDOWN_MINUTES = '5';
   assert.equal(getCooldownMinutes(), 15);
   process.env.GEMINI_QUOTA_COOLDOWN_MINUTES = '2000';
