@@ -104,8 +104,8 @@ const allowedOrigins = new Set([
   'https://www.sylvatechnologies.co.ke',
 ]);
 
-// Local origins are accepted only outside production. Production preview
-// domains must be explicitly listed in VERCEL_PREVIEW_ORIGINS.
+// Local origins are accepted only outside production. In production, only
+// Sylva's exact Vercel project deployment slug is accepted as a preview origin.
 if (!isProduction) {
   for (const port of [3000, 4173, 5173, 5174, 5175]) {
     allowedOrigins.add('http://localhost:' + port);

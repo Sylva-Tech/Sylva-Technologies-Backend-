@@ -1,4 +1,4 @@
-const { google } = require('googleapis');
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 
 const Product = require('../models/Product');
@@ -25,7 +25,7 @@ async function getGoogleAccessToken() {
     }),
   ].join('.');
   const signingKey = privateKey.replace(/\\n/g, '\n');
-  const signature = require('crypto')
+  const signature = crypto
     .sign('RSA-SHA256', Buffer.from(unsignedToken), signingKey)
     .toString('base64url');
   const assertion = unsignedToken + '.' + signature;

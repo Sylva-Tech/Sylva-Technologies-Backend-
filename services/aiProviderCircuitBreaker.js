@@ -7,7 +7,7 @@ const isQuotaExhaustion = (error = {}) => {
   const message = String(error.providerMessage || error.message || '').toLowerCase();
   // Provider quota errors often include a documentation URL containing `rate-limits`.
   // Match actual throttling messages, not that URL, before classifying quota exhaustion.
-  if (/requests?\\s+per\\s+(?:minute|second)|tokens?\\s+per\\s+minute|too many requests|temporarily rate.?limited|rate limit exceeded for (?:requests|tokens)/.test(message)) return false;
+  if (/requests?\s+per\s+(?:minute|second)|tokens?\s+per\s+minute|too many requests|temporarily rate.?limited|rate limit exceeded for (?:requests|tokens)/.test(message)) return false;
   return /quota|billing|payment required|daily limit|spending limit|exceeded.*current quota|current quota.*exceeded/.test(message);
 };
 const getCooldownMinutes = () => {
