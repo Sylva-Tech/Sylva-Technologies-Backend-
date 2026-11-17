@@ -125,7 +125,9 @@ const corsOptions = {
 
     const cleanOrigin = origin.replace(/\/$/, '');
 
-    if (allowedOrigins.has(cleanOrigin)) {
+    const isSylvaVercelPreview = /^https:\/\/sylva-technologies-frontend-[a-z0-9-]+\.vercel\.app$/i.test(cleanOrigin);
+
+    if (allowedOrigins.has(cleanOrigin) || isSylvaVercelPreview) {
       return callback(null, true);
     }
 

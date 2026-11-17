@@ -124,7 +124,7 @@ router.get('/status', protect, adminOnly, async (req, res) => {
   try {
     const connection = await AliExpressConnection.findOne({ provider: 'aliexpress' }).lean();
     const [aiPending, aiProcessing, aiGenerated, aiFailed] = await Promise.all([
-      AliExpressCatalogProduct.countDocuments({ status: { $in: ['pending', 'approved'] }, 'aiContentDraft.status': { $in: ['pending', 'not_generated'] } }),
+      AliExpressCatalogProduct.countDocuments({ status: mongoose.trusted({ $in: ['pending', 'approved'] }), 'aiContentDraft.status': mongoose.trusted({ $in: ['pending', 'not_generated'] }) }),
       AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'processing' }),
       AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'generated' }),
       AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'failed' }),
@@ -834,7 +834,7 @@ router.post('/catalog/verify-feeds', protect, adminOnly, limiter, async (req, re
 router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
   const [providerState, aiPending, aiProcessing, aiGenerated, aiFailed] = await Promise.all([
     readGeminiProviderState().catch(() => ({ available: true, paused: false, persistenceAvailable: false })),
-    AliExpressCatalogProduct.countDocuments({ status: { $in: ['pending', 'approved'] }, 'aiContentDraft.status': { $in: ['pending', 'not_generated'] } }),
+    AliExpressCatalogProduct.countDocuments({ status: mongoose.trusted({ $in: ['pending', 'approved'] }), 'aiContentDraft.status': mongoose.trusted({ $in: ['pending', 'not_generated'] }) }),
     AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'processing' }),
     AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'generated' }),
     AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'failed' }),
