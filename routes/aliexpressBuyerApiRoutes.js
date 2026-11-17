@@ -833,7 +833,7 @@ router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
       scope: 'product_content_only',
       automaticEnrichmentAfterSync: true,
       workerIntervalSeconds: 5,
-      webResearchEnabled: true,
+      webResearchEnabled: Boolean(process.env.GEMINI_API_KEY),
       webResearchProvider: 'Google Search grounding',
       sourcePreference: 'manufacturer official pages first; reputable technical sources only as fallback',
       draftsRequireAdminApproval: true,
