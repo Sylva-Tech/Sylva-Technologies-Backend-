@@ -235,6 +235,7 @@ const productSchema = new mongoose.Schema(
       generatedAt: { type: Date, default: null },
       generatedFields: { type: [String], default: [] },
       warnings: { type: [String], default: [] },
+      researchSources: { type: [{ title: { type: String, maxlength: 240 }, url: { type: String, maxlength: 2000 } }], default: [] },
     },
 
     seoTitle: { type: String, default: '', trim: true, maxlength: 60 },
