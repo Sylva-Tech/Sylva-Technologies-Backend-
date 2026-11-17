@@ -2,7 +2,7 @@
 
 ## Automatic sync workflow
 
-The backend starts `aiProductContentWorker` after MongoDB connects. The worker checks the private AliExpress catalogue queue every five seconds and claims one pending product at a time. Newly staged or synced products are queued automatically; unchanged generated drafts are retained, while changed source facts are re-queued using the product content source hash.
+The backend starts `aiProductContentWorker` after MongoDB connects. The worker checks the private AliExpress catalogue queue every 15 seconds by default (configurable with `GEMINI_WORKER_INTERVAL_MS`, bounded to 10–60 seconds) and claims one pending product at a time. Newly staged or synced products are queued automatically; unchanged generated drafts are retained, while changed source facts are re-queued using the product content source hash.
 
 The worker runs only when `GEMINI_API_KEY` is configured. It uses `GEMINI_MODEL` when set, otherwise `gemini-3.5-flash-lite`.
 
@@ -11,6 +11,12 @@ The worker runs only when `GEMINI_API_KEY` is configured. It uses `GEMINI_MODEL`
 Product enrichment calls Gemini's `generateContent` API with the `google_search` grounding tool. The model is instructed to search the exact product/model, prefer the manufacturer's official product or support page, and use reputable technical sources only when the manufacturer page is unavailable. Grounding source URLs and search queries are stored with the draft and copied into the product's `contentGeneration.researchSources` metadata after approval.
 
 Google Search grounding may incur Google AI API usage charges. Review current Gemini API pricing and the project's quotas before syncing large batches.
+
+## Quota protection and recovery
+
+A persistent MongoDB-backed circuit breaker protects the whole Gemini product-content provider. When Gemini returns HTTP 429 with an explicit quota, billing, daily-limit or spending-limit message, the service pauses automatic and manual content generation for 24 hours by default. This is intentionally different from a temporary per-minute rate limit, which follows normal bounded retry handling. The pause survives Render restarts and prevents each queued product from independently consuming retries. Products remain pending; quota exhaustion does not mark them as permanently failed.
+
+The admin endpoint `/api/aliexpress/catalog/ai/status` reports `providerStatus`, `pauseReason`, `pausedAt`, `resumeAt`, the cooldown and queue counts. Set `GEMINI_QUOTA_COOLDOWN_MINUTES` to a value from 15 to 1440 if a different cooldown is appropriate. After checking and restoring Google AI Studio quota/billing, an administrator can POST `{ "confirm": true }` to `/api/aliexpress/catalog/ai/resume` to clear the pause and release queued drafts immediately. The resume action is admin-authenticated and requires explicit confirmation.
 
 ## Generated content
 
