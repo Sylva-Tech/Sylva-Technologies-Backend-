@@ -6,6 +6,7 @@ test('recognizes exhausted Gemini quota separately from ordinary rate limiting',
   assert.equal(isQuotaExhaustion({ providerStatus: 429, providerCode: 'RESOURCE_EXHAUSTED', providerMessage: 'You exceeded your current quota. Check billing details.' }), true);
   assert.equal(isQuotaExhaustion({ providerStatus: 429, providerCode: 'RESOURCE_EXHAUSTED', providerMessage: 'Requests per minute exceeded.' }), false);
   assert.equal(isQuotaExhaustion({ providerStatus: 429, providerCode: 'RESOURCE_EXHAUSTED', providerMessage: 'Too many requests. Please retry later.' }), false);
+  assert.equal(isQuotaExhaustion({ providerStatus: 429, providerCode: 'RESOURCE_EXHAUSTED', providerMessage: 'You exceeded your current quota. See https://aistudio.google.com/docs/rate-limits.' }), true);
   assert.equal(isQuotaExhaustion({ providerStatus: 503, providerMessage: 'quota exceeded' }), false);
 });
 

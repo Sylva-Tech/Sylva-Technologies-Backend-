@@ -1,63 +1,77 @@
-﻿const { google } = require('googleapis');
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 
 const Product = require('../models/Product');
 const Category = require('../models/Category');
 const User = require('../models/User');
 
-function getGoogleSheetsAuth() {
+async function getGoogleAccessToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
 
-  if (!email) {
-    throw new Error(
-      'GOOGLE_SERVICE_ACCOUNT_EMAIL is missing.'
-    );
-  }
+  if (!email) throw new Error('GOOGLE_SERVICE_ACCOUNT_EMAIL is missing.');
+  if (!privateKey) throw new Error('GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY is missing.');
 
-  if (!privateKey) {
-    throw new Error(
-      'GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY is missing.'
-    );
-  }
+  const now = Math.floor(Date.now() / 1000);
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const unsignedToken = [
+    encode({ alg: 'RS256', typ: 'JWT' }),
+    encode({
+      iss: email,
+      scope: 'https://www.googleapis.com/auth/spreadsheets.readonly',
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: now,
+      exp: now + 3600,
+    }),
+  ].join('.');
+  const signingKey = privateKey.replace(/\\n/g, '\n');
+  const signature = crypto
+    .sign('RSA-SHA256', Buffer.from(unsignedToken), signingKey)
+    .toString('base64url');
+  const assertion = unsignedToken + '.' + signature;
 
-  return new google.auth.JWT({
-    email,
-    key: privateKey.replace(/\\n/g, '\n'),
-    scopes: [
-      'https://www.googleapis.com/auth/spreadsheets.readonly',
-    ],
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }),
+    signal: AbortSignal.timeout(15000),
   });
+  const tokenPayload = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !tokenPayload.access_token) {
+    const error = new Error(tokenPayload.error_description || tokenPayload.error || 'Google service-account authentication failed.');
+    error.code = 'GOOGLE_SHEETS_AUTH_FAILED';
+    error.status = tokenResponse.status || 502;
+    throw error;
+  }
+  return tokenPayload.access_token;
 }
 
 async function getGoogleSheetRows() {
-  const spreadsheetId =
-    process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  const sheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || 'Sylva Auto';
 
-  const sheetName =
-    process.env.GOOGLE_SHEETS_SHEET_NAME ||
-    'Sylva Auto';
+  if (!spreadsheetId) throw new Error('GOOGLE_SHEETS_SPREADSHEET_ID is missing.');
 
-  if (!spreadsheetId) {
-    throw new Error(
-      'GOOGLE_SHEETS_SPREADSHEET_ID is missing.'
-    );
+  const accessToken = await getGoogleAccessToken();
+  const range = `${sheetName}!A:AL`;
+  const sheetsUrl = 'https://sheets.googleapis.com/v4/spreadsheets/' +
+    encodeURIComponent(spreadsheetId) + '/values/' + encodeURIComponent(range);
+  const response = await fetch(sheetsUrl, {
+    headers: { Authorization: 'Bearer ' + accessToken, Accept: 'application/json' },
+    signal: AbortSignal.timeout(20000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.error?.message || 'Google Sheets API request failed.');
+    error.code = 'GOOGLE_SHEETS_API_FAILED';
+    error.status = response.status || 502;
+    throw error;
   }
 
-  const auth = getGoogleSheetsAuth();
-
-  const sheets = google.sheets({
-    version: 'v4',
-    auth,
-  });
-
-  const response =
-    await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${sheetName}!A:AL`,
-    });
-
-  const values = response.data.values || [];
+  const values = payload.values || [];
 
   if (values.length === 0) {
     return [];
