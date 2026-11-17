@@ -9,7 +9,7 @@ const Category = require('../models/Category');
 const AliExpressCatalogSettings = require('../models/AliExpressCatalogSettings');
 const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
 const { generateAliExpressProductContent, hashSource } = require('../services/aiProductContentService');
-const { readGeminiProviderState } = require('../services/aiProviderCircuitBreaker');
+const { readGeminiProviderState, resumeGeminiProvider } = require('../services/aiProviderCircuitBreaker');
 const { sendSalesNotificationEmail } = require('../services/emailService');
 const {
   getDropshipApiConfig,
@@ -831,7 +831,13 @@ router.post('/catalog/verify-feeds', protect, adminOnly, limiter, async (req, re
  * authenticated Sylva administrator explicitly approves them.
  */
 router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
-  const providerState = await readGeminiProviderState().catch(() => ({ available: true, paused: false, persistenceAvailable: false }));
+  const [providerState, aiPending, aiProcessing, aiGenerated, aiFailed] = await Promise.all([
+    readGeminiProviderState().catch(() => ({ available: true, paused: false, persistenceAvailable: false })),
+    AliExpressCatalogProduct.countDocuments({ status: { $in: ['pending', 'approved'] }, 'aiContentDraft.status': { $in: ['pending', 'not_generated'] } }),
+    AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'processing' }),
+    AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'generated' }),
+    AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'failed' }),
+  ]);
   return res.set('Cache-Control', 'no-store, private').json({
     success: true,
     data: {
@@ -841,7 +847,7 @@ router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
       pausedAt: providerState.pausedAt || null,
       resumeAt: providerState.pauseUntil || null,
       circuitBreakerPersistenceAvailable: Boolean(providerState.persistenceAvailable),
-      quotaCooldownMinutes: providerState.cooldownMinutes || 360,
+      quotaCooldownMinutes: providerState.cooldownMinutes || 1440,
       provider: 'google_gemini',
       model: String(process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'),
       scope: 'product_content_only',
@@ -859,6 +865,31 @@ router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
       supplierOrderingEnabled: false,
     },
   });
+});
+
+
+router.post('/catalog/ai/resume', protect, adminOnly, async (req, res) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({ success: false, message: 'Confirm that you have checked Gemini quota and billing before resuming AI enrichment.' });
+  }
+  try {
+    await resumeGeminiProvider();
+    const released = await AliExpressCatalogProduct.collection.updateMany(
+      {
+        'aiContentDraft.status': 'pending',
+        'aiContentDraft.lastError': { $in: ['AI_CONTENT_QUOTA_EXHAUSTED', 'AI_CONTENT_PROVIDER_PAUSED'] },
+      },
+      { $set: { 'aiContentDraft.nextAttemptAt': null, 'aiContentDraft.lastError': '' } },
+    );
+    return res.json({
+      success: true,
+      message: 'Gemini enrichment has been resumed. Pending product drafts are eligible for automatic processing.',
+      releasedPendingProducts: released.modifiedCount || 0,
+    });
+  } catch (error) {
+    console.error('[Gemini circuit breaker] admin resume failed:', error.message);
+    return res.status(503).json({ success: false, code: 'AI_PROVIDER_RESUME_FAILED', message: 'Unable to resume Gemini enrichment. Confirm MongoDB is connected and try again.' });
+  }
 });
 
 
