@@ -100,7 +100,7 @@ router.get('/callback', async (req, res) => {
           lastError: '',
         },
       },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
     );
     const frontendBase = new URL(process.env.FRONTEND_URL || 'https://www.sylvatechnologies.co.ke');
     // The apex and www hosts have separate browser localStorage. Always return

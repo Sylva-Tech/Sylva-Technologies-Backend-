@@ -182,7 +182,7 @@ const markNotificationAsRead = async (
       readAt: new Date(),
     },
     {
-      new: true,
+      returnDocument: 'after',
     }
   );
 };
