@@ -328,7 +328,7 @@ router.put('/catalog/settings/exchange-rate', protect, adminOnly, async (req, re
     const settings = await AliExpressCatalogSettings.findOneAndUpdate(
       { key: 'default' },
       { $setOnInsert: { key: 'default' } },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
     const existing = settings.exchangeRates.find((item) => item.currency === currency);
     if (existing) {
@@ -738,7 +738,7 @@ router.post('/catalog/stage-product', protect, adminOnly, limiter, async (req, r
     const staged = await AliExpressCatalogProduct.findOneAndUpdate(
       { providerProductId: normalized.providerProductId },
       { $set: { ...normalized, syncedAt: new Date() }, $setOnInsert: { status: 'pending' } },
-      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', runValidators: true, setDefaultsOnInsert: true }
     );
     return res.status(201).json({
       success: true,
@@ -1079,6 +1079,13 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
     return res.status(201).json({ success: true, message: 'AliExpress product approved and published to the Sylva storefront.', product: published });
   } catch (error) {
     console.error('[AliExpress review approval] failed:', error.message);
+    if (error.name === 'ValidationError' && error.errors?.brand) {
+      return res.status(409).json({
+        success: false,
+        code: 'ALIEXPRESS_MANUFACTURER_BRAND_UNVERIFIED',
+        message: 'The manufacturer brand is missing or invalid. Enter and verify the actual product manufacturer before approving this listing.',
+      });
+    }
     return res.status(500).json({ success: false, message: error.message || 'Unable to approve this AliExpress product.' });
   }
 });

@@ -169,7 +169,7 @@ async function postBalancedTransaction({
     const updated = await WalletAccount.findOneAndUpdate(
       filter,
       { $inc: { [field]: delta, ledgerVersion: 1 }, $set: { lastLedgerAt: now } },
-      { new: true, session, runValidators: true }
+      { returnDocument: 'after', session, runValidators: true }
     );
 
     if (!updated) {
