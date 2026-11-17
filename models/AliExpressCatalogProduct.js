@@ -23,6 +23,13 @@ const schema = new mongoose.Schema({
   supplierStoreUrl: { type: String, default: '', trim: true, maxlength: 2000 },
   supplierBrand: { type: String, default: '', trim: true, maxlength: 120 },
   aiContentDraft: {
+    verifiedBrand: { type: String, default: '', maxlength: 120 },
+    modelNumber: { type: String, default: '', maxlength: 120 },
+    specifications: { type: [{ name: { type: String, trim: true, maxlength: 80 }, value: { type: String, trim: true, maxlength: 240 } }], default: [] },
+    researchSources: { type: [{ title: { type: String, trim: true, maxlength: 240 }, url: { type: String, trim: true, maxlength: 2000 } }], default: [] },
+    researchQueries: { type: [String], default: [] },
+    researchStatus: { type: String, enum: ['grounded', 'no_sources_found'], default: 'no_sources_found' },
+    returnPolicyNote: { type: String, default: '', maxlength: 500 },
     keyFeatures: { type: [String], default: [] },
     seoTitle: { type: String, default: '', maxlength: 60 },
     seoMetaDescription: { type: String, default: '', maxlength: 155 },
