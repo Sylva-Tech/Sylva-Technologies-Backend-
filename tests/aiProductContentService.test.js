@@ -68,61 +68,20 @@ test('validateContent preserves safe HTML and strips scripts, event attributes a
   assert.doesNotMatch(result.description, /<script\b|<iframe\b|\bonclick\s*=|alert\s*\(/i);
 });
 
-test('Gemini generation sends the Sylva writing rules and uses the configured model', async (t) => {
-  const previousKey = process.env.GEMINI_API_KEY;
-  const previousModel = process.env.GEMINI_MODEL;
-  const previousFetch = global.fetch;
-  t.after(() => {
-    if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousKey;
-    if (previousModel === undefined) delete process.env.GEMINI_MODEL;
-    else process.env.GEMINI_MODEL = previousModel;
-    global.fetch = previousFetch;
-  });
-  process.env.GEMINI_API_KEY = 'unit-test-key';
-  process.env.GEMINI_MODEL = 'gemini-3.5-flash-lite';
-  const draft = {
-    verifiedBrand: 'Example Brand',
-    modelNumber: 'EX-100',
-    specifications: [{ name: 'Connectivity', value: 'Wireless' }, { name: 'Display', value: 'Touch display' }],
-    researchSources: [],
-    keyFeatures: ['Wireless connectivity', 'Touch display', 'Activity tracking', 'Rechargeable design', 'Mobile notifications'],
-    shortDescription: 'A practical wearable with a touch display and activity tracking.',
-    fullDescription: '<h3>Overview</h3><p>A wearable with a touch display and activity tracking features for everyday use.</p>',
-    seoTitle: 'Smart Wearable with Touch Display',
-    seoMetaDescription: 'Explore a smart wearable with a touch display, activity tracking and wireless connectivity.',
-    marketingTags: ['smart wearable', 'touch display', 'activity tracker', 'wireless device', 'wearable technology'],
-    socialPromoCaption: 'Keep everyday activity and notifications close with this practical wearable.',
-    suggestedCategory: 'Wearables',
-    warnings: ['Battery capacity was not supplied.'],
-    suggestions: [],
-    missingSections: ['Battery capacity'],
-  };
-  let requestUrl = '';
-  let requestBody;
-  global.fetch = async (url, options) => {
-    requestUrl = String(url);
-    requestBody = JSON.parse(options.body);
-    return { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(draft) }] }, groundingMetadata: { webSearchQueries: ['Example Brand EX-100 official specifications'], groundingChunks: [{ web: { title: 'Example Brand official specifications', uri: 'https://www.example.com/products/ex-100' } }] } }] }) };
-  };
-  const result = await generateAliExpressProductContent({
-    title: 'Smart Wearable',
-    supplierBrand: 'Example Brand',
-    categoryName: 'Wearables',
-    rawDescription: 'Touch display and activity tracking.',
-    productAttributes: [{ name: 'Connectivity', value: 'Wireless' }],
-  });
-  assert.match(requestUrl, /models\/gemini-3\.5-flash-lite:generateContent$/);
-  const instructions = requestBody.systemInstruction.parts[0].text;
-  assert.match(instructions, /Never invent missing technical specifications, RAM, storage, battery capacity, model numbers/);
-  assert.match(instructions, /clean, semantic HTML/);
-  assert.match(instructions, /administrator must review and approve every draft/);
-  assert.match(instructions, /Google Search grounding/);
-  assert.deepEqual(requestBody.tools, [{ google_search: {} }]);
-  assert.equal(result.researchStatus, 'grounded');
-  assert.equal(result.researchSources[0].url, 'https://www.example.com/products/ex-100');
-  assert.equal(result.specifications[0].name, 'Connectivity');
-  assert.equal(result.verifiedBrand, 'Example Brand');
-  assert.equal(result.model, 'gemini-3.5-flash-lite');
-  assert.equal(result.marketingTags.length, 5);
+test('Sylva AI enrichment uses the configured Ollama model without external provider calls', async (t) => {
+  const previousUrl=process.env.OLLAMA_BASE_URL, previousModel=process.env.OLLAMA_MODEL, previousFetch=global.fetch;
+  t.after(()=>{if(previousUrl===undefined)delete process.env.OLLAMA_BASE_URL;else process.env.OLLAMA_BASE_URL=previousUrl;if(previousModel===undefined)delete process.env.OLLAMA_MODEL;else process.env.OLLAMA_MODEL=previousModel;global.fetch=previousFetch;});
+  process.env.OLLAMA_BASE_URL='http://private-model.internal:11434';
+  process.env.OLLAMA_MODEL='qwen2.5:7b';
+  const draft={verifiedBrand:'Example Brand',modelNumber:'EX-100',specifications:[{name:'Connectivity',value:'Wireless'}],researchSources:[],keyFeatures:['Wireless connectivity','Touch display','Activity tracking','Rechargeable design','Mobile notifications'],shortDescription:'A practical wearable with a touch display and activity tracking.',fullDescription:'<h3>Overview</h3><p>A wearable with a touch display and activity tracking features for everyday use.</p>',seoTitle:'Smart Wearable with Touch Display',seoMetaDescription:'Explore a smart wearable with a touch display, activity tracking and wireless connectivity.',marketingTags:['smart wearable','touch display','activity tracker','wireless device','wearable technology'],socialPromoCaption:'Keep everyday activity and notifications close with this practical wearable.',suggestedCategory:'Wearables',warnings:[],suggestions:[],missingSections:[]};
+  let requestUrl='',body;
+  global.fetch=async(url,options)=>{requestUrl=String(url);body=JSON.parse(options.body);return {ok:true,json:async()=>({message:{content:JSON.stringify(draft)}})};};
+  const result=await generateAliExpressProductContent({title:'Smart Wearable',supplierBrand:'Example Brand',categoryName:'Wearables',rawDescription:'Touch display and activity tracking.',productAttributes:[{name:'Connectivity',value:'Wireless'}]});
+  assert.equal(requestUrl,'http://private-model.internal:11434/api/chat');
+  assert.equal(body.model,'qwen2.5:7b');
+  assert.equal(result.provider,'sylva');
+  assert.equal(result.model,'qwen2.5:7b');
+  assert.equal(result.researchStatus,'no_sources_found');
+  assert.equal(result.researchSources.length,0);
+  assert.ok(result.warnings.some(x=>x.includes('no live web research')));
 });
