@@ -18,9 +18,9 @@ router.get('/status', protect, adminOnly, (req, res) => {
   res.json({
     success: true,
     data: {
-      preferredProvider: 'ollama',
+      preferredProvider: 'sylva',
       preferredModel: process.env.OLLAMA_MODEL || 'qwen2.5:7b',
-      ollamaConfigured: Boolean(process.env.OLLAMA_BASE_URL),
+      modelEndpointConfigured: Boolean(process.env.OLLAMA_BASE_URL),
       provider: 'sylva',
       modelEndpointConfigured: Boolean(process.env.OLLAMA_BASE_URL),
       modelEndpointRequired: true,
