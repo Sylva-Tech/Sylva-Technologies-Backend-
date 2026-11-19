@@ -185,13 +185,19 @@ const generateCatalogueDraft = async ({ mode = 'CREATE', product = {} }) => {
   const input = makeInput(normalizedMode, product || {});
   if (input.product.title.length < 3) throw Object.assign(new Error('A product title is required.'), { code: 'CATALOGUE_AI_MISSING_TITLE' });
   let generated;
+  let draft;
   let primaryError;
-  try { generated = await callOllama(input); } catch (error) { primaryError = error; }
-  if (!generated) {
+  try {
+    generated = await callOllama(input);
+    draft = validateDraft(generated.draft);
+  } catch (error) {
+    primaryError = error;
+  }
+  if (!draft) {
     generated = await callGemini(input);
     generated.fallbackReason = primaryError?.code || 'OLLAMA_UNAVAILABLE';
+    draft = validateDraft(generated.draft);
   }
-  const draft = validateDraft(generated.draft);
   return {
     ...draft,
     generation: {
