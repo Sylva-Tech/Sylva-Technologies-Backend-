@@ -95,15 +95,15 @@ router.post('/:id/ai-content-draft', protect, adminOnly, async (req, res) => {
     });
     return res.json({ success: true, draft });
   } catch (error) {
-    console.warn('[Admin product Gemini] draft generation failed:', JSON.stringify({
+    console.warn('[Sylva AI product] draft generation failed:', JSON.stringify({
       code: error.code || 'AI_CONTENT_FAILED', providerStatus: error.providerStatus || null,
       providerCode: error.providerCode || '', providerType: error.providerType || '',
     }));
     return res.status(Number(error.status) || (error.code === 'AI_CONTENT_NOT_CONFIGURED' ? 503 : 502)).json({
       success: false, code: error.code || 'AI_CONTENT_FAILED',
       message: error.code === 'AI_CONTENT_NOT_CONFIGURED'
-        ? 'Gemini is not configured. Add GEMINI_API_KEY to the backend environment.'
-        : 'Gemini could not generate this draft. Check the Gemini API key, quota and backend logs.',
+        ? 'Sylva AI is not configured. Set OLLAMA_BASE_URL to the private model endpoint.'
+        : 'Sylva AI could not generate this draft. Check the private model endpoint and backend logs.',
     });
   }
 });
