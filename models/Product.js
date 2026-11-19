@@ -237,7 +237,7 @@ const productSchema = new mongoose.Schema(
     },
 
     contentGeneration: {
-      provider: { type: String, enum: ['google_gemini', 'ollama'], default: undefined },
+      provider: { type: String, enum: ['sylva'], default: undefined },
       model: { type: String, default: '', maxlength: 80 },
       sourceHash: { type: String, default: '', maxlength: 64 },
       generatedAt: { type: Date, default: null },
