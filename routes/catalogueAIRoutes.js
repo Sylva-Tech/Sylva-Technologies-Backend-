@@ -69,6 +69,7 @@ router.post('/products/:id/apply', protect, adminOnly, async (req, res) => {
     const draft = validateDraft(req.body?.draft);
     // Only customer-facing descriptive fields are writable here. Pricing, stock,
     // identifiers, category, images, ownership, approval and visibility are untouched.
+    product.name = draft.title;
     product.description = draft.longDescription;
     product.shortDescription = draft.shortDescription;
     product.keyFeatures = draft.keyFeatures;
@@ -84,7 +85,7 @@ router.post('/products/:id/apply', protect, adminOnly, async (req, res) => {
       model: String(req.body?.draft?.generation?.model || '').slice(0, 80),
       sourceHash: '',
       generatedAt: new Date(),
-      generatedFields: ['description', 'shortDescription', 'keyFeatures', 'specifications', 'seoTitle', 'seoMetaDescription', 'marketingTags'],
+      generatedFields: ['name', 'description', 'shortDescription', 'keyFeatures', 'specifications', 'seoTitle', 'seoMetaDescription', 'marketingTags'],
       warnings: [],
       researchSources: Array.isArray(req.body?.draft?.generation?.researchSources) ? req.body.draft.generation.researchSources.slice(0, 10) : [],
     };
