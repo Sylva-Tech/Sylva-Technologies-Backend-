@@ -1034,7 +1034,7 @@ router.post('/catalog/review/:id/approve', protect, adminOnly, async (req, res) 
       seoTitle, seoMetaDescription, marketingTags, socialPromoCaption,
       returnPolicy: String(aiDraft?.returnPolicyNote || 'Returns and refunds are governed by the Sylva Technologies store Returns & Refunds policy. Confirm eligibility and conditions under the published store policy before purchase.').slice(0, 500),
       contentGeneration: aiDraft ? {
-        provider: 'google_gemini', model: aiDraft.model || '', sourceHash: aiDraft.sourceHash || '',
+        provider: 'sylva', model: aiDraft.model || '', sourceHash: aiDraft.sourceHash || '',
         generatedAt: aiDraft.generatedAt || null,
         generatedFields: ['brand', 'specifications', 'keyFeatures', 'shortDescription', 'description', 'seoTitle', 'seoMetaDescription', 'marketingTags', 'socialPromoCaption', 'returnPolicy'],
         warnings: aiDraft.warnings || [], researchSources: aiDraft.researchSources || [],
