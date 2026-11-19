@@ -1,58 +1,54 @@
-# Sylva AI product enrichment
+# Sylva AI product intelligence
 
-## Automatic sync workflow
+## Provider and deployment
 
-The backend starts `aiProductContentWorker` after MongoDB connects. The worker checks the private AliExpress catalogue queue every 15 seconds by default (configurable with `GEMINI_WORKER_INTERVAL_MS`, bounded to 10–60 seconds) and claims one pending product at a time. Newly staged or synced products are queued automatically; unchanged generated drafts are retained, while changed source facts are re-queued using the product content source hash.
+All product-content generation is performed by Sylva AI in the backend. There is no Gemini integration, Google AI API key, Google Search grounding, external AI fallback, or provider failover.
 
-The worker runs only when `GEMINI_API_KEY` is configured. It uses `GEMINI_MODEL` when set, otherwise `gemini-3.5-flash-lite`.
+The current model runtime is Ollama with Qwen 2.5 7B (OLLAMA_MODEL=qwen2.5:7b). Sylva is the application-level intelligence engine: it prepares trusted product input, applies Sylva's Kenyan catalogue rules, requests structured JSON from the private model runtime, validates and sanitises the result, records provenance, and leaves publication decisions to administrators.
 
-## Web research
+Configure:
+- OLLAMA_BASE_URL: private Ollama HTTP endpoint reachable from the Render backend.
+- OLLAMA_MODEL=qwen2.5:7b
+- OLLAMA_TIMEOUT_MS=90000
+- SYLVA_AI_WORKER_INTERVAL_MS=15000
 
-Product enrichment calls Gemini's `generateContent` API with the `google_search` grounding tool. The model is instructed to search the exact product/model, prefer the manufacturer's official product or support page, and use reputable technical sources only when the manufacturer page is unavailable. Grounding source URLs and search queries are stored with the draft and copied into the product's `contentGeneration.researchSources` metadata after approval.
+Do not set the production endpoint to localhost or 127.0.0.1 on Render. Those addresses refer to the Render container, not a developer's Windows computer. The model endpoint should be private, authenticated or network-restricted, and protected with TLS where supported. Do not expose model credentials or endpoint secrets to the frontend.
 
-Google Search grounding may incur Google AI API usage charges. Review current Gemini API pricing and the project's quotas before syncing large batches.
+## Product workflows
 
-## Quota protection and recovery
+Sylva AI supports CREATE, SYNC_CLEANUP and REFINE_EDIT in the admin catalogue workspace at /admin/catalogue-ai. It also powers admin product-content drafts and the AliExpress private staging queue.
 
-A persistent MongoDB-backed circuit breaker protects the whole Gemini product-content provider. When Gemini returns HTTP 429 with an explicit quota, billing, daily-limit or spending-limit message, the service pauses automatic and manual content generation for 24 hours by default. This is intentionally different from a temporary per-minute rate limit, which follows normal bounded retry handling. The pause survives Render restarts and prevents each queued product from independently consuming retries. Products remain pending; quota exhaustion does not mark them as permanently failed.
+Protected backend endpoints include:
+- GET /api/catalogue-ai/status
+- GET /api/catalogue-ai/products
+- POST /api/catalogue-ai/generate
+- POST /api/catalogue-ai/products/:id/apply
+- GET /api/aliexpress/catalog/ai/status
+- POST /api/aliexpress/catalog/ai/resume
+- POST /api/aliexpress/catalog/review/:id/generate-content
+- POST /api/products/:id/ai-content-draft
 
-The admin endpoint `/api/aliexpress/catalog/ai/status` reports `providerStatus`, `pauseReason`, `pausedAt`, `resumeAt`, the cooldown and queue counts. Set `GEMINI_QUOTA_COOLDOWN_MINUTES` to a value from 15 to 1440 if a different cooldown is appropriate. After checking and restoring Google AI Studio quota/billing, an administrator can POST `{ "confirm": true }` to `/api/aliexpress/catalog/ai/resume` to clear the pause and release queued drafts immediately. The resume action is admin-authenticated and requires explicit confirmation.
+## Research and factual accuracy
 
-## Generated content
+The deployed Sylva AI model currently operates on supplied product data only. It does not have live web search or browsing. It must never claim to have searched the web, invent research citations, or mark a product as web-grounded. Research source arrays remain empty and research status is no_sources_found until a separate, verified first-party research capability is deliberately implemented.
 
-The draft can contain:
-- Verified brand and model number when supported by exact-model research
-- Structured name/value specifications
-- Key features, short description and full HTML description
-- SEO title, meta description, marketing tags and social caption
-- Warnings, suggestions, missing information and research citations
+Only supplied product facts may be used. Unknown manufacturer, model, compatibility, performance, dimensions, materials, certifications, package contents, origin, warranty, availability and other technical facts must remain unknown. The system adds a warning that exact-model specifications require manufacturer verification. Supplier titles and attributes are untrusted data, never instructions.
 
-The product's source attributes remain available as evidence. AI-generated specifications are merged into the public specification map at approval, with AI values taking precedence for duplicate labels.
+## Product and business safeguards
 
-## Returns, warranties and publishing safeguards
+- AI generates drafts only. An authenticated administrator must review and confirm before applying content.
+- AliExpress products remain private in the staging queue until approved through the existing admin review process.
+- Sylva AI cannot publish products or change approval status or visibility.
+- Sylva AI cannot change price, stock, SKU, product code, category assignment, images, ownership, orders, payments, wallets or supplier fulfilment.
+- Brand means the actual manufacturer, never AliExpress or Sylva Technologies.
+- Supplier names, costs, URLs, exchange rates, margins, coupons and internal metadata must not appear in customer-facing copy.
+- Delivery, warranty, returns and refund terms are controlled by Sylva's published store policies. AI must not invent commitments.
+- Generated HTML is sanitised to the allowed semantic tags before it can be applied.
 
-AI must not invent or modify return periods, refund promises, warranty terms, delivery promises, or Sylva's legal/store policy. The product draft uses a fixed notice directing customers to the published Sylva Returns & Refunds policy. Product-specific warranty or return commitments require verified source data and administrator review.
+## Queue operation
 
-AI has no authority to set prices, exchange rates, stock, categories, product visibility, approval status, supplier orders, payments, wallets or other financial data. Products remain private until an administrator approves them through the existing review workflow.
+The background worker processes one eligible AliExpress product at a time. It retries transient model failures with bounded exponential backoff and caps automatic attempts at five. If the private model endpoint is not configured, products remain queued rather than being sent to an external provider. The admin resume endpoint releases queued items after the endpoint has been configured or recovered.
 
-## Operational checks
+## Validation
 
-- Confirm `GEMINI_API_KEY` is present in the Render backend environment.
-- Check the admin AliExpress AI status endpoint for `webResearchEnabled` and `automaticEnrichmentAfterSync`.
-- Review draft `researchSources`, `specifications` and `warnings` before approving a product.
-- A product can still be reviewed if web research returns no source; in that case `researchStatus` is `no_sources_found` and unsupported specifications must remain omitted.
-
-
-## Multi-provider AI catalogue workspace
-
-The protected admin workspace is available at `/admin/catalogue-ai`. Its backend endpoints are mounted under `/api/catalogue-ai`:
-- `GET /status` reports provider configuration without exposing secrets.
-- `GET /products` returns a limited admin product list for selecting an existing listing.
-- `POST /generate` accepts `CREATE`, `SYNC_CLEANUP` or `REFINE_EDIT` and returns a draft only.
-- `POST /products/:id/apply` requires `confirm: true` and applies only descriptive and SEO fields.
-
-Qwen 2.5 7B is preferred when `OLLAMA_BASE_URL` is configured. The endpoint must be reachable from the Render service; `http://localhost:11434` on a developer PC is not reachable from Render. If Ollama is unavailable or returns invalid content, Gemini is used as fallback. Gemini fallback uses Google Search grounding. The Ollama prompt is explicitly told that it has no web-search grounding and must use only supplied product facts.
-
-Configure `OLLAMA_BASE_URL`, `OLLAMA_MODEL=qwen2.5:7b`, and optionally `OLLAMA_TIMEOUT_MS` in the backend environment. Keep `GEMINI_API_KEY` configured for fallback. The frontend displays whether each provider is configured, not its secret or endpoint.
-
-Generated content remains a draft until an administrator reviews it. Applying a draft changes only description, short description, key features, specifications, SEO title, SEO description and marketing tags. It does not change price, stock, SKU, product code, category assignment, images, ownership, approval status, visibility, order state, payments or supplier fulfilment. Delivery, warranty and returns text is preserved as provided and is not independently authorised by the AI.
+Run the backend test suite with npm test. Verify model connectivity from the Render service before enabling bulk enrichment. Start with a small private staging batch, inspect generated warnings and specifications, and approve products individually.
