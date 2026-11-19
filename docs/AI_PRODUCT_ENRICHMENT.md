@@ -2,7 +2,7 @@
 
 ## Provider and deployment
 
-All product-content generation is performed by Sylva AI in the backend. There is no Gemini integration, Google AI API key, Google Search grounding, external AI fallback, or provider failover.
+All product-content generation is performed by Sylva AI in the backend. No external AI provider, external AI API key, external search grounding, fallback, or provider failover is used.
 
 The current model runtime is Ollama with Qwen 2.5 7B (OLLAMA_MODEL=qwen2.5:7b). Sylva is the application-level intelligence engine: it prepares trusted product input, applies Sylva's Kenyan catalogue rules, requests structured JSON from the private model runtime, validates and sanitises the result, records provenance, and leaves publication decisions to administrators.
 
