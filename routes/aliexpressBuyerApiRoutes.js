@@ -9,7 +9,7 @@ const Category = require('../models/Category');
 const AliExpressCatalogSettings = require('../models/AliExpressCatalogSettings');
 const { getUsableBuyerToken } = require('../services/aliexpressTokenManager');
 const { generateAliExpressProductContent, hashSource } = require('../services/aiProductContentService');
-const { readGeminiProviderState, resumeGeminiProvider } = require('../services/aiProviderCircuitBreaker');
+
 const { sendSalesNotificationEmail } = require('../services/emailService');
 const { generateUniqueProductCode } = require('../services/productIdentityService');
 const {
@@ -832,67 +832,43 @@ router.post('/catalog/verify-feeds', protect, adminOnly, limiter, async (req, re
  * authenticated Sylva administrator explicitly approves them.
  */
 router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
-  const [providerState, aiPending, aiProcessing, aiGenerated, aiFailed] = await Promise.all([
-    readGeminiProviderState().catch(() => ({ available: true, paused: false, persistenceAvailable: false })),
+  const [aiPending, aiProcessing, aiGenerated, aiFailed] = await Promise.all([
     AliExpressCatalogProduct.countDocuments({ status: mongoose.trusted({ $in: ['pending', 'approved'] }), 'aiContentDraft.status': mongoose.trusted({ $in: ['pending', 'not_generated'] }) }),
     AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'processing' }),
     AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'generated' }),
     AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'failed' }),
   ]);
+  const configured = Boolean(process.env.OLLAMA_BASE_URL);
   return res.set('Cache-Control', 'no-store, private').json({
     success: true,
     data: {
-      configured: Boolean(process.env.GEMINI_API_KEY),
-      providerStatus: providerState.paused ? 'paused' : (process.env.GEMINI_API_KEY ? 'available' : 'not_configured'),
-      pauseReason: providerState.pauseReason || '',
-      pausedAt: providerState.pausedAt || null,
-      resumeAt: providerState.pauseUntil || null,
-      circuitBreakerPersistenceAvailable: Boolean(providerState.persistenceAvailable),
-      quotaCooldownMinutes: providerState.cooldownMinutes || 1440,
-      provider: 'google_gemini',
-      model: String(process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'),
-      scope: 'product_content_only',
-      automaticEnrichmentAfterSync: true,
-      workerIntervalSeconds: Math.max(10, Math.min(60, Math.round((Number.parseInt(process.env.GEMINI_WORKER_INTERVAL_MS, 10) || 15000) / 1000))),
+      configured, providerStatus: configured ? 'available' : 'not_configured',
+      provider: 'sylva', model: String(process.env.OLLAMA_MODEL || 'qwen2.5:7b'),
+      scope: 'product_content_only', automaticEnrichmentAfterSync: true,
+      workerIntervalSeconds: Math.max(10, Math.min(60, Math.round((Number.parseInt(process.env.SYLVA_AI_WORKER_INTERVAL_MS, 10) || 15000) / 1000))),
       queue: { pending: aiPending, processing: aiProcessing, generated: aiGenerated, failed: aiFailed },
-      maxAutomaticAttempts: 5,
-      webResearchEnabled: Boolean(process.env.GEMINI_API_KEY) && !providerState.paused,
-      webResearchProvider: 'Google Search grounding',
-      sourcePreference: 'manufacturer official pages first; reputable technical sources only as fallback',
-      draftsRequireAdminApproval: true,
-      mayPublishProducts: false,
-      mayChangePricingOrStock: false,
-      mayAccessCustomerOrFinancialData: false,
+      maxAutomaticAttempts: 5, webResearchEnabled: false,
+      researchMode: 'supplied_product_data_only',
+      draftsRequireAdminApproval: true, mayPublishProducts: false,
+      mayChangePricingOrStock: false, mayAccessCustomerOrFinancialData: false,
       supplierOrderingEnabled: false,
     },
   });
 });
 
-
 router.post('/catalog/ai/resume', protect, adminOnly, async (req, res) => {
-  if (req.body?.confirm !== true) {
-    return res.status(400).json({ success: false, message: 'Confirm that you have checked Gemini quota and billing before resuming AI enrichment.' });
-  }
+  if (req.body?.confirm !== true) return res.status(400).json({ success: false, message: 'Confirm that you want Sylva AI to resume processing pending product drafts.' });
   try {
-    await resumeGeminiProvider();
     const released = await AliExpressCatalogProduct.collection.updateMany(
-      {
-        'aiContentDraft.status': 'pending',
-        'aiContentDraft.lastError': { $in: ['AI_CONTENT_QUOTA_EXHAUSTED', 'AI_CONTENT_PROVIDER_PAUSED'] },
-      },
+      { 'aiContentDraft.status': 'pending', 'aiContentDraft.lastError': 'AI_CONTENT_NOT_CONFIGURED' },
       { $set: { 'aiContentDraft.nextAttemptAt': null, 'aiContentDraft.lastError': '' } },
     );
-    return res.json({
-      success: true,
-      message: 'Gemini enrichment has been resumed. Pending product drafts are eligible for automatic processing.',
-      releasedPendingProducts: released.modifiedCount || 0,
-    });
+    return res.json({ success: true, message: 'Sylva AI queue has been released. Pending product drafts are eligible for processing.', releasedPendingProducts: released.modifiedCount || 0 });
   } catch (error) {
-    console.error('[Gemini circuit breaker] admin resume failed:', error.message);
-    return res.status(503).json({ success: false, code: 'AI_PROVIDER_RESUME_FAILED', message: 'Unable to resume Gemini enrichment. Confirm MongoDB is connected and try again.' });
+    console.error('[Sylva AI] admin queue release failed:', error.message);
+    return res.status(503).json({ success: false, code: 'SYLVA_AI_QUEUE_RELEASE_FAILED', message: 'Unable to release the Sylva AI queue.' });
   }
 });
-
 
 router.post('/catalog/review/:id/generate-content', protect, adminOnly, async (req, res) => {
   try {
@@ -911,19 +887,19 @@ router.post('/catalog/review/:id/generate-content', protect, adminOnly, async (r
     await record.save();
     return res.json({ success: true, draft: record.aiContentDraft });
   } catch (error) {
-    console.warn('[AliExpress Gemini content] generation failed:', JSON.stringify({
+    console.warn('[Sylva AI content] generation failed:', JSON.stringify({
       code: error.code || 'AI_CONTENT_FAILED', providerStatus: error.providerStatus || null,
       providerCode: error.providerCode || '',
     }));
     return res.status(Number(error.status) || (error.code === 'AI_CONTENT_NOT_CONFIGURED' ? 503 : 502)).json({
       success: false, code: error.code || 'AI_CONTENT_FAILED',
       message: error.code === 'AI_CONTENT_NOT_CONFIGURED'
-        ? 'Gemini is not configured. Add GEMINI_API_KEY to the backend environment.'
+        ? 'Sylva AI is not configured. Set OLLAMA_BASE_URL to the private model endpoint.'
         : error.code === 'AI_CONTENT_QUOTA_EXHAUSTED' || error.code === 'AI_CONTENT_PROVIDER_PAUSED'
-          ? 'AI enrichment is paused because the Gemini project quota or billing limit has been reached. Pending products are saved and will resume automatically after the cooldown. Check Google AI Studio usage and billing.'
+          ? 'Sylva AI product enrichment is temporarily unavailable. Pending products remain queued for retry.'
           : error.code === 'AI_CONTENT_RATE_LIMITED'
-            ? 'Gemini is temporarily rate-limiting requests. Please wait before trying again.'
-            : 'Gemini could not generate product content. Check the Gemini API key, quota and backend logs.',
+            ? 'Sylva AI is temporarily unavailable. Please retry shortly.'
+            : 'Sylva AI could not generate product content. Check the private model endpoint and backend logs.',
     });
   }
 });
