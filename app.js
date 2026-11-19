@@ -29,6 +29,7 @@ const aliexpressOrderApiRoutes = require('./routes/aliexpressOrderApiRoutes');
 const aliexpressPaymentApiRoutes = require('./routes/aliexpressPaymentApiRoutes');
 const aliexpressSearchApiRoutes = require('./routes/aliexpressSearchApiRoutes');
 const aliexpressFulfillmentRoutes = require('./routes/aliexpressFulfillmentRoutes');
+const catalogueAIRoutes = require('./routes/catalogueAIRoutes');
 const {
   cloudflareOriginGuard,
   financialRateLimit,
@@ -379,6 +380,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 
 app.use('/api/products', productRoutes);
+app.use('/api/catalogue-ai', catalogueAIRoutes);
 
 app.use('/api/categories', categoryRoutes);
 app.use('/api/brands', brandRoutes);
