@@ -41,3 +41,18 @@ AI has no authority to set prices, exchange rates, stock, categories, product vi
 - Check the admin AliExpress AI status endpoint for `webResearchEnabled` and `automaticEnrichmentAfterSync`.
 - Review draft `researchSources`, `specifications` and `warnings` before approving a product.
 - A product can still be reviewed if web research returns no source; in that case `researchStatus` is `no_sources_found` and unsupported specifications must remain omitted.
+
+
+## Multi-provider AI catalogue workspace
+
+The protected admin workspace is available at `/admin/catalogue-ai`. Its backend endpoints are mounted under `/api/catalogue-ai`:
+- `GET /status` reports provider configuration without exposing secrets.
+- `GET /products` returns a limited admin product list for selecting an existing listing.
+- `POST /generate` accepts `CREATE`, `SYNC_CLEANUP` or `REFINE_EDIT` and returns a draft only.
+- `POST /products/:id/apply` requires `confirm: true` and applies only descriptive and SEO fields.
+
+Qwen 2.5 7B is preferred when `OLLAMA_BASE_URL` is configured. The endpoint must be reachable from the Render service; `http://localhost:11434` on a developer PC is not reachable from Render. If Ollama is unavailable or returns invalid content, Gemini is used as fallback. Gemini fallback uses Google Search grounding. The Ollama prompt is explicitly told that it has no web-search grounding and must use only supplied product facts.
+
+Configure `OLLAMA_BASE_URL`, `OLLAMA_MODEL=qwen2.5:7b`, and optionally `OLLAMA_TIMEOUT_MS` in the backend environment. Keep `GEMINI_API_KEY` configured for fallback. The frontend displays whether each provider is configured, not its secret or endpoint.
+
+Generated content remains a draft until an administrator reviews it. Applying a draft changes only description, short description, key features, specifications, SEO title, SEO description and marketing tags. It does not change price, stock, SKU, product code, category assignment, images, ownership, approval status, visibility, order state, payments or supplier fulfilment. Delivery, warranty and returns text is preserved as provided and is not independently authorised by the AI.
