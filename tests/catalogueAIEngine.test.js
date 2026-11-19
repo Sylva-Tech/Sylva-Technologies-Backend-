@@ -41,9 +41,16 @@ test('validates a catalogue draft and strips unsupported HTML', () => {
   assert.ok(CATEGORIES.includes(result.category));
 });
 
-test('rejects drafts with fewer than five factual features', () => {
+test('accepts fewer than five factual features without inventing missing details', () => {
   const input = validDraft();
   input.keyFeatures = input.keyFeatures.slice(0, 4);
+  const result = validateDraft(input);
+  assert.equal(result.keyFeatures.length, 4);
+});
+
+test('rejects drafts with no factual key features', () => {
+  const input = validDraft();
+  input.keyFeatures = [];
   assert.throws(() => validateDraft(input), { code: 'CATALOGUE_AI_QUALITY_FAILED' });
 });
 
