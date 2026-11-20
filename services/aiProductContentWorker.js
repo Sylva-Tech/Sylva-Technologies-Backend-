@@ -2,7 +2,7 @@ const AliExpressCatalogProduct = require('../models/AliExpressCatalogProduct');
 const { generateAliExpressProductContent } = require('./aiProductContentService');
 let timer=null, running=false;
 const processOnePendingProduct=async()=>{
-  if(!process.env.OLLAMA_BASE_URL||running)return false;
+  if(!String(process.env.OLLAMA_BASE_URL||'').trim()||running)return false;
   running=true;
   try{
     const now=new Date(), stale=new Date(now.getTime()-10*60*1000);
@@ -20,7 +20,7 @@ const processOnePendingProduct=async()=>{
       await claimed.save();
       console.info('[Sylva AI] AliExpress product draft generated:',JSON.stringify({productId:String(claimed._id),model:generated.model,specifications:generated.specifications?.length||0}));
     }catch(error){
-      const attempts=Number(claimed.aiContentDraft?.attempts||1), retry=attempts<5&&error.code!=='SYLVA_AI_NOT_CONFIGURED';
+      const attempts=Number(claimed.aiContentDraft?.attempts||1), notConfigured=['SYLVA_AI_NOT_CONFIGURED','AI_CONTENT_NOT_CONFIGURED'].includes(error.code), retry=attempts<5&&!notConfigured;
       claimed.aiContentDraft.status=retry?'pending':'failed';
       claimed.aiContentDraft.lastError=String(error.code||'SYLVA_AI_FAILED').slice(0,240);
       claimed.aiContentDraft.nextAttemptAt=retry?new Date(Date.now()+Math.min(30,2**attempts)*60000):null;
