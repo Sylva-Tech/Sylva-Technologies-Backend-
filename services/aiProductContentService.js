@@ -30,15 +30,15 @@ const assertNoUnsupportedClaims=(content,sourceProduct)=>{
     ...(Array.isArray(content.marketingTags)?content.marketingTags:[]),
   ].join(' ').toLowerCase();
   const unsupportedPatterns=[
-    /\\b(?:business|enterprise|professional)[-\\s]?(?:oriented|grade|class|use|workloads?|applications?)\\b/i,
-    /\\b(?:designed|built|optimized|intended)\\s+for\\s+(?:business|enterprise|professionals?|gaming|education)\\b/i,
-    /\\b(?:fingerprint reader|facial recognition|secure boot|touchscreen|touch screen|4k display|full hd|ips display|wifi 6|wi-fi 6|bluetooth 5|long battery life|all-day battery|lightweight design|military grade)\\b/i,
+    /\b(?:business|enterprise|professional)[-\s]?(?:oriented|grade|class|use|workloads?|applications?)\b/i,
+    /\b(?:designed|built|optimized|intended)\s+for\s+(?:business|enterprise|professionals?|gaming|education)\b/i,
+    /\b(?:fingerprint reader|facial recognition|secure boot|touchscreen|touch screen|4k display|full hd|ips display|wifi 6|wi-fi 6|bluetooth 5|long battery life|all-day battery|lightweight design|military grade)\b/i,
   ];
   if(unsupportedPatterns.some(pattern=>pattern.test(generated)&&!pattern.test(source))){
     throw Object.assign(new Error('Sylva AI generated a product claim that is not supported by supplied facts.'),{code:'AI_CONTENT_UNSUPPORTED_CLAIM'});
   }
-  const generatedNumbers=generated.match(/\\b\\d+(?:\\.\\d+)?\\b/g)||[];
-  const sourceNumbers=new Set(source.match(/\\b\\d+(?:\\.\\d+)?\\b/g)||[]);
+  const generatedNumbers=generated.match(/\b\d+(?:\.\d+)?\b/g)||[];
+  const sourceNumbers=new Set(source.match(/\b\d+(?:\.\d+)?\b/g)||[]);
   if(generatedNumbers.some(number=>!sourceNumbers.has(number))){
     throw Object.assign(new Error('Sylva AI generated a number or specification absent from supplied facts.'),{code:'AI_CONTENT_UNSUPPORTED_CLAIM'});
   }
