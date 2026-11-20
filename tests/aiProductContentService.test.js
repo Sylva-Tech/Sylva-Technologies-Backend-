@@ -72,15 +72,15 @@ test('Sylva AI enrichment uses the configured Ollama model without external prov
   const previousUrl=process.env.OLLAMA_BASE_URL, previousModel=process.env.OLLAMA_MODEL, previousFetch=global.fetch;
   t.after(()=>{if(previousUrl===undefined)delete process.env.OLLAMA_BASE_URL;else process.env.OLLAMA_BASE_URL=previousUrl;if(previousModel===undefined)delete process.env.OLLAMA_MODEL;else process.env.OLLAMA_MODEL=previousModel;global.fetch=previousFetch;});
   process.env.OLLAMA_BASE_URL='http://private-model.internal:11434';
-  process.env.OLLAMA_MODEL='qwen2.5:7b';
+  process.env.OLLAMA_MODEL='qwen2.5:3b';
   const draft={verifiedBrand:'Example Brand',modelNumber:'EX-100',specifications:[{name:'Connectivity',value:'Wireless'}],researchSources:[],keyFeatures:['Wireless connectivity','Touch display','Activity tracking','Rechargeable design','Mobile notifications'],shortDescription:'A practical wearable with a touch display and activity tracking.',fullDescription:'<h3>Overview</h3><p>A wearable with a touch display and activity tracking features for everyday use.</p>',seoTitle:'Smart Wearable with Touch Display',seoMetaDescription:'Explore a smart wearable with a touch display, activity tracking and wireless connectivity.',marketingTags:['smart wearable','touch display','activity tracker','wireless device','wearable technology'],socialPromoCaption:'Keep everyday activity and notifications close with this practical wearable.',suggestedCategory:'Wearables',warnings:[],suggestions:[],missingSections:[]};
   let requestUrl='',body;
   global.fetch=async(url,options)=>{requestUrl=String(url);body=JSON.parse(options.body);return {ok:true,json:async()=>({message:{content:JSON.stringify(draft)}})};};
   const result=await generateAliExpressProductContent({title:'Smart Wearable',supplierBrand:'Example Brand',categoryName:'Wearables',rawDescription:'Touch display and activity tracking.',productAttributes:[{name:'Connectivity',value:'Wireless'}]});
   assert.equal(requestUrl,'http://private-model.internal:11434/api/chat');
-  assert.equal(body.model,'qwen2.5:7b');
+  assert.equal(body.model,'qwen2.5:3b');
   assert.equal(result.provider,'sylva');
-  assert.equal(result.model,'qwen2.5:7b');
+  assert.equal(result.model,'qwen2.5:3b');
   assert.equal(result.researchStatus,'no_sources_found');
   assert.equal(result.researchSources.length,0);
   assert.ok(result.warnings.some(x=>x.includes('no live web research')));
