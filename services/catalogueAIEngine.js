@@ -60,6 +60,7 @@ const assertNoUnsupportedClaims = (draft, sourceProduct) => {
     /\b(?:sleek|ergonomic|durable|rugged|lightweight)\s+(?:design|keyboard|chassis|build|construction)\b/i,
     /\b(?:various|different)\s+(?:industries|fields|professionals?)\b/i,
     /\b(?:blend|combination)\s+of\s+(?:performance|reliability|security)\b/i,
+    /\b(?:reliable|trusted)\s+and\s+(?:secure|reliable)\s+(?:computing|technology|solution)\b/i,
     /\b(?:fingerprint reader|facial recognition|secure boot|touchscreen|touch screen|4k display|full hd|ips display|wifi 6|wi-fi 6|bluetooth 5|long battery life|all-day battery|military grade)\b/i,
   ];
   if (unsupportedPatterns.some((pattern) => pattern.test(generated) && !pattern.test(source))) {
