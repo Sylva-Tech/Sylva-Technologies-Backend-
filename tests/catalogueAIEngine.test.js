@@ -48,10 +48,11 @@ test('accepts fewer than five factual features without inventing missing details
   assert.equal(result.keyFeatures.length, 4);
 });
 
-test('rejects drafts with no factual key features', () => {
+test('accepts an empty feature list when the source contains no verified feature details', () => {
   const input = validDraft();
   input.keyFeatures = [];
-  assert.throws(() => validateDraft(input), { code: 'CATALOGUE_AI_QUALITY_FAILED' });
+  const result = validateDraft(input);
+  assert.deepEqual(result.keyFeatures, []);
 });
 
 test('rejects supplier-facing or private business copy', () => {
