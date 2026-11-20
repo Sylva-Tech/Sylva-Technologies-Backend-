@@ -68,7 +68,10 @@ const assertNoUnsupportedClaims = (draft, sourceProduct) => {
   }
   const generatedNumbers = generated.match(/\b\d+(?:\.\d+)?\b/g) || [];
   const sourceNumbers = new Set(source.match(/\b\d+(?:\.\d+)?\b/g) || []);
-  if (generatedNumbers.some((number) => !sourceNumbers.has(number))) {
+  const measurementPattern = /\b\d+(?:\.\d+)?\s?(?:gb|tb|mb|ghz|mhz|khz|mah|wh|w|v|hz|mp|inch(?:es)?|in|mm|cm|kg|g|cores?|threads?)\b/gi;
+  const generatedMeasurements = (generated.match(measurementPattern) || []).map((value) => value.replace(/\s+/g, '').toLowerCase());
+  const sourceMeasurements = new Set((source.match(measurementPattern) || []).map((value) => value.replace(/\s+/g, '').toLowerCase()));
+  if (generatedNumbers.some((number) => !sourceNumbers.has(number)) || generatedMeasurements.some((value) => !sourceMeasurements.has(value))) {
     throw Object.assign(new Error('Sylva AI draft contains a number or specification not present in supplied facts.'), { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' });
   }
 };
