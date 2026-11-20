@@ -96,6 +96,29 @@ test('rejects unsupported business positioning and invented numeric specificatio
   );
 });
 
+
+test('rejects unsupported enterprise certification and invented performance claims from the Qwen sample', () => {
+  const source = { productTitle: 'Dell Latitude 5420', brand: 'Dell', suppliedProductAttributes: [{ name: 'Processor', value: 'Intel Core i5' }] };
+  assert.throws(() => assertNoUnsupportedClaims({
+    verifiedBrand: 'Dell', modelNumber: '5420',
+    shortDescription: 'A professional-grade laptop certified for business use.',
+    fullDescription: '<p>It meets enterprise security standards with advanced processors and robust storage options.</p>',
+    keyFeatures: ['A sleek design and ergonomic keyboard'], specifications: [], marketingTags: ['trusted choice'],
+  }, source), { code: 'AI_CONTENT_UNSUPPORTED_CLAIM' });
+});
+
+test('allows sparse source data without fabricated marketing tags or long copy', () => {
+  const result = validateContent({
+    verifiedBrand: 'Dell', modelNumber: '5420', specifications: [], keyFeatures: [],
+    shortDescription: 'Dell Latitude 5420 laptop.', fullDescription: '<p>Dell Latitude 5420 laptop.</p>',
+    seoTitle: 'Dell Latitude 5420', seoMetaDescription: 'Dell Latitude 5420 laptop.',
+    marketingTags: [], socialPromoCaption: '', suggestedCategory: 'Laptops',
+    warnings: ['Only the model name was supplied.'],
+  });
+  assert.deepEqual(result.keyFeatures, []);
+  assert.deepEqual(result.marketingTags, []);
+});
+
 test('Sylva AI enrichment uses the configured Ollama model without external provider calls', async (t) => {
   const previousUrl=process.env.OLLAMA_BASE_URL, previousModel=process.env.OLLAMA_MODEL, previousFetch=global.fetch;
   t.after(()=>{if(previousUrl===undefined)delete process.env.OLLAMA_BASE_URL;else process.env.OLLAMA_BASE_URL=previousUrl;if(previousModel===undefined)delete process.env.OLLAMA_MODEL;else process.env.OLLAMA_MODEL=previousModel;global.fetch=previousFetch;});
