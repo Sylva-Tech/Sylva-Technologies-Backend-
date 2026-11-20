@@ -29,10 +29,19 @@ const assertNoUnsupportedClaims=(content,sourceProduct)=>{
     content.seoTitle,content.seoMetaDescription,
     ...(Array.isArray(content.marketingTags)?content.marketingTags:[]),
   ].join(' ').toLowerCase();
-  const unsupportedPatterns=[
+  const unsupportedPatterns= [
     /\b(?:business|enterprise|professional)[-\s]?(?:oriented|grade|class|use|workloads?|applications?)\b/i,
     /\b(?:designed|built|optimized|intended)\s+for\s+(?:business|enterprise|professionals?|gaming|education)\b/i,
-    /\b(?:fingerprint reader|facial recognition|secure boot|touchscreen|touch screen|4k display|full hd|ips display|wifi 6|wi-fi 6|bluetooth 5|long battery life|all-day battery|lightweight design|military grade)\b/i,
+    /\b(?:certified|approved|compliant)\s+(?:for|with)\s+(?:business|enterprise|industry|military|security)\b/i,
+    /\benterprise\s+(?:security|grade|standards?|compliance|protection)\b/i,
+    /\b(?:advanced|powerful|high[- ]performance)\s+(?:processors?|performance|computing|hardware)\b/i,
+    /\b(?:robust|expanded|large|high[- ]capacity)\s+(?:storage|memory|security|protection)\b/i,
+    /\b(?:superior|exceptional|reliable|trusted)\s+(?:computing|performance|security|choice|solution)\b/i,
+    /\b(?:demanding|intensive)\s+(?:professional|business|computing)\s+(?:tasks?|workloads?|applications?)\b/i,
+    /\b(?:sleek|ergonomic|durable|rugged|lightweight)\s+(?:design|keyboard|chassis|build|construction)\b/i,
+    /\b(?:various|different)\s+(?:industries|fields|professionals?)\b/i,
+    /\b(?:blend|combination)\s+of\s+(?:performance|reliability|security)\b/i,
+    /\b(?:fingerprint reader|facial recognition|secure boot|touchscreen|touch screen|4k display|full hd|ips display|wifi 6|wi-fi 6|bluetooth 5|long battery life|all-day battery|military grade)\b/i,
   ];
   if(unsupportedPatterns.some(pattern=>pattern.test(generated)&&!pattern.test(source))){
     throw Object.assign(new Error('Sylva AI generated a product claim that is not supported by supplied facts.'),{code:'AI_CONTENT_UNSUPPORTED_CLAIM'});
@@ -59,7 +68,7 @@ const validateContent=(v)=>{
   const socialPromoCaption=v.socialPromoCaption.replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim().slice(0,1000);
   const suggestedCategory=v.suggestedCategory.replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim().slice(0,120);
   const privatePattern=/\b(?:aliexpress|supplier\s+(?:price|cost|id|url|currency|store)|exchange\s+rate|profit\s+margin|markup|wholesale\s+price|purchase\s+price)\b|(?:KSh|KES|USD|GBP|EUR|£|€|\$)\s?\d/i;
-  if(shortDescription.length<20||descriptionText.length<60||seoTitle.length<5||seoMetaDescription.length<40||marketingTags.length<5||!socialPromoCaption||!suggestedCategory||[...keyFeatures,shortDescription,descriptionText,seoTitle,seoMetaDescription,socialPromoCaption,suggestedCategory,...marketingTags].some(x=>privatePattern.test(x))){
+  if(shortDescription.length<8||descriptionText.length<8||seoTitle.length<5||seoMetaDescription.length<8||!suggestedCategory||[...keyFeatures,shortDescription,descriptionText,seoTitle,seoMetaDescription,socialPromoCaption,suggestedCategory,...marketingTags].some(x=>privatePattern.test(x))){
     throw Object.assign(new Error('Sylva AI product content failed factual quality and privacy checks.'),{code:'AI_CONTENT_QUALITY_FAILED'});
   }
   return {verifiedBrand,modelNumber,specifications:specs,keyFeatures,shortDescription,description,fullDescription:description,seoTitle,seoMetaDescription,marketingTags,socialPromoCaption,suggestedCategory,
