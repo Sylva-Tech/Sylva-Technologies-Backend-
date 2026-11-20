@@ -47,7 +47,7 @@ Only supplied product facts may be used. The backend rejects known unsupported f
 
 ## Queue operation
 
-The background worker processes one eligible AliExpress product at a time. It retries transient model failures with bounded exponential backoff and caps automatic attempts at five. If the private model endpoint is not configured, products remain queued rather than being sent to an external provider. The admin resume endpoint releases queued items after the endpoint has been configured or recovered.
+The background worker is opt-in and starts only when SYLVA_AI_WORKER_ENABLED=true. Keep it false during local model testing, especially when the local database may contain production catalogue records. Enable it only after the remote model endpoint is verified and the administrator has reviewed the pending queue. When enabled, the worker processes one eligible AliExpress product at a time. It retries transient model failures with bounded exponential backoff and caps automatic attempts at five. If the private model endpoint is not configured, products remain queued rather than being sent to an external provider. The admin resume endpoint releases queued items after the endpoint has been configured or recovered.
 
 ## Validation
 
