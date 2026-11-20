@@ -56,8 +56,8 @@ const assertNoUnsupportedClaims = (draft, sourceProduct) => {
   if (unsupportedPatterns.some((pattern) => pattern.test(generated) && !pattern.test(source))) {
     throw Object.assign(new Error('Sylva AI draft contains a product claim that is not supported by supplied facts.'), { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' });
   }
-  const generatedNumbers = generated.match(/\b\d+(?:\\.\d+)?\b/g) || [];
-  const sourceNumbers = new Set(source.match(/\b\d+(?:\\.\d+)?\b/g) || []);
+  const generatedNumbers = generated.match(/\b\d+(?:\.\d+)?\b/g) || [];
+  const sourceNumbers = new Set(source.match(/\b\d+(?:\.\d+)?\b/g) || []);
   if (generatedNumbers.some((number) => !sourceNumbers.has(number))) {
     throw Object.assign(new Error('Sylva AI draft contains a number or specification not present in supplied facts.'), { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' });
   }
