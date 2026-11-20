@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { hashSource, validateContent, generateAliExpressProductContent } = require('../services/aiProductContentService');
+const { hashSource, validateContent, generateAliExpressProductContent, assertNoUnsupportedClaims } = require('../services/aiProductContentService');
 
 test('hashSource is stable for the same whitelisted product facts', () => {
   const product = { title: 'USB-C Hub', supplierBrand: 'Example', productAttributes: [{ name: 'Ports', value: '7' }] };
@@ -66,6 +66,34 @@ test('validateContent preserves safe HTML and strips scripts, event attributes a
   assert.match(result.description, /<h3>Overview<\/h3>/);
   assert.match(result.description, /<p>A sufficiently detailed description/);
   assert.doesNotMatch(result.description, /<script\b|<iframe\b|\bonclick\s*=|alert\s*\(/i);
+});
+
+test('rejects unsupported business positioning and invented numeric specifications', () => {
+  const source = {
+    productTitle: 'Dell Latitude 5420',
+    brand: 'Dell',
+    suppliedProductAttributes: [{ name: 'Processor', value: 'Intel Core i5' }],
+  };
+  assert.throws(
+    () => assertNoUnsupportedClaims({
+      shortDescription: 'Dell Latitude 5420 designed for business use.',
+      description: 'A laptop with Intel Core i5.',
+      keyFeatures: [],
+      specifications: [],
+      marketingTags: [],
+    }, source),
+    { code: 'AI_CONTENT_UNSUPPORTED_CLAIM' }
+  );
+  assert.throws(
+    () => assertNoUnsupportedClaims({
+      shortDescription: 'Dell Latitude 5420 with 16GB RAM.',
+      description: 'A laptop with Intel Core i5.',
+      keyFeatures: [],
+      specifications: [{ name: 'RAM', value: '16GB' }],
+      marketingTags: [],
+    }, source),
+    { code: 'AI_CONTENT_UNSUPPORTED_CLAIM' }
+  );
 });
 
 test('Sylva AI enrichment uses the configured Ollama model without external provider calls', async (t) => {
