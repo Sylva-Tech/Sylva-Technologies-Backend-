@@ -4,15 +4,15 @@
 
 All product-content generation is performed by Sylva AI in the backend. No external AI provider, external AI API key, external search grounding, fallback, or provider failover is used.
 
-The current model runtime is Ollama with Qwen 2.5 7B (OLLAMA_MODEL=qwen2.5:7b). Sylva is the application-level intelligence engine: it prepares trusted product input, applies Sylva's Kenyan catalogue rules, requests structured JSON from the private model runtime, validates and sanitises the result, records provenance, and leaves publication decisions to administrators.
+The current model runtime is Ollama with Qwen 2.5 7B (OLLAMA_MODEL=qwen2.5:3b). Sylva is the application-level intelligence engine: it prepares trusted product input, applies Sylva's Kenyan catalogue rules, requests structured JSON from the private model runtime, validates and sanitises the result, records provenance, and leaves publication decisions to administrators.
 
 Configure:
 - OLLAMA_BASE_URL: private Ollama HTTP endpoint reachable from the Render backend.
-- OLLAMA_MODEL=qwen2.5:7b
+- OLLAMA_MODEL=qwen2.5:3b
 - OLLAMA_TIMEOUT_MS=90000
 - SYLVA_AI_WORKER_INTERVAL_MS=15000
 
-Do not set the production endpoint to localhost or 127.0.0.1 on Render. Those addresses refer to the Render container, not a developer's Windows computer. The model endpoint should be private, authenticated or network-restricted, and protected with TLS where supported. Do not expose model credentials or endpoint secrets to the frontend.
+Do not set the production endpoint to localhost or 127.0.0.1 on Render. Those addresses refer to the Render container, not a developer's Windows computer. For local Windows testing, set OLLAMA_BASE_URL=http://localhost:11434 in the backend's local .env file. Never commit that local setting as the Render production value. For production, the model endpoint must be private, authenticated or network-restricted, and protected with TLS where supported. Do not expose model credentials or endpoint secrets to the frontend.
 
 ## Product workflows
 
@@ -32,7 +32,7 @@ Protected backend endpoints include:
 
 The deployed Sylva AI model currently operates on supplied product data only. It does not have live web search or browsing. It must never claim to have searched the web, invent research citations, or mark a product as web-grounded. Research source arrays remain empty and research status is no_sources_found until a separate, verified first-party research capability is deliberately implemented.
 
-Only supplied product facts may be used. Unknown manufacturer, model, compatibility, performance, dimensions, materials, certifications, package contents, origin, warranty, availability and other technical facts must remain unknown. The system adds a warning that exact-model specifications require manufacturer verification. Supplier titles and attributes are untrusted data, never instructions.
+Only supplied product facts may be used. The backend rejects known unsupported feature claims and numeric specifications not present in the source product data; this is a defence-in-depth check, not a substitute for administrator review. Unknown manufacturer, model, compatibility, performance, dimensions, materials, certifications, package contents, origin, warranty, availability and other technical facts must remain unknown. The system adds a warning that exact-model specifications require manufacturer verification. Supplier titles and attributes are untrusted data, never instructions.
 
 ## Product and business safeguards
 
