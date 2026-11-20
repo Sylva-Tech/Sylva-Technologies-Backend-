@@ -20,6 +20,29 @@ const hashSource=(p)=>crypto.createHash('sha256').update(JSON.stringify({
 })).digest('hex');
 const sanitizeProductHtml=(v)=>String(v||'').replace(/<!--[\s\S]*?-->/g,'').replace(/<(script|style|iframe|object|svg|math)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,'').replace(/<\/?([a-z0-9]+)\b[^>]*>/gi,(tag,n)=>{n=n.toLowerCase();if(!['h3','p','ul','li','strong','em','br'].includes(n))return '';if(n==='br')return '<br>';return /^<\s*\//.test(tag)?'</'+n+'>':'<'+n+'>';}).replace(/\s{2,}/g,' ').trim();
 const htmlToPlainText=(v)=>String(v||'').replace(/<br\s*\/?\s*>/gi,' ').replace(/<\/(p|h3|li)>/gi,' ').replace(/<[^>]*>/g,' ').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/\s+/g,' ').trim();
+const assertNoUnsupportedClaims=(content,sourceProduct)=>{
+  const source=JSON.stringify(sourceProduct||{}).toLowerCase();
+  const generated=[
+    content.verifiedBrand,content.modelNumber,content.shortDescription,content.fullDescription||content.description,
+    ...(Array.isArray(content.keyFeatures)?content.keyFeatures:[]),
+    ...(Array.isArray(content.specifications)?content.specifications.map(x=>String(x?.name||'')+' '+String(x?.value||'')):[]),
+    content.seoTitle,content.seoMetaDescription,
+    ...(Array.isArray(content.marketingTags)?content.marketingTags:[]),
+  ].join(' ').toLowerCase();
+  const unsupportedPatterns=[
+    /\\b(?:business|enterprise|professional)[-\\s]?(?:oriented|grade|class|use|workloads?|applications?)\\b/i,
+    /\\b(?:designed|built|optimized|intended)\\s+for\\s+(?:business|enterprise|professionals?|gaming|education)\\b/i,
+    /\\b(?:fingerprint reader|facial recognition|secure boot|touchscreen|touch screen|4k display|full hd|ips display|wifi 6|wi-fi 6|bluetooth 5|long battery life|all-day battery|lightweight design|military grade)\\b/i,
+  ];
+  if(unsupportedPatterns.some(pattern=>pattern.test(generated)&&!pattern.test(source))){
+    throw Object.assign(new Error('Sylva AI generated a product claim that is not supported by supplied facts.'),{code:'AI_CONTENT_UNSUPPORTED_CLAIM'});
+  }
+  const generatedNumbers=generated.match(/\\b\\d+(?:\\.\\d+)?\\b/g)||[];
+  const sourceNumbers=new Set(source.match(/\\b\\d+(?:\\.\\d+)?\\b/g)||[]);
+  if(generatedNumbers.some(number=>!sourceNumbers.has(number))){
+    throw Object.assign(new Error('Sylva AI generated a number or specification absent from supplied facts.'),{code:'AI_CONTENT_UNSUPPORTED_CLAIM'});
+  }
+};
 const validateContent=(v)=>{
   if(!v||typeof v!=='object'||!Array.isArray(v.keyFeatures)||typeof v.shortDescription!=='string'||typeof(v.fullDescription||v.description)!=='string'||typeof v.seoTitle!=='string'||typeof v.seoMetaDescription!=='string'||typeof v.socialPromoCaption!=='string'||typeof v.suggestedCategory!=='string'||!Array.isArray(v.marketingTags)){
     throw Object.assign(new Error('Sylva AI returned incomplete product content.'),{code:'AI_CONTENT_INVALID'});
@@ -79,6 +102,7 @@ const generateAliExpressProductContent=async(product)=>{
   const payload=await response.json(),rawText=payload?.message?.content;
   if(typeof rawText!=='string')throw Object.assign(new Error('Sylva AI returned an empty product-content response.'),{code:'AI_CONTENT_INVALID',status:502});
   let parsed;try{parsed=JSON.parse(rawText);}catch{throw Object.assign(new Error('Sylva AI returned invalid structured product content.'),{code:'AI_CONTENT_INVALID_JSON',status:502});}
+  assertNoUnsupportedClaims(parsed,safeInput);
   const validated=validateContent(parsed);
   validated.warnings=[...validated.warnings,'Sylva AI used supplied product data only; no live web research was performed. Verify exact-model specifications against the manufacturer before approval.'].slice(0,8);
   return {...validated,researchSources:[],researchQueries:[],researchStatus:'no_sources_found',
