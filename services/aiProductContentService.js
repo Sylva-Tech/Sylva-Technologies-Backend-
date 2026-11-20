@@ -109,4 +109,4 @@ const generateAliExpressProductContent=async(product)=>{
     returnPolicyNote:'Returns and refunds are governed by the Sylva Technologies store Returns & Refunds policy. Confirm eligibility and conditions under the published store policy before purchase.',
     provider:'sylva',model,sourceHash:hashSource(product),generatedAt:new Date(),status:'generated'};
 };
-module.exports={generateAliExpressProductContent,hashSource,validateContent};
+module.exports={generateAliExpressProductContent,hashSource,validateContent,assertNoUnsupportedClaims};
