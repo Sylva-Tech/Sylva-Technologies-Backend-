@@ -838,12 +838,12 @@ router.get('/catalog/ai/status', protect, adminOnly, async (req, res) => {
     AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'generated' }),
     AliExpressCatalogProduct.countDocuments({ 'aiContentDraft.status': 'failed' }),
   ]);
-  const configured = Boolean(process.env.OLLAMA_BASE_URL);
+  const configured = Boolean(String(process.env.OLLAMA_BASE_URL||'').trim());
   return res.set('Cache-Control', 'no-store, private').json({
     success: true,
     data: {
       configured, providerStatus: configured ? 'available' : 'not_configured',
-      provider: 'sylva', model: String(process.env.OLLAMA_MODEL || 'qwen2.5:7b'),
+      provider: 'sylva', model: String(process.env.OLLAMA_MODEL || 'qwen2.5:3b'),
       scope: 'product_content_only', automaticEnrichmentAfterSync: true,
       workerIntervalSeconds: Math.max(10, Math.min(60, Math.round((Number.parseInt(process.env.SYLVA_AI_WORKER_INTERVAL_MS, 10) || 15000) / 1000))),
       queue: { pending: aiPending, processing: aiProcessing, generated: aiGenerated, failed: aiFailed },
