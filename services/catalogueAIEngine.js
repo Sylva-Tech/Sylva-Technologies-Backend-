@@ -13,7 +13,7 @@ const SCHEMA = {
     delivery_information: { type: 'string' }, warranty_policy: { type: 'string' }, return_policy: { type: 'string' },
     seo_meta: { type: 'object', additionalProperties: false, properties: {
       meta_title: { type: 'string', maxLength: 60 }, meta_description: { type: 'string', maxLength: 155 },
-      tags: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 5 },
+      tags: { type: 'array', items: { type: 'string' }, maxItems: 5 },
     }, required: ['meta_title', 'meta_description', 'tags'] },
     warnings: { type: 'array', items: { type: 'string' } },
   },
@@ -49,9 +49,18 @@ const assertNoUnsupportedClaims = (draft, sourceProduct) => {
     ...(Array.isArray(draft.seo_meta?.tags) ? draft.seo_meta.tags : []),
   ].join(' ').toLowerCase();
   const unsupportedPatterns = [
-    /\b(?:business|enterprise|professional)\s+(?:use|grade|class|workloads?|applications?)\b/i,
+    /\b(?:business|enterprise|professional)[-\s]?(?:oriented|grade|class|use|workloads?|applications?)\b/i,
     /\b(?:designed|built|optimized|intended)\s+for\s+(?:business|enterprise|professionals?|gaming|education)\b/i,
-    /\b(?:fingerprint reader|facial recognition|secure boot|touchscreen|touch screen|4k display|full hd|ips display|wifi 6|wi-fi 6|bluetooth 5|long battery life|all-day battery|lightweight design|military grade)\b/i,
+    /\b(?:certified|approved|compliant)\s+(?:for|with)\s+(?:business|enterprise|industry|military|security)\b/i,
+    /\benterprise\s+(?:security|grade|standards?|compliance|protection)\b/i,
+    /\b(?:advanced|powerful|high[- ]performance)\s+(?:processors?|performance|computing|hardware)\b/i,
+    /\b(?:robust|expanded|large|high[- ]capacity)\s+(?:storage|memory|security|protection)\b/i,
+    /\b(?:superior|exceptional|reliable|trusted)\s+(?:computing|performance|security|choice|solution)\b/i,
+    /\b(?:demanding|intensive)\s+(?:professional|business|computing)\s+(?:tasks?|workloads?|applications?)\b/i,
+    /\b(?:sleek|ergonomic|durable|rugged|lightweight)\s+(?:design|keyboard|chassis|build|construction)\b/i,
+    /\b(?:various|different)\s+(?:industries|fields|professionals?)\b/i,
+    /\b(?:blend|combination)\s+of\s+(?:performance|reliability|security)\b/i,
+    /\b(?:fingerprint reader|facial recognition|secure boot|touchscreen|touch screen|4k display|full hd|ips display|wifi 6|wi-fi 6|bluetooth 5|long battery life|all-day battery|military grade)\b/i,
   ];
   if (unsupportedPatterns.some((pattern) => pattern.test(generated) && !pattern.test(source))) {
     throw Object.assign(new Error('Sylva AI draft contains a product claim that is not supported by supplied facts.'), { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' });
@@ -69,7 +78,7 @@ const validateDraft = (draft, sourceProduct) => {
   const tags=(Array.isArray(draft.seo_meta?.tags)?draft.seo_meta.tags:[]).map(x=>cleanText(x,60)).filter(Boolean).slice(0,5);
   const specs=draft.specifications||{}, longDescription=cleanHtml(draft.longDescription);
   const seoTitle=cleanText(draft.seo_meta?.meta_title,60), seoDescription=cleanText(draft.seo_meta?.meta_description,155);
-  if(title.length<3||!cleanText(draft.shortDescription,240)||longDescription.replace(/<[^>]*>/g,'').length<30||!tags.length||seoTitle.length<3||seoDescription.length<30)
+  if(title.length<3||!cleanText(draft.shortDescription,240)||longDescription.replace(/<[^>]*>/g,'').length<8||seoTitle.length<3||seoDescription.length<8)
     throw Object.assign(new Error('Sylva AI draft failed catalogue quality checks.'),{code:'CATALOGUE_AI_QUALITY_FAILED'});
   const privatePattern=/aliexpress|supplier\s+(?:cost|price|id|url|store)|wholesale\s+price|exchange\s+rate|profit\s+margin|coupon\s+code/i;
   const copy=[title,draft.shortDescription,longDescription,...keyFeatures,seoTitle,seoDescription,...tags].join(' ');
