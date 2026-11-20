@@ -99,7 +99,7 @@ const generateAliExpressProductContent=async(product)=>{
     'Never invent technical specifications, compatibility, performance, dimensions, materials, certifications, warranty, delivery promises, package contents, origin, availability or endorsements.',
     'Do not include supplier names, supplier costs, supplier URLs, exchange rates, margin, internal metadata or any price in customer-facing copy.',
     'Return 5–7 concise factual key features only if supported; if fewer, return the facts available and explain missing information in warnings.',
-    'Write natural professional Kenyan English, shortDescription <=160 characters, SEO title <=60, SEO description <=155, and 5–8 factual tags.',
+    'Write natural professional Kenyan English, shortDescription <=160 characters, SEO title <=60 and SEO description <=155. Return up to 8 factual tags only when supported; return fewer or an empty list rather than inventing tags.',
     'Write clean semantic HTML using only h3,p,ul,li,strong,em,br. No CSS, links, images, scripts or attributes. Avoid duplicating feature bullets in description.',
     'Category suggestion is advisory only. Product pricing, stock, category assignment, visibility, approval, policies and publishing are outside your authority.',
     'Never create warranty, return, refund or delivery promises. Only reuse supplied policy text. All drafts require administrator review.',
