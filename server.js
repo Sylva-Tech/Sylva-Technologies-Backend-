@@ -17,7 +17,9 @@ const startServer = async () => {
       await migrateProductCodeIndex();
       await migrateProductOriginsAndCodes();
       startAliExpressTokenRefresh();
-      startAIProductContentWorker();
+      if (String(process.env.SYLVA_AI_WORKER_ENABLED).toLowerCase() === 'true') {
+        startAIProductContentWorker();
+      }
     } else {
       console.warn('MONGO_URI/MONGODB_URI is not set. The API will start without MongoDB until the environment is configured.');
     }

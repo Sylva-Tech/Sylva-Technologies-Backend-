@@ -41,16 +41,61 @@ test('validates a catalogue draft and strips unsupported HTML', () => {
   assert.ok(CATEGORIES.includes(result.category));
 });
 
-test('rejects drafts with fewer than five factual features', () => {
+test('accepts fewer than five factual features without inventing missing details', () => {
   const input = validDraft();
   input.keyFeatures = input.keyFeatures.slice(0, 4);
-  assert.throws(() => validateDraft(input), { code: 'CATALOGUE_AI_QUALITY_FAILED' });
+  const result = validateDraft(input);
+  assert.equal(result.keyFeatures.length, 4);
+});
+
+test('accepts an empty feature list when the source contains no verified feature details', () => {
+  const input = validDraft();
+  input.keyFeatures = [];
+  const result = validateDraft(input);
+  assert.deepEqual(result.keyFeatures, []);
 });
 
 test('rejects supplier-facing or private business copy', () => {
   const input = validDraft();
   input.shortDescription = 'AliExpress supplier product at a low wholesale price.';
   assert.throws(() => validateDraft(input), { code: 'CATALOGUE_AI_PRIVATE_CONTENT' });
+});
+
+test('rejects unsupported business-use claims when product input does not support them', () => {
+  const input = validDraft();
+  input.longDescription = '<h3>Overview</h3><p>This laptop is designed for business use.</p>';
+  assert.throws(
+    () => validateDraft(input, { title: 'Logitech K380 Wireless Bluetooth Keyboard', brand: 'Logitech', category: 'Accessories', description: 'Bluetooth connectivity' }),
+    { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' }
+  );
+});
+
+test('rejects numeric specifications that are absent from supplied product facts', () => {
+  const input = validDraft();
+  input.shortDescription = 'A wireless Bluetooth keyboard with 16GB memory for compatible devices.';
+  assert.throws(
+    () => validateDraft(input, { title: 'Logitech K380 Wireless Bluetooth Keyboard', brand: 'Logitech', specifications: { Connectivity: 'Bluetooth' } }),
+    { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' }
+  );
+});
+
+
+test('rejects enterprise-security and performance claims seen in the local Qwen output', () => {
+  const input = validDraft();
+  input.longDescription = '<h3>Overview</h3><p>Certified for business use and meets enterprise security standards with advanced processors and robust storage options.</p>';
+  assert.throws(() => validateDraft(input, { title: 'Dell Latitude 5420', brand: 'Dell', specifications: { Processor: 'Intel Core i5' } }), { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' });
+});
+
+test('allows empty SEO tags and short grounded copy when the source has few facts', () => {
+  const input = validDraft();
+  input.shortDescription = 'Dell Latitude 5420.';
+  input.longDescription = '<p>Dell Latitude 5420.</p>';
+  input.seo_meta.meta_description = 'Dell Latitude 5420.';
+  input.seo_meta.tags = [];
+  input.keyFeatures = [];
+  const result = validateDraft(input, { title: 'Dell Latitude 5420', brand: 'Dell' });
+  assert.deepEqual(result.keyFeatures, []);
+  assert.deepEqual(result.seo_meta.tags, []);
 });
 
 test('does not accept a category outside Sylva catalogue taxonomy', () => {

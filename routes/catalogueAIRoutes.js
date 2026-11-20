@@ -18,10 +18,11 @@ router.get('/status', protect, adminOnly, (req, res) => {
   res.json({
     success: true,
     data: {
-      preferredProvider: 'ollama',
-      preferredModel: process.env.OLLAMA_MODEL || 'qwen2.5:7b',
-      ollamaConfigured: Boolean(process.env.OLLAMA_BASE_URL),
-      geminiFallbackConfigured: Boolean(process.env.GEMINI_API_KEY),
+      preferredProvider: 'sylva',
+      preferredModel: process.env.OLLAMA_MODEL || 'qwen2.5:3b',
+      modelEndpointConfigured: Boolean(String(process.env.OLLAMA_BASE_URL || '').trim()),
+      provider: 'sylva',
+      modelEndpointRequired: true,
       modes: ['CREATE', 'SYNC_CLEANUP', 'REFINE_EDIT'],
       savesRequireAdminConfirmation: true,
     },
@@ -81,12 +82,12 @@ router.post('/products/:id/apply', protect, adminOnly, async (req, res) => {
     product.seoMetaDescription = draft.seo_meta.meta_description;
     product.marketingTags = draft.seo_meta.tags;
     product.contentGeneration = {
-      provider: req.body?.draft?.generation?.provider === 'ollama' ? 'ollama' : 'google_gemini',
+      provider: 'sylva',
       model: String(req.body?.draft?.generation?.model || '').slice(0, 80),
       sourceHash: '',
       generatedAt: new Date(),
       generatedFields: ['name', 'description', 'shortDescription', 'keyFeatures', 'specifications', 'seoTitle', 'seoMetaDescription', 'marketingTags'],
-      warnings: [],
+      warnings: Array.isArray(req.body?.draft?.generation?.warnings) ? req.body.draft.generation.warnings.slice(0, 8) : [],
       researchSources: Array.isArray(req.body?.draft?.generation?.researchSources) ? req.body.draft.generation.researchSources.slice(0, 10) : [],
     };
     await product.save();

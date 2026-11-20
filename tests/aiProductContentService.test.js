@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { hashSource, validateContent, generateAliExpressProductContent } = require('../services/aiProductContentService');
+const { hashSource, validateContent, generateAliExpressProductContent, assertNoUnsupportedClaims } = require('../services/aiProductContentService');
 
 test('hashSource is stable for the same whitelisted product facts', () => {
   const product = { title: 'USB-C Hub', supplierBrand: 'Example', productAttributes: [{ name: 'Ports', value: '7' }] };
@@ -68,61 +68,71 @@ test('validateContent preserves safe HTML and strips scripts, event attributes a
   assert.doesNotMatch(result.description, /<script\b|<iframe\b|\bonclick\s*=|alert\s*\(/i);
 });
 
-test('Gemini generation sends the Sylva writing rules and uses the configured model', async (t) => {
-  const previousKey = process.env.GEMINI_API_KEY;
-  const previousModel = process.env.GEMINI_MODEL;
-  const previousFetch = global.fetch;
-  t.after(() => {
-    if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousKey;
-    if (previousModel === undefined) delete process.env.GEMINI_MODEL;
-    else process.env.GEMINI_MODEL = previousModel;
-    global.fetch = previousFetch;
-  });
-  process.env.GEMINI_API_KEY = 'unit-test-key';
-  process.env.GEMINI_MODEL = 'gemini-3.5-flash-lite';
-  const draft = {
-    verifiedBrand: 'Example Brand',
-    modelNumber: 'EX-100',
-    specifications: [{ name: 'Connectivity', value: 'Wireless' }, { name: 'Display', value: 'Touch display' }],
-    researchSources: [],
-    keyFeatures: ['Wireless connectivity', 'Touch display', 'Activity tracking', 'Rechargeable design', 'Mobile notifications'],
-    shortDescription: 'A practical wearable with a touch display and activity tracking.',
-    fullDescription: '<h3>Overview</h3><p>A wearable with a touch display and activity tracking features for everyday use.</p>',
-    seoTitle: 'Smart Wearable with Touch Display',
-    seoMetaDescription: 'Explore a smart wearable with a touch display, activity tracking and wireless connectivity.',
-    marketingTags: ['smart wearable', 'touch display', 'activity tracker', 'wireless device', 'wearable technology'],
-    socialPromoCaption: 'Keep everyday activity and notifications close with this practical wearable.',
-    suggestedCategory: 'Wearables',
-    warnings: ['Battery capacity was not supplied.'],
-    suggestions: [],
-    missingSections: ['Battery capacity'],
+test('rejects unsupported business positioning and invented numeric specifications', () => {
+  const source = {
+    productTitle: 'Dell Latitude 5420',
+    brand: 'Dell',
+    suppliedProductAttributes: [{ name: 'Processor', value: 'Intel Core i5' }],
   };
-  let requestUrl = '';
-  let requestBody;
-  global.fetch = async (url, options) => {
-    requestUrl = String(url);
-    requestBody = JSON.parse(options.body);
-    return { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(draft) }] }, groundingMetadata: { webSearchQueries: ['Example Brand EX-100 official specifications'], groundingChunks: [{ web: { title: 'Example Brand official specifications', uri: 'https://www.example.com/products/ex-100' } }] } }] }) };
-  };
-  const result = await generateAliExpressProductContent({
-    title: 'Smart Wearable',
-    supplierBrand: 'Example Brand',
-    categoryName: 'Wearables',
-    rawDescription: 'Touch display and activity tracking.',
-    productAttributes: [{ name: 'Connectivity', value: 'Wireless' }],
+  assert.throws(
+    () => assertNoUnsupportedClaims({
+      shortDescription: 'Dell Latitude 5420 designed for business use.',
+      description: 'A laptop with Intel Core i5.',
+      keyFeatures: [],
+      specifications: [],
+      marketingTags: [],
+    }, source),
+    { code: 'AI_CONTENT_UNSUPPORTED_CLAIM' }
+  );
+  assert.throws(
+    () => assertNoUnsupportedClaims({
+      shortDescription: 'Dell Latitude 5420 with 16GB RAM.',
+      description: 'A laptop with Intel Core i5.',
+      keyFeatures: [],
+      specifications: [{ name: 'RAM', value: '16GB' }],
+      marketingTags: [],
+    }, source),
+    { code: 'AI_CONTENT_UNSUPPORTED_CLAIM' }
+  );
+});
+
+
+test('rejects unsupported enterprise certification and invented performance claims from the Qwen sample', () => {
+  const source = { productTitle: 'Dell Latitude 5420', brand: 'Dell', suppliedProductAttributes: [{ name: 'Processor', value: 'Intel Core i5' }] };
+  assert.throws(() => assertNoUnsupportedClaims({
+    verifiedBrand: 'Dell', modelNumber: '5420',
+    shortDescription: 'A professional-grade laptop certified for business use.',
+    fullDescription: '<p>It meets enterprise security standards with advanced processors and robust storage options.</p>',
+    keyFeatures: ['A sleek design and ergonomic keyboard'], specifications: [], marketingTags: ['trusted choice'],
+  }, source), { code: 'AI_CONTENT_UNSUPPORTED_CLAIM' });
+});
+
+test('allows sparse source data without fabricated marketing tags or long copy', () => {
+  const result = validateContent({
+    verifiedBrand: 'Dell', modelNumber: '5420', specifications: [], keyFeatures: [],
+    shortDescription: 'Dell Latitude 5420 laptop.', fullDescription: '<p>Dell Latitude 5420 laptop.</p>',
+    seoTitle: 'Dell Latitude 5420', seoMetaDescription: 'Dell Latitude 5420 laptop.',
+    marketingTags: [], socialPromoCaption: '', suggestedCategory: 'Laptops',
+    warnings: ['Only the model name was supplied.'],
   });
-  assert.match(requestUrl, /models\/gemini-3\.5-flash-lite:generateContent$/);
-  const instructions = requestBody.systemInstruction.parts[0].text;
-  assert.match(instructions, /Never invent missing technical specifications, RAM, storage, battery capacity, model numbers/);
-  assert.match(instructions, /clean, semantic HTML/);
-  assert.match(instructions, /administrator must review and approve every draft/);
-  assert.match(instructions, /Google Search grounding/);
-  assert.deepEqual(requestBody.tools, [{ google_search: {} }]);
-  assert.equal(result.researchStatus, 'grounded');
-  assert.equal(result.researchSources[0].url, 'https://www.example.com/products/ex-100');
-  assert.equal(result.specifications[0].name, 'Connectivity');
-  assert.equal(result.verifiedBrand, 'Example Brand');
-  assert.equal(result.model, 'gemini-3.5-flash-lite');
-  assert.equal(result.marketingTags.length, 5);
+  assert.deepEqual(result.keyFeatures, []);
+  assert.deepEqual(result.marketingTags, []);
+});
+
+test('Sylva AI enrichment uses the configured Ollama model without external provider calls', async (t) => {
+  const previousUrl=process.env.OLLAMA_BASE_URL, previousModel=process.env.OLLAMA_MODEL, previousFetch=global.fetch;
+  t.after(()=>{if(previousUrl===undefined)delete process.env.OLLAMA_BASE_URL;else process.env.OLLAMA_BASE_URL=previousUrl;if(previousModel===undefined)delete process.env.OLLAMA_MODEL;else process.env.OLLAMA_MODEL=previousModel;global.fetch=previousFetch;});
+  process.env.OLLAMA_BASE_URL='http://private-model.internal:11434';
+  process.env.OLLAMA_MODEL='qwen2.5:3b';
+  const draft={verifiedBrand:'Example Brand',modelNumber:'',specifications:[{name:'Connectivity',value:'Wireless'}],researchSources:[],keyFeatures:['Wireless connectivity','Touch display','Activity tracking','Rechargeable design','Mobile notifications'],shortDescription:'A practical wearable with a touch display and activity tracking.',fullDescription:'<h3>Overview</h3><p>A wearable with a touch display and activity tracking features for everyday use.</p>',seoTitle:'Smart Wearable with Touch Display',seoMetaDescription:'Explore a smart wearable with a touch display, activity tracking and wireless connectivity.',marketingTags:['smart wearable','touch display','activity tracker','wireless device','wearable technology'],socialPromoCaption:'Keep everyday activity and notifications close with this practical wearable.',suggestedCategory:'Wearables',warnings:[],suggestions:[],missingSections:[]};
+  let requestUrl='',body;
+  global.fetch=async(url,options)=>{requestUrl=String(url);body=JSON.parse(options.body);return {ok:true,json:async()=>({message:{content:JSON.stringify(draft)}})};};
+  const result=await generateAliExpressProductContent({title:'Smart Wearable',supplierBrand:'Example Brand',categoryName:'Wearables',rawDescription:'Touch display and activity tracking.',productAttributes:[{name:'Connectivity',value:'Wireless'}]});
+  assert.equal(requestUrl,'http://private-model.internal:11434/api/chat');
+  assert.equal(body.model,'qwen2.5:3b');
+  assert.equal(result.provider,'sylva');
+  assert.equal(result.model,'qwen2.5:3b');
+  assert.equal(result.researchStatus,'no_sources_found');
+  assert.equal(result.researchSources.length,0);
+  assert.ok(result.warnings.some(x=>x.includes('no live web research')));
 });
