@@ -5,7 +5,7 @@ const SCHEMA = {
   properties: {
     title: { type: 'string', maxLength: 80 }, category: { type: 'string', enum: CATEGORIES },
     shortDescription: { type: 'string', maxLength: 240 }, longDescription: { type: 'string' },
-    keyFeatures: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 5 },
+    keyFeatures: { type: 'array', items: { type: 'string' }, maxItems: 5 },
     specifications: { type: 'object', additionalProperties: false, properties: {
       Brand: { type: 'string' }, Model: { type: 'string' }, Category: { type: 'string' },
       'Key Technical Specs': { type: 'array', items: { type: 'string' } },
@@ -69,7 +69,7 @@ const validateDraft = (draft, sourceProduct) => {
   const tags=(Array.isArray(draft.seo_meta?.tags)?draft.seo_meta.tags:[]).map(x=>cleanText(x,60)).filter(Boolean).slice(0,5);
   const specs=draft.specifications||{}, longDescription=cleanHtml(draft.longDescription);
   const seoTitle=cleanText(draft.seo_meta?.meta_title,60), seoDescription=cleanText(draft.seo_meta?.meta_description,155);
-  if(title.length<3||!cleanText(draft.shortDescription,240)||longDescription.replace(/<[^>]*>/g,'').length<30||!keyFeatures.length||!tags.length||seoTitle.length<3||seoDescription.length<30)
+  if(title.length<3||!cleanText(draft.shortDescription,240)||longDescription.replace(/<[^>]*>/g,'').length<30||!tags.length||seoTitle.length<3||seoDescription.length<30)
     throw Object.assign(new Error('Sylva AI draft failed catalogue quality checks.'),{code:'CATALOGUE_AI_QUALITY_FAILED'});
   const privatePattern=/aliexpress|supplier\s+(?:cost|price|id|url|store)|wholesale\s+price|exchange\s+rate|profit\s+margin|coupon\s+code/i;
   const copy=[title,draft.shortDescription,longDescription,...keyFeatures,seoTitle,seoDescription,...tags].join(' ');
