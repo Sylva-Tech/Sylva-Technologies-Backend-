@@ -38,7 +38,8 @@ const SYSTEM_PROMPT = [
 ].join('\n');
 const cleanText = (v, max=2000) => String(v ?? '').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,max);
 const cleanHtml = (v) => String(v || '').replace(/<!--[\s\S]*?-->/g,'').replace(/<(script|style|iframe|object|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,'').replace(/<\/?([a-z0-9]+)\b[^>]*>/gi,(tag,raw)=>{const n=raw.toLowerCase();if(!HTML_TAGS.has(n))return '';if(n==='br')return '<br>';return /^<\s*\//.test(tag)?`</${n}>`:`<${n}>`;}).trim();
-const assertNoUnsupportedClaims = (draft, sourceProduct = {}) => {
+const assertNoUnsupportedClaims = (draft, sourceProduct) => {
+  if (!sourceProduct) return;
   const source = JSON.stringify(sourceProduct || {}).toLowerCase();
   const generated = [
     draft.title, draft.shortDescription, draft.longDescription,
@@ -48,15 +49,15 @@ const assertNoUnsupportedClaims = (draft, sourceProduct = {}) => {
     ...(Array.isArray(draft.seo_meta?.tags) ? draft.seo_meta.tags : []),
   ].join(' ').toLowerCase();
   const unsupportedPatterns = [
-    /\\b(?:business|enterprise|professional)\\s+(?:use|grade|class|workloads?|applications?)\\b/i,
-    /\\b(?:designed|built|optimized|intended)\\s+for\\s+(?:business|enterprise|professionals?|gaming|education)\\b/i,
-    /\\b(?:fingerprint reader|facial recognition|secure boot|touchscreen|touch screen|4k display|full hd|ips display|wifi 6|wi-fi 6|bluetooth 5|long battery life|all-day battery|lightweight design|military grade)\\b/i,
+    /\b(?:business|enterprise|professional)\s+(?:use|grade|class|workloads?|applications?)\b/i,
+    /\b(?:designed|built|optimized|intended)\s+for\s+(?:business|enterprise|professionals?|gaming|education)\b/i,
+    /\b(?:fingerprint reader|facial recognition|secure boot|touchscreen|touch screen|4k display|full hd|ips display|wifi 6|wi-fi 6|bluetooth 5|long battery life|all-day battery|lightweight design|military grade)\b/i,
   ];
   if (unsupportedPatterns.some((pattern) => pattern.test(generated) && !pattern.test(source))) {
     throw Object.assign(new Error('Sylva AI draft contains a product claim that is not supported by supplied facts.'), { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' });
   }
-  const generatedNumbers = generated.match(/\\b\\d+(?:\\.\\d+)?\\b/g) || [];
-  const sourceNumbers = new Set(source.match(/\\b\\d+(?:\\.\\d+)?\\b/g) || []);
+  const generatedNumbers = generated.match(/\b\d+(?:\\.\d+)?\b/g) || [];
+  const sourceNumbers = new Set(source.match(/\b\d+(?:\\.\d+)?\b/g) || []);
   if (generatedNumbers.some((number) => !sourceNumbers.has(number))) {
     throw Object.assign(new Error('Sylva AI draft contains a number or specification not present in supplied facts.'), { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' });
   }
