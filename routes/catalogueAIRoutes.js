@@ -19,7 +19,7 @@ router.get('/status', protect, adminOnly, (req, res) => {
     success: true,
     data: {
       preferredProvider: 'sylva',
-      preferredModel: process.env.OLLAMA_MODEL || 'qwen2.5:7b',
+      preferredModel: process.env.OLLAMA_MODEL || 'qwen2.5:3b',
       modelEndpointConfigured: Boolean(process.env.OLLAMA_BASE_URL),
       provider: 'sylva',
       modelEndpointConfigured: Boolean(process.env.OLLAMA_BASE_URL),
