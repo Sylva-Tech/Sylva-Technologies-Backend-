@@ -60,6 +60,24 @@ test('rejects supplier-facing or private business copy', () => {
   assert.throws(() => validateDraft(input), { code: 'CATALOGUE_AI_PRIVATE_CONTENT' });
 });
 
+test('rejects unsupported business-use claims when product input does not support them', () => {
+  const input = validDraft();
+  input.longDescription = '<h3>Overview</h3><p>This laptop is designed for business use.</p>';
+  assert.throws(
+    () => validateDraft(input, { title: 'Dell Latitude 5420', brand: 'Dell', category: 'Laptop', description: 'Intel Core i5' }),
+    { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' }
+  );
+});
+
+test('rejects numeric specifications that are absent from supplied product facts', () => {
+  const input = validDraft();
+  input.shortDescription = 'A wireless Bluetooth keyboard with 16GB memory for compatible devices.';
+  assert.throws(
+    () => validateDraft(input, { title: 'Wireless Bluetooth Keyboard', brand: 'Logitech', specifications: { Connectivity: 'Bluetooth' } }),
+    { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' }
+  );
+});
+
 test('does not accept a category outside Sylva catalogue taxonomy', () => {
   const input = validDraft();
   input.category = 'Home Appliances';
