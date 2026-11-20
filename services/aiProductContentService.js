@@ -36,7 +36,7 @@ const validateContent=(v)=>{
   const socialPromoCaption=v.socialPromoCaption.replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim().slice(0,1000);
   const suggestedCategory=v.suggestedCategory.replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim().slice(0,120);
   const privatePattern=/\b(?:aliexpress|supplier\s+(?:price|cost|id|url|currency|store)|exchange\s+rate|profit\s+margin|markup|wholesale\s+price|purchase\s+price)\b|(?:KSh|KES|USD|GBP|EUR|£|€|\$)\s?\d/i;
-  if(!keyFeatures.length||shortDescription.length<20||descriptionText.length<60||seoTitle.length<5||seoMetaDescription.length<40||marketingTags.length<5||!socialPromoCaption||!suggestedCategory||[...keyFeatures,shortDescription,descriptionText,seoTitle,seoMetaDescription,socialPromoCaption,suggestedCategory,...marketingTags].some(x=>privatePattern.test(x))){
+  if(shortDescription.length<20||descriptionText.length<60||seoTitle.length<5||seoMetaDescription.length<40||marketingTags.length<5||!socialPromoCaption||!suggestedCategory||[...keyFeatures,shortDescription,descriptionText,seoTitle,seoMetaDescription,socialPromoCaption,suggestedCategory,...marketingTags].some(x=>privatePattern.test(x))){
     throw Object.assign(new Error('Sylva AI product content failed factual quality and privacy checks.'),{code:'AI_CONTENT_QUALITY_FAILED'});
   }
   return {verifiedBrand,modelNumber,specifications:specs,keyFeatures,shortDescription,description,fullDescription:description,seoTitle,seoMetaDescription,marketingTags,socialPromoCaption,suggestedCategory,
