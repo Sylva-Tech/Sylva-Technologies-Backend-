@@ -79,6 +79,25 @@ test('rejects numeric specifications that are absent from supplied product facts
   );
 });
 
+
+test('rejects enterprise-security and performance claims seen in the local Qwen output', () => {
+  const input = validDraft();
+  input.longDescription = '<h3>Overview</h3><p>Certified for business use and meets enterprise security standards with advanced processors and robust storage options.</p>';
+  assert.throws(() => validateDraft(input, { title: 'Dell Latitude 5420', brand: 'Dell', specifications: { Processor: 'Intel Core i5' } }), { code: 'CATALOGUE_AI_UNSUPPORTED_CLAIM' });
+});
+
+test('allows empty SEO tags and short grounded copy when the source has few facts', () => {
+  const input = validDraft();
+  input.shortDescription = 'Dell Latitude 5420.';
+  input.longDescription = '<p>Dell Latitude 5420.</p>';
+  input.seo_meta.meta_description = 'Dell Latitude 5420.';
+  input.seo_meta.tags = [];
+  input.keyFeatures = [];
+  const result = validateDraft(input, { title: 'Dell Latitude 5420', brand: 'Dell' });
+  assert.deepEqual(result.keyFeatures, []);
+  assert.deepEqual(result.seo_meta.tags, []);
+});
+
 test('does not accept a category outside Sylva catalogue taxonomy', () => {
   const input = validDraft();
   input.category = 'Home Appliances';
