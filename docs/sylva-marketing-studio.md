@@ -23,6 +23,7 @@ All endpoints require an authenticated administrator:
 - `PATCH /api/marketing-studio/campaigns/:id`
 - `POST /api/marketing-studio/campaigns/:id/submit`
 - `POST /api/marketing-studio/campaigns/:id/approve`
+- `POST /api/marketing-studio/campaigns/:id/reject`
 - `POST /api/marketing-studio/campaigns/:id/schedule`
 - `POST /api/marketing-studio/campaigns/:id/action`
 
