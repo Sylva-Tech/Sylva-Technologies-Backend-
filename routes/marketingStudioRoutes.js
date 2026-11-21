@@ -188,6 +188,22 @@ router.post('/campaigns/:id/approve', async (req, res) => {
   }
 });
 
+router.post('/campaigns/:id/reject', async (req, res) => {
+  try {
+    const campaign = await MarketingCampaign.findById(req.params.id);
+    if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found.' });
+    if (campaign.status !== 'pending_approval') return res.status(409).json({ success: false, message: 'Only submitted campaigns can be returned for changes.' });
+    const reason = safeText(req.body?.reason, 500);
+    if (!reason) return res.status(400).json({ success: false, message: 'Add a short reason so the campaign owner knows what to revise.' });
+    campaign.status = 'rejected';
+    campaign.activity.push(activity('changes_requested', reason, req.user._id));
+    await campaign.save();
+    res.json({ success: true, campaign, message: 'Campaign returned for changes.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Unable to return campaign for changes.' });
+  }
+});
+
 router.post('/campaigns/:id/schedule', async (req, res) => {
   try {
     const campaign = await MarketingCampaign.findById(req.params.id);
