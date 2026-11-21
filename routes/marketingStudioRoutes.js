@@ -236,7 +236,7 @@ router.post('/campaigns/:id/action', async (req, res) => {
     } else if (action === 'resume' && campaign.status === 'paused' && campaign.scheduledAt > new Date()) {
       campaign.status = 'scheduled';
       campaign.activity.push(activity('resumed', 'Scheduled campaign resumed.', req.user._id));
-    } else if (action === 'cancel' && ['draft', 'pending_approval', 'approved', 'scheduled', 'paused', 'rejected'].includes(campaign.status)) {
+    } else if (action === 'cancel' && ['draft', 'pending_approval', 'approved', 'scheduled', 'ready_to_publish', 'paused', 'rejected'].includes(campaign.status)) {
       campaign.status = 'cancelled';
       campaign.activity.push(activity('cancelled', 'Campaign cancelled.', req.user._id));
     } else {
