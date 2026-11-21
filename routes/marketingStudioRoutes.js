@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const MarketingCampaign = require('../models/MarketingCampaign');
 const Product = require('../models/Product');
+const { generateMarketingVideoScript } = require('../services/marketingVideoAI');
 
 const router = express.Router();
 const campaignLimiter = rateLimit({
@@ -15,6 +16,7 @@ const campaignLimiter = rateLimit({
 });
 
 const PLATFORMS = ['facebook', 'instagram', 'tiktok', 'whatsapp'];
+const videoScriptLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 8, standardHeaders: 'draft-8', legacyHeaders: false, message: { success: false, message: 'Too many video script requests. Please try again later.' } });
 const safeText = (value, max = 5000) => String(value || '').trim().slice(0, max);
 const activity = (action, note, actor) => ({ action, note: safeText(note, 500), actor, at: new Date() });
 
@@ -246,6 +248,40 @@ router.post('/campaigns/:id/action', async (req, res) => {
     res.json({ success: true, campaign });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Unable to update campaign status.' });
+  }
+});
+
+
+router.post('/videos/script', videoScriptLimiter, async (req, res) => {
+  try {
+    const productId = String(req.body?.productId || '');
+    if (!mongoose.isValidObjectId(productId)) {
+      return res.status(400).json({ success: false, message: 'Choose a valid catalogue product.' });
+    }
+    const product = await Product.findOne({
+      _id: productId,
+      isActive: true,
+      approvalStatus: 'approved',
+      stock: mongoose.trusted({ $gt: 0 }),
+    }).select('_id name brand sku price description shortDescription keyFeatures specifications stock images slug').lean();
+    if (!product) {
+      return res.status(422).json({ success: false, message: 'Choose an active, approved product that is in stock.' });
+    }
+    const storyboard = await generateMarketingVideoScript(product, {
+      platform: req.body?.platform,
+      style: req.body?.style,
+      durationSeconds: req.body?.durationSeconds,
+    });
+    res.set('Cache-Control', 'no-store, private');
+    res.json({ success: true, storyboard });
+  } catch (error) {
+    const status = error.status || (error.code === 'SYLVA_AI_QUALITY_FAILED' ? 422 : 502);
+    console.error('Marketing video script generation failed:', error.code || error.message);
+    res.status(status).json({
+      success: false,
+      code: error.code || 'SYLVA_VIDEO_SCRIPT_FAILED',
+      message: error.message || 'Unable to generate a video storyboard.',
+    });
   }
 });
 
