@@ -140,3 +140,16 @@ test('Sylva AI enrichment uses the configured Ollama model without external prov
   assert.equal(result.researchSources.length,0);
   assert.ok(result.warnings.some(x=>x.includes('no live web research')));
 });
+
+test('rejects incomplete Cloudflare Access credentials before contacting Ollama', async (t) => {
+  const previousUrl=process.env.OLLAMA_BASE_URL, previousClientId=process.env.OLLAMA_ACCESS_CLIENT_ID, previousClientSecret=process.env.OLLAMA_ACCESS_CLIENT_SECRET, previousFetch=global.fetch;
+  t.after(()=>{if(previousUrl===undefined)delete process.env.OLLAMA_BASE_URL;else process.env.OLLAMA_BASE_URL=previousUrl;if(previousClientId===undefined)delete process.env.OLLAMA_ACCESS_CLIENT_ID;else process.env.OLLAMA_ACCESS_CLIENT_ID=previousClientId;if(previousClientSecret===undefined)delete process.env.OLLAMA_ACCESS_CLIENT_SECRET;else process.env.OLLAMA_ACCESS_CLIENT_SECRET=previousClientSecret;global.fetch=previousFetch;});
+  process.env.OLLAMA_BASE_URL='https://ollama.example.test';
+  process.env.OLLAMA_ACCESS_CLIENT_ID='test-client-id.access';
+  delete process.env.OLLAMA_ACCESS_CLIENT_SECRET;
+  global.fetch=async()=>{throw new Error('fetch must not be called with incomplete credentials');};
+  await assert.rejects(
+    generateAliExpressProductContent({title:'USB-C Hub',productAttributes:[{name:'Ports',value:'7'}]}),
+    {code:'AI_CONTENT_NOT_CONFIGURED',status:503}
+  );
+});
