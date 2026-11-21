@@ -86,6 +86,7 @@ router.post('/campaigns', async (req, res) => {
 
     let productSnapshot = {};
     const productId = req.body?.productId;
+    if (!productId) return res.status(400).json({ success: false, message: 'Select a catalogue product for this campaign.' });
     if (productId) {
       if (!mongoose.isValidObjectId(productId)) return res.status(400).json({ success: false, message: 'Invalid product selected.' });
       const product = await Product.findOne({ _id: productId, isActive: true, approvalStatus: 'approved', stock: { $gt: 0 } })
