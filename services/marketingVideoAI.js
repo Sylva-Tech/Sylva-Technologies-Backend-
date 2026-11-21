@@ -66,6 +66,17 @@ async function generateMarketingVideoScript(product, options = {}) {
   if (typeof raw !== 'string' || !raw.trim()) throw Object.assign(new Error('Sylva AI returned an empty response.'), { code: 'SYLVA_AI_INVALID_RESPONSE', status: 502 });
   let draft;
   try { draft = JSON.parse(raw); } catch { throw Object.assign(new Error('Sylva AI returned an unreadable storyboard. Please retry.'), { code: 'SYLVA_AI_INVALID_RESPONSE', status: 502 }); }
+  const sourceFacts = JSON.stringify(facts).toLowerCase();
+  const generatedCopy = [
+    draft.title, draft.hook, draft.voiceover, draft.caption,
+    ...(Array.isArray(draft.hashtags) ? draft.hashtags : []),
+    ...(Array.isArray(draft.scenes) ? draft.scenes.flatMap((scene) => [scene.heading, scene.overlay, scene.narration, scene.visualDirection]) : []),
+  ].join(' ').toLowerCase();
+  const sourceNumbers = new Set(sourceFacts.match(/\\d+(?:\\.\\d+)?/g) || []);
+  const generatedNumbers = generatedCopy.match(/\\d+(?:\\.\\d+)?/g) || [];
+  if (generatedNumbers.some((number) => !sourceNumbers.has(number))) {
+    throw Object.assign(new Error('Sylva AI added a number or product specification that is not present in the catalogue record. Please regenerate.'), { code: 'SYLVA_AI_UNSUPPORTED_CLAIM', status: 422 });
+  }
   const scenes = Array.isArray(draft.scenes) ? draft.scenes.slice(0, 6).map((scene) => ({
     heading: clean(scene.heading, 90),
     overlay: clean(scene.overlay, 180),
