@@ -43,7 +43,7 @@ router.get('/overview', async (req, res) => {
 router.get('/products', async (req, res) => {
   try {
     const search = safeText(req.query.search, 80);
-    const filter = { isActive: true, approvalStatus: 'approved', stock: { $gt: 0 } };
+    const filter = { isActive: true, approvalStatus: 'approved', stock: mongoose.trusted({ $gt: 0 }) };
     if (search) {
       const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       filter.$or = [{ name: new RegExp(escaped, 'i') }, { sku: new RegExp(escaped, 'i') }, { brand: new RegExp(escaped, 'i') }];
@@ -89,7 +89,7 @@ router.post('/campaigns', async (req, res) => {
     if (!productId) return res.status(400).json({ success: false, message: 'Select a catalogue product for this campaign.' });
     if (productId) {
       if (!mongoose.isValidObjectId(productId)) return res.status(400).json({ success: false, message: 'Invalid product selected.' });
-      const product = await Product.findOne({ _id: productId, isActive: true, approvalStatus: 'approved', stock: { $gt: 0 } })
+      const product = await Product.findOne({ _id: productId, isActive: true, approvalStatus: 'approved', stock: mongoose.trusted({ $gt: 0 }) })
         .select('name sku price stock images slug').lean();
       if (!product) return res.status(422).json({ success: false, message: 'Select an active, approved product that is in stock.' });
       productSnapshot = {
