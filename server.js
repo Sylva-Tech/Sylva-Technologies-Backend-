@@ -4,6 +4,7 @@ const app = require('./app');
 const connectDB = require('./config/db');
 const { startAliExpressTokenRefresh } = require('./services/aliexpressTokenManager');
 const { startAIProductContentWorker } = require('./services/aiProductContentWorker');
+const { startMarketingCampaignScheduler } = require('./services/marketingCampaignScheduler');
 const migrateProductCodeIndex = require('./services/migrateProductCodeIndex');
 const migrateProductOriginsAndCodes = require('./services/migrateProductOriginsAndCodes');
 
@@ -17,6 +18,7 @@ const startServer = async () => {
       await migrateProductCodeIndex();
       await migrateProductOriginsAndCodes();
       startAliExpressTokenRefresh();
+      startMarketingCampaignScheduler();
       if (String(process.env.SYLVA_AI_WORKER_ENABLED).toLowerCase() === 'true') {
         startAIProductContentWorker();
       }
