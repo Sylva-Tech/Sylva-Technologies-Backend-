@@ -72,8 +72,8 @@ async function generateMarketingVideoScript(product, options = {}) {
     ...(Array.isArray(draft.hashtags) ? draft.hashtags : []),
     ...(Array.isArray(draft.scenes) ? draft.scenes.flatMap((scene) => [scene.heading, scene.overlay, scene.narration, scene.visualDirection]) : []),
   ].join(' ').toLowerCase();
-  const sourceNumbers = new Set(sourceFacts.match(/\\d+(?:\\.\\d+)?/g) || []);
-  const generatedNumbers = generatedCopy.match(/\\d+(?:\\.\\d+)?/g) || [];
+  const sourceNumbers = new Set(sourceFacts.match(/\d+(?:\.\d+)?/g) || []);
+  const generatedNumbers = generatedCopy.match(/\d+(?:\.\d+)?/g) || [];
   if (generatedNumbers.some((number) => !sourceNumbers.has(number))) {
     throw Object.assign(new Error('Sylva AI added a number or product specification that is not present in the catalogue record. Please regenerate.'), { code: 'SYLVA_AI_UNSUPPORTED_CLAIM', status: 422 });
   }
