@@ -120,16 +120,20 @@ test('allows sparse source data without fabricated marketing tags or long copy',
 });
 
 test('Sylva AI enrichment uses the configured Ollama model without external provider calls', async (t) => {
-  const previousUrl=process.env.OLLAMA_BASE_URL, previousModel=process.env.OLLAMA_MODEL, previousFetch=global.fetch;
-  t.after(()=>{if(previousUrl===undefined)delete process.env.OLLAMA_BASE_URL;else process.env.OLLAMA_BASE_URL=previousUrl;if(previousModel===undefined)delete process.env.OLLAMA_MODEL;else process.env.OLLAMA_MODEL=previousModel;global.fetch=previousFetch;});
+  const previousUrl=process.env.OLLAMA_BASE_URL, previousModel=process.env.OLLAMA_MODEL, previousClientId=process.env.OLLAMA_ACCESS_CLIENT_ID, previousClientSecret=process.env.OLLAMA_ACCESS_CLIENT_SECRET, previousFetch=global.fetch;
+  t.after(()=>{if(previousUrl===undefined)delete process.env.OLLAMA_BASE_URL;else process.env.OLLAMA_BASE_URL=previousUrl;if(previousModel===undefined)delete process.env.OLLAMA_MODEL;else process.env.OLLAMA_MODEL=previousModel;if(previousClientId===undefined)delete process.env.OLLAMA_ACCESS_CLIENT_ID;else process.env.OLLAMA_ACCESS_CLIENT_ID=previousClientId;if(previousClientSecret===undefined)delete process.env.OLLAMA_ACCESS_CLIENT_SECRET;else process.env.OLLAMA_ACCESS_CLIENT_SECRET=previousClientSecret;global.fetch=previousFetch;});
   process.env.OLLAMA_BASE_URL='http://private-model.internal:11434';
   process.env.OLLAMA_MODEL='qwen2.5:3b';
+  process.env.OLLAMA_ACCESS_CLIENT_ID='test-client-id.access';
+  process.env.OLLAMA_ACCESS_CLIENT_SECRET='test-client-secret';
   const draft={verifiedBrand:'Example Brand',modelNumber:'',specifications:[{name:'Connectivity',value:'Wireless'}],researchSources:[],keyFeatures:['Wireless connectivity','Touch display','Activity tracking','Rechargeable design','Mobile notifications'],shortDescription:'A practical wearable with a touch display and activity tracking.',fullDescription:'<h3>Overview</h3><p>A wearable with a touch display and activity tracking features for everyday use.</p>',seoTitle:'Smart Wearable with Touch Display',seoMetaDescription:'Explore a smart wearable with a touch display, activity tracking and wireless connectivity.',marketingTags:['smart wearable','touch display','activity tracker','wireless device','wearable technology'],socialPromoCaption:'Keep everyday activity and notifications close with this practical wearable.',suggestedCategory:'Wearables',warnings:[],suggestions:[],missingSections:[]};
-  let requestUrl='',body;
-  global.fetch=async(url,options)=>{requestUrl=String(url);body=JSON.parse(options.body);return {ok:true,json:async()=>({message:{content:JSON.stringify(draft)}})};};
+  let requestUrl='',body,requestHeaders;
+  global.fetch=async(url,options)=>{requestUrl=String(url);body=JSON.parse(options.body);requestHeaders=options.headers;return {ok:true,json:async()=>({message:{content:JSON.stringify(draft)}})};};
   const result=await generateAliExpressProductContent({title:'Smart Wearable',supplierBrand:'Example Brand',categoryName:'Wearables',rawDescription:'Touch display and activity tracking.',productAttributes:[{name:'Connectivity',value:'Wireless'}]});
   assert.equal(requestUrl,'http://private-model.internal:11434/api/chat');
   assert.equal(body.model,'qwen2.5:3b');
+  assert.equal(requestHeaders['CF-Access-Client-Id'],'test-client-id.access');
+  assert.equal(requestHeaders['CF-Access-Client-Secret'],'test-client-secret');
   assert.equal(result.provider,'sylva');
   assert.equal(result.model,'qwen2.5:3b');
   assert.equal(result.researchStatus,'no_sources_found');
