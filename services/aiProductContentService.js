@@ -107,8 +107,18 @@ const generateAliExpressProductContent=async(product)=>{
     'Category suggestion is advisory only. Product pricing, stock, category assignment, visibility, approval, policies and publishing are outside your authority.',
     'Never create warranty, return, refund or delivery promises. Only reuse supplied policy text. All drafts require administrator review.',
   ].join('\n');
+  const accessClientId=String(process.env.OLLAMA_ACCESS_CLIENT_ID||'').trim();
+  const accessClientSecret=String(process.env.OLLAMA_ACCESS_CLIENT_SECRET||'').trim();
+  if(Boolean(accessClientId)!==Boolean(accessClientSecret)){
+    throw Object.assign(new Error('Sylva AI Cloudflare Access credentials are incomplete.'),{code:'AI_CONTENT_NOT_CONFIGURED',status:503});
+  }
+  const requestHeaders={'Content-Type':'application/json'};
+  if(accessClientId&&accessClientSecret){
+    requestHeaders['CF-Access-Client-Id']=accessClientId;
+    requestHeaders['CF-Access-Client-Secret']=accessClientSecret;
+  }
   let response;
-  try{response=await fetch(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model,stream:false,format:CONTENT_SCHEMA,messages:[{role:'system',content:system},{role:'user',content:'Create a factual product content draft from this JSON data:\n'+JSON.stringify(safeInput)}],options:{temperature:0.15}}),signal:AbortSignal.timeout(Math.max(5000,Math.min(180000,Number(process.env.OLLAMA_TIMEOUT_MS)||90000)))});}
+  try{response=await fetch(base+'/api/chat',{method:'POST',headers:requestHeaders,body:JSON.stringify({model,stream:false,format:CONTENT_SCHEMA,messages:[{role:'system',content:system},{role:'user',content:'Create a factual product content draft from this JSON data:\n'+JSON.stringify(safeInput)}],options:{temperature:0.15}}),signal:AbortSignal.timeout(Math.max(5000,Math.min(180000,Number(process.env.OLLAMA_TIMEOUT_MS)||90000)))});}
   catch(cause){throw Object.assign(new Error(cause?.name==='TimeoutError'?'Sylva AI product enrichment timed out.':'Sylva AI model endpoint is unavailable.'),{code:cause?.name==='TimeoutError'?'AI_CONTENT_TIMEOUT':'AI_CONTENT_NETWORK_ERROR',status:503});}
   if(!response.ok)throw Object.assign(new Error('Sylva AI product enrichment request failed with HTTP '+response.status),{code:'AI_CONTENT_PROVIDER_ERROR',status:503,providerStatus:response.status});
   const payload=await response.json(),rawText=payload?.message?.content;
