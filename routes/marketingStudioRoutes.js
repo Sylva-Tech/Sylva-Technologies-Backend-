@@ -31,7 +31,7 @@ router.get('/overview', async (req, res) => {
   try {
     const [counts, upcoming, recent] = await Promise.all([
       MarketingCampaign.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
-      MarketingCampaign.find({ status: 'scheduled', scheduledAt: { $gte: new Date() } }).sort({ scheduledAt: 1 }).limit(5).lean(),
+      MarketingCampaign.find({ status: 'scheduled', scheduledAt: mongoose.trusted({ $gte: new Date() }) }).sort({ scheduledAt: 1 }).limit(5).lean(),
       MarketingCampaign.find({}).sort({ updatedAt: -1 }).limit(8).lean(),
     ]);
     const totals = Object.fromEntries(counts.map((item) => [item._id, item.count]));
