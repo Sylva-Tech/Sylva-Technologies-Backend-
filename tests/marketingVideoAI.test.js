@@ -5,6 +5,8 @@ const { generateMarketingVideoScript } = require('../services/marketingVideoAI')
 const originalFetch = global.fetch;
 const originalBase = process.env.OLLAMA_BASE_URL;
 const originalModel = process.env.OLLAMA_MODEL;
+const originalClientId = process.env.OLLAMA_ACCESS_CLIENT_ID;
+const originalClientSecret = process.env.OLLAMA_ACCESS_CLIENT_SECRET;
 
 test('video script generation fails closed when Ollama is not configured', async () => {
   delete process.env.OLLAMA_BASE_URL;
@@ -17,6 +19,8 @@ test('video script generation fails closed when Ollama is not configured', async
 test('video script generation uses Ollama and returns a validated storyboard', async () => {
   process.env.OLLAMA_BASE_URL = 'http://ollama.test';
   process.env.OLLAMA_MODEL = 'qwen2.5:3b';
+  process.env.OLLAMA_ACCESS_CLIENT_ID = 'test-client.access';
+  process.env.OLLAMA_ACCESS_CLIENT_SECRET = 'test-client-secret';
   const storyboard = {
     title: 'A better way to work',
     hook: 'Meet your next everyday essential.',
@@ -35,6 +39,8 @@ test('video script generation uses Ollama and returns a validated storyboard', a
     const body = JSON.parse(options.body);
     assert.equal(body.model, 'qwen2.5:3b');
     assert.equal(body.stream, false);
+    assert.equal(options.headers['CF-Access-Client-Id'], 'test-client.access');
+    assert.equal(options.headers['CF-Access-Client-Secret'], 'test-client-secret');
     return new Response(JSON.stringify({ message: { content: JSON.stringify(storyboard) } }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -87,4 +93,8 @@ test.after(() => {
   else process.env.OLLAMA_BASE_URL = originalBase;
   if (originalModel === undefined) delete process.env.OLLAMA_MODEL;
   else process.env.OLLAMA_MODEL = originalModel;
+  if (originalClientId === undefined) delete process.env.OLLAMA_ACCESS_CLIENT_ID;
+  else process.env.OLLAMA_ACCESS_CLIENT_ID = originalClientId;
+  if (originalClientSecret === undefined) delete process.env.OLLAMA_ACCESS_CLIENT_SECRET;
+  else process.env.OLLAMA_ACCESS_CLIENT_SECRET = originalClientSecret;
 });
