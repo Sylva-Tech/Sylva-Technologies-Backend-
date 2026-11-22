@@ -65,6 +65,7 @@ test('falls back to Workers AI after Ollama fails and keeps the same parser', as
   const requestBody = JSON.parse(calls[1].options.body);
   assert.equal(requestBody.model, '@cf/meta/llama-3.1-8b-instruct');
   assert.equal(requestBody.response_format.type, 'json_schema');
+  assert.ok(requestBody.response_format.json_schema);
 });
 
 test('uses fallback directly during primary circuit cooldown', async (t) => {
