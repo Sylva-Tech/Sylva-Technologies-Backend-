@@ -21,6 +21,12 @@ router.get('/status', protect, adminOnly, (req, res) => {
       preferredProvider: 'sylva',
       preferredModel: process.env.OLLAMA_MODEL || 'qwen2.5:3b',
       modelEndpointConfigured: Boolean(String(process.env.OLLAMA_BASE_URL || '').trim()),
+      externalFallbackEnabled: String(process.env.SYLVA_AI_FALLBACK_ENABLED || '').trim().toLowerCase() === 'true',
+      externalFallbackConfigured: Boolean(
+        String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim() &&
+        String(process.env.CLOUDFLARE_API_TOKEN || '').trim()
+      ),
+      externalFallbackModel: String(process.env.SYLVA_AI_FALLBACK_MODEL || '@cf/meta/llama-3.1-8b-instruct').trim(),
       provider: 'sylva',
       modelEndpointRequired: true,
       modes: ['CREATE', 'SYNC_CLEANUP', 'REFINE_EDIT'],
