@@ -1,3 +1,4 @@
+const { getOllamaRequestHeaders } = require('./ollamaAccess');
 const CATEGORIES = ['Laptops', 'Desktops', 'Accessories', 'Networking', 'Components', 'Speakers & Audio', 'Gaming'];
 const HTML_TAGS = new Set(['p', 'h3', 'ul', 'li', 'strong', 'em', 'br']);
 const SCHEMA = {
@@ -104,8 +105,9 @@ const callSylvaModel=async(input)=>{
   const base=String(process.env.OLLAMA_BASE_URL||'').trim().replace(/\/$/,'');
   if(!base) throw Object.assign(new Error('Sylva AI model endpoint is not configured.'),{code:'SYLVA_AI_NOT_CONFIGURED',status:503});
   const model=String(process.env.OLLAMA_MODEL||'qwen2.5:3b').trim();
+  const requestHeaders=getOllamaRequestHeaders();
   let response;
-  try{response=await fetch(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model,stream:false,format:SCHEMA,messages:[{role:'system',content:SYSTEM_PROMPT},{role:'user',content:JSON.stringify(input)}],options:{temperature:0.2}}),signal:AbortSignal.timeout(Math.max(5000,Math.min(180000,Number(process.env.OLLAMA_TIMEOUT_MS)||90000)))});}
+  try{response=await fetch(base+'/api/chat',{method:'POST',headers:requestHeaders,body:JSON.stringify({model,stream:false,format:SCHEMA,messages:[{role:'system',content:SYSTEM_PROMPT},{role:'user',content:JSON.stringify(input)}],options:{temperature:0.2}}),signal:AbortSignal.timeout(Math.max(5000,Math.min(180000,Number(process.env.OLLAMA_TIMEOUT_MS)||90000)))});}
   catch(cause){throw Object.assign(new Error(cause?.name==='TimeoutError'?'Sylva AI request timed out.':'Sylva AI could not reach its model endpoint.'),{code:cause?.name==='TimeoutError'?'SYLVA_AI_TIMEOUT':'SYLVA_AI_UNAVAILABLE',status:503});}
   if(!response.ok) throw Object.assign(new Error('Sylva AI model request failed with HTTP '+response.status),{code:'SYLVA_AI_PROVIDER_ERROR',status:503});
   const payload=await response.json(), raw=payload?.message?.content;
