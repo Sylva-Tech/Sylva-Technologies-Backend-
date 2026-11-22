@@ -72,7 +72,7 @@ async function requestOllama({ messages, format, options, timeout }) {
 async function requestCloudflareWorkersAI({ messages, format, options, timeout, config }) {
   const url = 'https://api.cloudflare.com/client/v4/accounts/' + encodeURIComponent(config.accountId) + '/ai/v1/chat/completions';
   const responseFormat = format && typeof format === 'object'
-    ? { type: 'json_schema', schema: format }
+    ? { type: 'json_schema', json_schema: format }
     : { type: 'json_object' };
   let response;
   try {
