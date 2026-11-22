@@ -26,7 +26,17 @@ const processOnePendingProduct=async()=>{
       claimed.aiContentDraft.nextAttemptAt=retry?new Date(Date.now()+Math.min(30,2**attempts)*60000):null;
       claimed.aiContentDraft.processingAt=null;
       await claimed.save();
-      console.warn('[Sylva AI] product enrichment failed:',JSON.stringify({code:error.code||'SYLVA_AI_FAILED',status:error.status||null}));
+      // Log provider diagnostics only; never log prompts, response bodies, or credentials.
+      console.warn('[Sylva AI] product enrichment failed:',JSON.stringify({
+        code:error.code||'SYLVA_AI_FAILED',
+        status:error.status||null,
+        primaryCode:error.primaryCode||null,
+        primaryStatus:error.primaryStatus||null,
+        primaryRetryable:typeof error.primaryRetryable==='boolean'?error.primaryRetryable:null,
+        fallbackCode:error.fallbackCode||null,
+        fallbackStatus:error.fallbackStatus||null,
+        fallbackRetryable:typeof error.fallbackRetryable==='boolean'?error.fallbackRetryable:null,
+      }));
     }
     return true;
   }finally{running=false;}
