@@ -125,3 +125,56 @@ test('does not call fallback unless explicitly enabled and fully configured', as
   await assert.rejects(generateWithSylvaAI({ messages: [], parse: JSON.parse }), { code: 'SYLVA_AI_PROVIDER_ERROR' });
   assert.equal(calls, 1);
 });
+
+
+test('preserves safe primary and fallback diagnostics when both providers fail', async (t) => {
+  const previous = snapshot(), originalFetch = global.fetch;
+  t.after(() => { restore(previous); global.fetch = originalFetch; resetPrimaryCircuitForTests(); });
+  resetPrimaryCircuitForTests();
+  process.env.OLLAMA_BASE_URL = 'https://ollama.example.test';
+  process.env.SYLVA_AI_FALLBACK_ENABLED = 'true';
+  process.env.CLOUDFLARE_ACCOUNT_ID = 'account-test';
+  process.env.CLOUDFLARE_API_TOKEN = 'token-test';
+  global.fetch = async (url) => String(url).includes('ollama.example.test')
+    ? new Response('primary unavailable', { status: 502 })
+    : new Response(JSON.stringify({ success: false, errors: [{ message: 'fallback denied' }] }), { status: 401 });
+  await assert.rejects(
+    generateWithSylvaAI({ messages: [], parse: JSON.parse }),
+    (error) => {
+      assert.equal(error.code, 'SYLVA_AI_ALL_PROVIDERS_FAILED');
+      assert.equal(error.primaryCode, 'SYLVA_AI_PROVIDER_ERROR');
+      assert.equal(error.primaryStatus, 502);
+      assert.equal(error.primaryRetryable, true);
+      assert.equal(error.fallbackCode, 'SYLVA_AI_FALLBACK_ERROR');
+      assert.equal(error.fallbackStatus, 401);
+      assert.equal(error.fallbackRetryable, false);
+      assert.equal(JSON.stringify(error).includes('fallback denied'), false);
+      return true;
+    }
+  );
+});
+
+test('does not open the primary circuit for response parsing failures', async (t) => {
+  const previous = snapshot(), originalFetch = global.fetch;
+  t.after(() => { restore(previous); global.fetch = originalFetch; resetPrimaryCircuitForTests(); });
+  resetPrimaryCircuitForTests();
+  process.env.OLLAMA_BASE_URL = 'https://ollama.example.test';
+  process.env.SYLVA_AI_FALLBACK_ENABLED = 'true';
+  process.env.CLOUDFLARE_ACCOUNT_ID = 'account-test';
+  process.env.CLOUDFLARE_API_TOKEN = 'token-test';
+  let primaryCalls = 0;
+  global.fetch = async (url) => {
+    if (String(url).includes('ollama.example.test')) {
+      primaryCalls += 1;
+      return new Response(JSON.stringify({ message: { content: 'not-json' } }), { status: 200 });
+    }
+    return new Response('fallback unavailable', { status: 503 });
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(
+      generateWithSylvaAI({ messages: [], parse: JSON.parse }),
+      { code: 'SYLVA_AI_ALL_PROVIDERS_FAILED' }
+    );
+  }
+  assert.equal(primaryCalls, 2);
+});
