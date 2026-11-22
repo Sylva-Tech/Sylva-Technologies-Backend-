@@ -45,11 +45,12 @@ async function requestOllama({ messages, format, options, timeout }) {
   const base = String(process.env.OLLAMA_BASE_URL || '').trim().replace(/\/$/, '');
   if (!base) throw makeError('Sylva AI primary model endpoint is not configured.', 'SYLVA_AI_NOT_CONFIGURED', 503);
   const model = String(process.env.OLLAMA_MODEL || 'qwen2.5:3b').trim();
+  const headers = getOllamaRequestHeaders();
   let response;
   try {
     response = await fetch(base + '/api/chat', {
       method: 'POST',
-      headers: getOllamaRequestHeaders(),
+      headers,
       body: JSON.stringify({ model, messages, stream: false, ...(format ? { format } : {}), options: options || {} }),
       signal: AbortSignal.timeout(timeout),
     });
