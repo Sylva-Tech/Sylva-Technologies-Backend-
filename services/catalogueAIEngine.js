@@ -1,4 +1,4 @@
-const { getOllamaRequestHeaders } = require('./ollamaAccess');
+const { generateWithSylvaAI } = require('./sylvaAIProvider');
 const CATEGORIES = ['Laptops', 'Desktops', 'Accessories', 'Networking', 'Components', 'Speakers & Audio', 'Gaming'];
 const HTML_TAGS = new Set(['p', 'h3', 'ul', 'li', 'strong', 'em', 'br']);
 const SCHEMA = {
@@ -101,26 +101,22 @@ const makeInput=(mode,p)=>({mode,product:{
   deliveryPolicy:cleanText(p.deliveryPolicy||p.delivery_information,1000),warrantyPolicy:cleanText(p.warrantyPolicy||p.warranty_policy,1000),
   returnPolicy:cleanText(p.returnPolicy||p.return_policy,1000),existingSeo:p.seo_meta||p.seo||{},
 }});
-const callSylvaModel=async(input)=>{
-  const base=String(process.env.OLLAMA_BASE_URL||'').trim().replace(/\/$/,'');
-  if(!base) throw Object.assign(new Error('Sylva AI model endpoint is not configured.'),{code:'SYLVA_AI_NOT_CONFIGURED',status:503});
-  const model=String(process.env.OLLAMA_MODEL||'qwen2.5:3b').trim();
-  const requestHeaders=getOllamaRequestHeaders();
-  let response;
-  try{response=await fetch(base+'/api/chat',{method:'POST',headers:requestHeaders,body:JSON.stringify({model,stream:false,format:SCHEMA,messages:[{role:'system',content:SYSTEM_PROMPT},{role:'user',content:JSON.stringify(input)}],options:{temperature:0.2}}),signal:AbortSignal.timeout(Math.max(5000,Math.min(180000,Number(process.env.OLLAMA_TIMEOUT_MS)||90000)))});}
-  catch(cause){throw Object.assign(new Error(cause?.name==='TimeoutError'?'Sylva AI request timed out.':'Sylva AI could not reach its model endpoint.'),{code:cause?.name==='TimeoutError'?'SYLVA_AI_TIMEOUT':'SYLVA_AI_UNAVAILABLE',status:503});}
-  if(!response.ok) throw Object.assign(new Error('Sylva AI model request failed with HTTP '+response.status),{code:'SYLVA_AI_PROVIDER_ERROR',status:503});
-  const payload=await response.json(), raw=payload?.message?.content;
-  if(typeof raw!=='string') throw Object.assign(new Error('Sylva AI returned an empty response.'),{code:'SYLVA_AI_INVALID_RESPONSE',status:502});
-  let draft;try{draft=JSON.parse(raw);}catch{throw Object.assign(new Error('Sylva AI returned invalid JSON.'),{code:'SYLVA_AI_INVALID_JSON',status:502});}
-  return {draft,model};
+const parseModelJson=(raw)=>{
+  try { return JSON.parse(raw); }
+  catch { throw Object.assign(new Error('Sylva AI returned invalid JSON.'),{code:'SYLVA_AI_INVALID_JSON',status:502}); }
 };
 const generateCatalogueDraft=async({mode='CREATE',product={}})=>{
   const normalizedMode=String(mode).toUpperCase();
   if(!['CREATE','SYNC_CLEANUP','REFINE_EDIT'].includes(normalizedMode))throw Object.assign(new Error('Unsupported catalogue mode.'),{code:'CATALOGUE_AI_INVALID_MODE'});
   const input=makeInput(normalizedMode,product||{});
   if(input.product.title.length<3)throw Object.assign(new Error('A product title is required.'),{code:'CATALOGUE_AI_MISSING_TITLE'});
-  const generated=await callSylvaModel(input), draft=validateDraft(generated.draft,input.product);
-  return {...draft,generation:{provider:'sylva',model:generated.model,researchSources:[],generatedAt:new Date().toISOString(),mode:normalizedMode,warnings:draft.warnings}};
+  const generated=await generateWithSylvaAI({
+    messages:[{role:'system',content:SYSTEM_PROMPT},{role:'user',content:JSON.stringify(input)}],
+    format:SCHEMA,
+    options:{temperature:0.2},
+    parse:(raw)=>validateDraft(parseModelJson(raw),input.product),
+  });
+  const draft=generated.result;
+  return {...draft,generation:{provider:generated.provider==='ollama'?'sylva':'cloudflare-workers-ai',model:generated.model,fallbackUsed:Boolean(generated.fallbackUsed),researchSources:[],generatedAt:new Date().toISOString(),mode:normalizedMode,warnings:draft.warnings}};
 };
 module.exports={generateCatalogueDraft,validateDraft,CATEGORIES};
