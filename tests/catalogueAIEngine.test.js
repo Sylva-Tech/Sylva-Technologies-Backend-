@@ -103,3 +103,42 @@ test('does not accept a category outside Sylva catalogue taxonomy', () => {
   input.category = 'Home Appliances';
   assert.equal(validateDraft(input).category, 'Accessories');
 });
+
+test('catalogue AI sends Cloudflare Access service-token headers to Ollama', async (t) => {
+  const previous = {
+    base: process.env.OLLAMA_BASE_URL,
+    model: process.env.OLLAMA_MODEL,
+    clientId: process.env.OLLAMA_ACCESS_CLIENT_ID,
+    clientSecret: process.env.OLLAMA_ACCESS_CLIENT_SECRET,
+    fetch: global.fetch,
+  };
+  t.after(() => {
+    for (const [key, value] of [
+      ['OLLAMA_BASE_URL', previous.base],
+      ['OLLAMA_MODEL', previous.model],
+      ['OLLAMA_ACCESS_CLIENT_ID', previous.clientId],
+      ['OLLAMA_ACCESS_CLIENT_SECRET', previous.clientSecret],
+    ]) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    global.fetch = previous.fetch;
+  });
+  process.env.OLLAMA_BASE_URL = 'https://ollama.example.test';
+  process.env.OLLAMA_MODEL = 'qwen2.5:3b';
+  process.env.OLLAMA_ACCESS_CLIENT_ID = 'test-client.access';
+  process.env.OLLAMA_ACCESS_CLIENT_SECRET = 'test-client-secret';
+  const draft = validDraft();
+  global.fetch = async (url, options) => {
+    assert.equal(url, 'https://ollama.example.test/api/chat');
+    assert.equal(options.headers['CF-Access-Client-Id'], 'test-client.access');
+    assert.equal(options.headers['CF-Access-Client-Secret'], 'test-client-secret');
+    return new Response(JSON.stringify({ message: { content: JSON.stringify(draft) } }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const { generateCatalogueDraft } = require('../services/catalogueAIEngine');
+  const result = await generateCatalogueDraft({ mode: 'CREATE', product: { title: 'Wireless Bluetooth Keyboard', brand: 'Logitech', category: 'Accessories', description: 'Bluetooth connectivity' } });
+  assert.equal(result.generation.provider, 'sylva');
+  assert.equal(result.generation.model, 'qwen2.5:3b');
+});
