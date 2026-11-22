@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { validateDraft, CATEGORIES } = require('../services/catalogueAIEngine');
+const { validateDraft, CATEGORIES, callSylvaModel } = require('../services/catalogueAIEngine');
 
 const validDraft = () => ({
   title: 'Wireless Bluetooth Keyboard',
@@ -103,3 +103,60 @@ test('does not accept a category outside Sylva catalogue taxonomy', () => {
   input.category = 'Home Appliances';
   assert.equal(validateDraft(input).category, 'Accessories');
 });
+
+test('sends Cloudflare Access service-token headers to the protected Ollama endpoint', async () => {
+  const originalFetch = global.fetch;
+  const originalEnv = {
+    OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
+    OLLAMA_MODEL: process.env.OLLAMA_MODEL,
+    OLLAMA_ACCESS_CLIENT_ID: process.env.OLLAMA_ACCESS_CLIENT_ID,
+    OLLAMA_ACCESS_CLIENT_SECRET: process.env.OLLAMA_ACCESS_CLIENT_SECRET,
+  };
+  let captured;
+  try {
+    process.env.OLLAMA_BASE_URL = 'https://ollama.example.test';
+    process.env.OLLAMA_MODEL = 'qwen2.5:3b';
+    process.env.OLLAMA_ACCESS_CLIENT_ID = 'test-client-id.access';
+    process.env.OLLAMA_ACCESS_CLIENT_SECRET = 'test-client-secret';
+    global.fetch = async (url, options) => {
+      captured = { url, headers: options.headers };
+      return { ok: true, json: async () => ({ message: { content: '{}' } }) };
+    };
+    await callSylvaModel({ product: { title: 'Test product' } });
+    assert.equal(captured.url, 'https://ollama.example.test/api/chat');
+    assert.equal(captured.headers['CF-Access-Client-Id'], 'test-client-id.access');
+    assert.equal(captured.headers['CF-Access-Client-Secret'], 'test-client-secret');
+  } finally {
+    global.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('fails closed when only one Cloudflare Access credential is configured', async () => {
+  const originalFetch = global.fetch;
+  const originalEnv = {
+    OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
+    OLLAMA_ACCESS_CLIENT_ID: process.env.OLLAMA_ACCESS_CLIENT_ID,
+    OLLAMA_ACCESS_CLIENT_SECRET: process.env.OLLAMA_ACCESS_CLIENT_SECRET,
+  };
+  try {
+    process.env.OLLAMA_BASE_URL = 'https://ollama.example.test';
+    process.env.OLLAMA_ACCESS_CLIENT_ID = 'test-client-id.access';
+    delete process.env.OLLAMA_ACCESS_CLIENT_SECRET;
+    global.fetch = async () => { throw new Error('fetch must not be called'); };
+    await assert.rejects(
+      () => callSylvaModel({ product: { title: 'Test product' } }),
+      { code: 'SYLVA_AI_NOT_CONFIGURED' }
+    );
+  } finally {
+    global.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
