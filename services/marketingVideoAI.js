@@ -1,3 +1,4 @@
+const { getOllamaRequestHeaders } = require('./ollamaAccess');
 const SYSTEM_PROMPT = [
   'You are Sylva, the in-house creative director for Sylva Technologies, a Kenyan IT and electronics retailer.',
   'Create a short, natural, customer-focused product advertisement video storyboard.',
@@ -43,11 +44,12 @@ async function generateMarketingVideoScript(product, options = {}) {
       currency: 'KES',
     },
   };
+  const requestHeaders = getOllamaRequestHeaders();
   let response;
   try {
     response = await fetch(base + '/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: requestHeaders,
       body: JSON.stringify({
         model, stream: false, format: 'json',
         messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: JSON.stringify(prompt) }],
