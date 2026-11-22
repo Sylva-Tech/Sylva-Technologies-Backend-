@@ -1,4 +1,4 @@
-const { getOllamaRequestHeaders } = require('./ollamaAccess');
+const { generateWithSylvaAI } = require('./sylvaAIProvider');
 const SYSTEM_PROMPT = [
   'You are Sylva, the in-house creative director for Sylva Technologies, a Kenyan IT and electronics retailer.',
   'Create a short, natural, customer-focused product advertisement video storyboard.',
@@ -17,9 +17,6 @@ const SYSTEM_PROMPT = [
 const clean = (value, max = 1200) => String(value ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 
 async function generateMarketingVideoScript(product, options = {}) {
-  const base = String(process.env.OLLAMA_BASE_URL || '').trim().replace(/\/$/, '');
-  if (!base) throw Object.assign(new Error('Sylva AI model endpoint is not configured.'), { code: 'SYLVA_AI_NOT_CONFIGURED', status: 503 });
-  const model = String(process.env.OLLAMA_MODEL || 'qwen2.5:3b').trim();
   const facts = {
     name: clean(product.name, 180),
     brand: clean(product.brand, 100),
@@ -44,50 +41,39 @@ async function generateMarketingVideoScript(product, options = {}) {
       currency: 'KES',
     },
   };
-  const requestHeaders = getOllamaRequestHeaders();
-  let response;
-  try {
-    response = await fetch(base + '/api/chat', {
-      method: 'POST',
-      headers: requestHeaders,
-      body: JSON.stringify({
-        model, stream: false, format: 'json',
-        messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: JSON.stringify(prompt) }],
-        options: { temperature: 0.35, num_ctx: 4096 },
-      }),
-      signal: AbortSignal.timeout(Math.max(5000, Math.min(180000, Number(process.env.OLLAMA_TIMEOUT_MS) || 90000))),
-    });
-  } catch (cause) {
-    throw Object.assign(new Error(cause?.name === 'TimeoutError' ? 'Sylva AI request timed out. Please try again.' : 'Sylva AI could not reach its configured model endpoint.'), {
-      code: cause?.name === 'TimeoutError' ? 'SYLVA_AI_TIMEOUT' : 'SYLVA_AI_UNAVAILABLE', status: 503,
-    });
-  }
-  if (!response.ok) throw Object.assign(new Error('Sylva AI model request failed with HTTP ' + response.status), { code: 'SYLVA_AI_PROVIDER_ERROR', status: 503 });
-  const payload = await response.json();
-  const raw = payload?.message?.content;
-  if (typeof raw !== 'string' || !raw.trim()) throw Object.assign(new Error('Sylva AI returned an empty response.'), { code: 'SYLVA_AI_INVALID_RESPONSE', status: 502 });
-  let draft;
-  try { draft = JSON.parse(raw); } catch { throw Object.assign(new Error('Sylva AI returned an unreadable storyboard. Please retry.'), { code: 'SYLVA_AI_INVALID_RESPONSE', status: 502 }); }
-  const sourceFacts = JSON.stringify(facts).toLowerCase();
-  const generatedCopy = [
-    draft.title, draft.hook, draft.voiceover, draft.caption,
-    ...(Array.isArray(draft.hashtags) ? draft.hashtags : []),
-    ...(Array.isArray(draft.scenes) ? draft.scenes.flatMap((scene) => [scene.heading, scene.overlay, scene.narration, scene.visualDirection]) : []),
-  ].join(' ').toLowerCase();
-  const sourceNumbers = new Set(sourceFacts.match(/\d+(?:\.\d+)?/g) || []);
-  const generatedNumbers = generatedCopy.match(/\d+(?:\.\d+)?/g) || [];
-  if (generatedNumbers.some((number) => !sourceNumbers.has(number))) {
-    throw Object.assign(new Error('Sylva AI added a number or product specification that is not present in the catalogue record. Please regenerate.'), { code: 'SYLVA_AI_UNSUPPORTED_CLAIM', status: 422 });
-  }
-  const scenes = Array.isArray(draft.scenes) ? draft.scenes.slice(0, 6).map((scene) => ({
-    heading: clean(scene.heading, 90),
-    overlay: clean(scene.overlay, 180),
-    narration: clean(scene.narration, 240),
-    visualDirection: clean(scene.visualDirection, 240),
-    seconds: Math.min(8, Math.max(2, Number(scene.seconds) || 4)),
-  })).filter((scene) => scene.heading && scene.overlay) : [];
-  if (scenes.length < 4) throw Object.assign(new Error('Sylva AI storyboard did not meet the minimum quality checks. Please regenerate.'), { code: 'SYLVA_AI_QUALITY_FAILED', status: 422 });
-  const hashtags = Array.isArray(draft.hashtags) ? draft.hashtags.slice(0, 12).map((tag) => clean(tag, 40).replace(/^#?/, '#')).filter((tag) => tag.length > 1) : [];
+  const generated = await generateWithSylvaAI({
+    messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: JSON.stringify(prompt) }],
+    format: 'json',
+    options: { temperature: 0.35, num_ctx: 4096 },
+    parse: (raw) => {
+      let draft;
+      try { draft = JSON.parse(raw); } catch {
+        throw Object.assign(new Error('Sylva AI returned an unreadable storyboard. Please retry.'), { code: 'SYLVA_AI_INVALID_RESPONSE', status: 502 });
+      }
+      const sourceFacts = JSON.stringify(facts).toLowerCase();
+      const generatedCopy = [
+        draft.title, draft.hook, draft.voiceover, draft.caption,
+        ...(Array.isArray(draft.hashtags) ? draft.hashtags : []),
+        ...(Array.isArray(draft.scenes) ? draft.scenes.flatMap((scene) => [scene.heading, scene.overlay, scene.narration, scene.visualDirection]) : []),
+      ].join(' ').toLowerCase();
+      const sourceNumbers = new Set(sourceFacts.match(/\d+(?:\.\d+)?/g) || []);
+      const generatedNumbers = generatedCopy.match(/\d+(?:\.\d+)?/g) || [];
+      if (generatedNumbers.some((number) => !sourceNumbers.has(number))) {
+        throw Object.assign(new Error('Sylva AI added a number or product specification that is not present in the catalogue record. Please regenerate.'), { code: 'SYLVA_AI_UNSUPPORTED_CLAIM', status: 422 });
+      }
+      const scenes = Array.isArray(draft.scenes) ? draft.scenes.slice(0, 6).map((scene) => ({
+        heading: clean(scene.heading, 90),
+        overlay: clean(scene.overlay, 180),
+        narration: clean(scene.narration, 240),
+        visualDirection: clean(scene.visualDirection, 240),
+        seconds: Math.min(8, Math.max(2, Number(scene.seconds) || 4)),
+      })).filter((scene) => scene.heading && scene.overlay) : [];
+      if (scenes.length < 4) throw Object.assign(new Error('Sylva AI storyboard did not meet the minimum quality checks. Please regenerate.'), { code: 'SYLVA_AI_QUALITY_FAILED', status: 422 });
+      const hashtags = Array.isArray(draft.hashtags) ? draft.hashtags.slice(0, 12).map((tag) => clean(tag, 40).replace(/^#?/, '#')).filter((tag) => tag.length > 1) : [];
+      return { draft, scenes, hashtags };
+    },
+  });
+  const { draft, scenes, hashtags } = generated.result;
   return {
     title: clean(draft.title || facts.name, 100),
     hook: clean(draft.hook, 180),
@@ -96,7 +82,7 @@ async function generateMarketingVideoScript(product, options = {}) {
     hashtags,
     scenes,
     product: { name: facts.name, priceKes: facts.priceKes, image: Array.isArray(product.images) ? product.images[0] || '' : '', productUrl: facts.productUrl },
-    generation: { provider: 'sylva-ollama', model, generatedAt: new Date().toISOString(), renderer: 'browser-canvas-mediarecorder' },
+    generation: { provider: generated.provider === 'ollama' ? 'sylva-ollama' : 'cloudflare-workers-ai', model: generated.model, fallbackUsed: Boolean(generated.fallbackUsed), generatedAt: new Date().toISOString(), renderer: 'browser-canvas-mediarecorder' },
   };
 }
 

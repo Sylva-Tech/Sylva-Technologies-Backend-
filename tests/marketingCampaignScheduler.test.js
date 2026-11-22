@@ -9,7 +9,11 @@ test('due campaign date comparison survives Mongoose filter sanitization', () =>
   const sanitized = mongoose.sanitizeFilter(filter);
 
   assert.equal(sanitized.status, 'scheduled');
-  assert.deepEqual(sanitized.scheduledAt, { $lte: now });
+  assert.equal(sanitized.scheduledAt.$lte, now);
+  const trustedMarker = Object.getOwnPropertySymbols(sanitized.scheduledAt)
+    .find((symbol) => String(symbol) === 'Symbol(mongoose#trustedSymbol)');
+  assert.ok(trustedMarker, 'Mongoose trusted marker must survive filter sanitization');
+  assert.equal(sanitized.scheduledAt[trustedMarker], true);
 });
 
 test('due campaign filter uses the supplied timestamp', () => {
