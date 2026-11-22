@@ -17,6 +17,30 @@ const SYSTEM_PROMPT = [
 const clean = (value, max = 1200) => String(value ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 
 async function generateMarketingVideoScript(product, options = {}) {
+  const facts = {
+    name: clean(product.name, 180),
+    brand: clean(product.brand, 100),
+    sku: clean(product.sku, 80),
+    priceKes: Number.isFinite(Number(product.price)) ? Number(product.price) : null,
+    description: clean(product.description || product.shortDescription, 900),
+    features: Array.isArray(product.keyFeatures) ? product.keyFeatures.slice(0, 6).map((x) => clean(x, 180)) : [],
+    specifications: product.specifications && typeof product.specifications === 'object' ? product.specifications : {},
+    stockAvailable: Number(product.stock) > 0,
+    productUrl: product.slug ? 'https://www.sylvatechnologies.co.ke/product/' + encodeURIComponent(product.slug) : 'https://www.sylvatechnologies.co.ke/shop',
+  };
+  const prompt = {
+    product: facts,
+    creativeDirection: {
+      platform: clean(options.platform || 'instagram', 30),
+      style: clean(options.style || 'clean-premium', 50),
+      durationSeconds: Math.min(30, Math.max(15, Number(options.durationSeconds) || 20)),
+      audience: 'Kenyan customers shopping for IT and electronics products',
+      brand: 'Sylva Technologies',
+      tagline: 'Empowering Your Digital Life',
+      palette: 'deep green, white, charcoal',
+      currency: 'KES',
+    },
+  };
   const generated = await generateWithSylvaAI({
     messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: JSON.stringify(prompt) }],
     format: 'json',
@@ -32,8 +56,8 @@ async function generateMarketingVideoScript(product, options = {}) {
         ...(Array.isArray(draft.hashtags) ? draft.hashtags : []),
         ...(Array.isArray(draft.scenes) ? draft.scenes.flatMap((scene) => [scene.heading, scene.overlay, scene.narration, scene.visualDirection]) : []),
       ].join(' ').toLowerCase();
-      const sourceNumbers = new Set(sourceFacts.match(/\\d+(?:\\.\\d+)?/g) || []);
-      const generatedNumbers = generatedCopy.match(/\\d+(?:\\.\\d+)?/g) || [];
+      const sourceNumbers = new Set(sourceFacts.match(/\d+(?:\.\d+)?/g) || []);
+      const generatedNumbers = generatedCopy.match(/\d+(?:\.\d+)?/g) || [];
       if (generatedNumbers.some((number) => !sourceNumbers.has(number))) {
         throw Object.assign(new Error('Sylva AI added a number or product specification that is not present in the catalogue record. Please regenerate.'), { code: 'SYLVA_AI_UNSUPPORTED_CLAIM', status: 422 });
       }
