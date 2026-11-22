@@ -168,7 +168,11 @@ async function generateWithSylvaAI({ messages, format, options = {}, parse, time
       return { result, provider: response.provider, model: response.model };
     } catch (error) {
       primaryError = error;
-      primaryOpenUntil = Date.now() + cooldownMs();
+      // Only transient provider/network failures should open the circuit.
+      // Parser and content-validation failures must not suppress healthy Qwen calls.
+      if (error?.retryable === true) {
+        primaryOpenUntil = Date.now() + cooldownMs();
+      }
     }
   } else if (!primaryBase) {
     primaryError = makeError('Sylva AI primary model endpoint is not configured.', 'SYLVA_AI_NOT_CONFIGURED', 503);
@@ -197,6 +201,8 @@ async function generateWithSylvaAI({ messages, format, options = {}, parse, time
         fallbackCode: fallbackError?.code || 'SYLVA_AI_FALLBACK_FAILED',
         primaryStatus: primaryError?.providerStatus || primaryError?.status || 503,
         fallbackStatus: fallbackError?.providerStatus || fallbackError?.status || 503,
+        primaryRetryable: primaryError?.retryable === true,
+        fallbackRetryable: fallbackError?.retryable === true,
       }
     );
   }
