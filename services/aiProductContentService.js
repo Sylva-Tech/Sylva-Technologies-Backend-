@@ -104,11 +104,11 @@ const generateAliExpressProductContent=async(product)=>{
     'Write clean semantic HTML using only h3,p,ul,li,strong,em,br. No CSS, links, images, scripts or attributes. Avoid duplicating feature bullets in description.',
     'Category suggestion is advisory only. Product pricing, stock, category assignment, visibility, approval, policies and publishing are outside your authority.',
     'Never create warranty, return, refund or delivery promises. Only reuse supplied policy text. All drafts require administrator review.',
-  ].join('\\n');
+  ].join('\n');
   const generated=await generateWithSylvaAI({
     messages:[
       {role:'system',content:system},
-      {role:'user',content:'Create a factual product content draft from this JSON data:\\n'+JSON.stringify(safeInput)},
+      {role:'user',content:'Create a factual product content draft from this JSON data:\n'+JSON.stringify(safeInput)},
     ],
     format:CONTENT_SCHEMA,
     options:{temperature:0.15},
