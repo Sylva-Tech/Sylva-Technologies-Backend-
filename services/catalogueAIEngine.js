@@ -104,8 +104,18 @@ const callSylvaModel=async(input)=>{
   const base=String(process.env.OLLAMA_BASE_URL||'').trim().replace(/\/$/,'');
   if(!base) throw Object.assign(new Error('Sylva AI model endpoint is not configured.'),{code:'SYLVA_AI_NOT_CONFIGURED',status:503});
   const model=String(process.env.OLLAMA_MODEL||'qwen2.5:3b').trim();
+  const accessClientId=String(process.env.OLLAMA_ACCESS_CLIENT_ID||'').trim();
+  const accessClientSecret=String(process.env.OLLAMA_ACCESS_CLIENT_SECRET||'').trim();
+  if(Boolean(accessClientId)!==Boolean(accessClientSecret)){
+    throw Object.assign(new Error('Sylva AI Cloudflare Access credentials are incomplete.'),{code:'SYLVA_AI_NOT_CONFIGURED',status:503});
+  }
+  const requestHeaders={'Content-Type':'application/json'};
+  if(accessClientId&&accessClientSecret){
+    requestHeaders['CF-Access-Client-Id']=accessClientId;
+    requestHeaders['CF-Access-Client-Secret']=accessClientSecret;
+  }
   let response;
-  try{response=await fetch(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model,stream:false,format:SCHEMA,messages:[{role:'system',content:SYSTEM_PROMPT},{role:'user',content:JSON.stringify(input)}],options:{temperature:0.2}}),signal:AbortSignal.timeout(Math.max(5000,Math.min(180000,Number(process.env.OLLAMA_TIMEOUT_MS)||90000)))});}
+  try{response=await fetch(base+'/api/chat',{method:'POST',headers:requestHeaders,body:JSON.stringify({model,stream:false,format:SCHEMA,messages:[{role:'system',content:SYSTEM_PROMPT},{role:'user',content:JSON.stringify(input)}],options:{temperature:0.2}}),signal:AbortSignal.timeout(Math.max(5000,Math.min(180000,Number(process.env.OLLAMA_TIMEOUT_MS)||90000)))});}
   catch(cause){throw Object.assign(new Error(cause?.name==='TimeoutError'?'Sylva AI request timed out.':'Sylva AI could not reach its model endpoint.'),{code:cause?.name==='TimeoutError'?'SYLVA_AI_TIMEOUT':'SYLVA_AI_UNAVAILABLE',status:503});}
   if(!response.ok) throw Object.assign(new Error('Sylva AI model request failed with HTTP '+response.status),{code:'SYLVA_AI_PROVIDER_ERROR',status:503});
   const payload=await response.json(), raw=payload?.message?.content;
@@ -121,4 +131,4 @@ const generateCatalogueDraft=async({mode='CREATE',product={}})=>{
   const generated=await callSylvaModel(input), draft=validateDraft(generated.draft,input.product);
   return {...draft,generation:{provider:'sylva',model:generated.model,researchSources:[],generatedAt:new Date().toISOString(),mode:normalizedMode,warnings:draft.warnings}};
 };
-module.exports={generateCatalogueDraft,validateDraft,CATEGORIES};
+module.exports={generateCatalogueDraft,validateDraft,CATEGORIES,callSylvaModel};
