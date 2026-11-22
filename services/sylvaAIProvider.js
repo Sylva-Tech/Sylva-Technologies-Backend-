@@ -19,10 +19,15 @@ const getFallbackConfig = () => ({
 const readProviderError = async (response, provider) => {
   let detail = '';
   try {
-    const body = await response.json();
-    detail = body?.error?.message || body?.message || body?.errors?.[0]?.message || '';
+    const bodyText = await response.text();
+    try {
+      const body = JSON.parse(bodyText);
+      detail = body?.error?.message || body?.message || body?.errors?.[0]?.message || '';
+    } catch {
+      detail = bodyText.slice(0, 300);
+    }
   } catch {
-    try { detail = (await response.text()).slice(0, 300); } catch { /* ignore body parsing errors */ }
+    // Do not allow an unreadable provider error body to hide the HTTP status.
   }
   return makeError(
     provider === 'ollama'
@@ -30,7 +35,11 @@ const readProviderError = async (response, provider) => {
       : 'Sylva AI fallback provider request failed with HTTP ' + response.status,
     provider === 'ollama' ? 'SYLVA_AI_PROVIDER_ERROR' : 'SYLVA_AI_FALLBACK_ERROR',
     503,
-    { providerStatus: response.status, retryable: response.status === 408 || response.status === 429 || response.status >= 500, providerDetail: detail }
+    {
+      providerStatus: response.status,
+      retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+      providerDetail: detail,
+    }
   );
 };
 
@@ -70,11 +79,33 @@ async function requestOllama({ messages, format, options, timeout }) {
   return { raw: parseProviderText(payload?.message?.content, 'ollama'), provider: 'ollama', model };
 }
 
+/**
+ * Cloudflare's native Workers AI Run API is used deliberately instead of the
+ * OpenAI-compatible /ai/v1/chat/completions route. It accepts Workers AI
+ * account tokens on the native endpoint and returns { result: { response } }.
+ */
 async function requestCloudflareWorkersAI({ messages, format, options, timeout, config }) {
-  const url = 'https://api.cloudflare.com/client/v4/accounts/' + encodeURIComponent(config.accountId) + '/ai/v1/chat/completions';
-  const responseFormat = format && typeof format === 'object'
-    ? { type: 'json_schema', json_schema: format }
-    : { type: 'json_object' };
+  const modelPath = config.model.split('/').map((part) => encodeURIComponent(part).replace(/%40/gi, '@')).join('/');
+  const url = 'https://api.cloudflare.com/client/v4/accounts/' +
+    encodeURIComponent(config.accountId) + '/ai/run/' + modelPath;
+
+  let responseFormat;
+  if (format === 'json' || format === 'json_object') {
+    responseFormat = { type: 'json_object' };
+  } else if (format && typeof format === 'object') {
+    responseFormat = { type: 'json_schema', json_schema: format };
+  } else if (format === 'json_schema') {
+    responseFormat = { type: 'json_schema' };
+  }
+
+  const body = {
+    messages,
+    stream: false,
+    temperature: Number.isFinite(Number(options?.temperature)) ? Number(options.temperature) : 0.2,
+    max_tokens: Math.max(256, Math.min(4096, Number(process.env.SYLVA_AI_FALLBACK_MAX_TOKENS) || 2048)),
+    ...(responseFormat ? { response_format: responseFormat } : {}),
+  };
+
   let response;
   try {
     response = await fetch(url, {
@@ -83,14 +114,7 @@ async function requestCloudflareWorkersAI({ messages, format, options, timeout, 
         Authorization: 'Bearer ' + config.apiToken,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        stream: false,
-        temperature: Number.isFinite(Number(options?.temperature)) ? Number(options.temperature) : 0.2,
-        max_tokens: Math.max(256, Math.min(4096, Number(process.env.SYLVA_AI_FALLBACK_MAX_TOKENS) || 2048)),
-        response_format: responseFormat,
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeout),
     });
   } catch (cause) {
@@ -101,12 +125,25 @@ async function requestCloudflareWorkersAI({ messages, format, options, timeout, 
       { retryable: true }
     );
   }
+
   if (!response.ok) throw await readProviderError(response, 'cloudflare-workers-ai');
+
   let payload;
   try { payload = await response.json(); } catch {
     throw makeError('Sylva AI fallback provider returned an unreadable response.', 'SYLVA_AI_FALLBACK_INVALID_RESPONSE', 502);
   }
-  const raw = payload?.choices?.[0]?.message?.content || payload?.result?.response;
+
+  if (payload?.success === false || (Array.isArray(payload?.errors) && payload.errors.length)) {
+    const providerMessage = payload.errors.map((item) => item?.message).filter(Boolean).join('; ').slice(0, 300);
+    throw makeError(
+      'Sylva AI fallback provider rejected the inference request.',
+      'SYLVA_AI_FALLBACK_ERROR',
+      503,
+      { providerStatus: response.status, providerDetail: providerMessage, retryable: false }
+    );
+  }
+
+  const raw = payload?.result?.response;
   return { raw: parseProviderText(raw, 'cloudflare-workers-ai'), provider: 'cloudflare-workers-ai', model: config.model };
 }
 
