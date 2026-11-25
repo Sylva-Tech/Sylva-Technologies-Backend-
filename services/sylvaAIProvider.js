@@ -16,6 +16,9 @@ const getFallbackConfig = () => ({
   model: String(process.env.SYLVA_AI_FALLBACK_MODEL || '@cf/meta/llama-3.1-8b-instruct').trim(),
 });
 
+const getLocalFallbackModel = () =>
+  String(process.env.OLLAMA_FALLBACK_MODEL || 'qwen2.5:1.5b').trim();
+
 const readProviderError = async (response, provider) => {
   let detail = '';
   try {
@@ -31,8 +34,8 @@ const readProviderError = async (response, provider) => {
   }
   return makeError(
     provider === 'ollama'
-      ? 'Sylva AI primary model request failed with HTTP ' + response.status
-      : 'Sylva AI fallback provider request failed with HTTP ' + response.status,
+      ? 'Sylva AI Ollama model request failed with HTTP ' + response.status
+      : 'Sylva AI Cloudflare Workers AI request failed with HTTP ' + response.status,
     provider === 'ollama' ? 'SYLVA_AI_PROVIDER_ERROR' : 'SYLVA_AI_FALLBACK_ERROR',
     503,
     {
@@ -45,27 +48,37 @@ const readProviderError = async (response, provider) => {
 
 const parseProviderText = (raw, provider) => {
   if (typeof raw !== 'string' || !raw.trim()) {
-    throw makeError('Sylva AI returned an empty response.', provider === 'ollama' ? 'SYLVA_AI_INVALID_RESPONSE' : 'SYLVA_AI_FALLBACK_INVALID_RESPONSE', 502);
+    throw makeError(
+      'Sylva AI returned an empty response.',
+      provider === 'ollama' ? 'SYLVA_AI_INVALID_RESPONSE' : 'SYLVA_AI_FALLBACK_INVALID_RESPONSE',
+      502
+    );
   }
   return raw.trim();
 };
 
-async function requestOllama({ messages, format, options, timeout }) {
+async function requestOllama({ messages, format, options, timeout, model }) {
   const base = String(process.env.OLLAMA_BASE_URL || '').trim().replace(/\/$/, '');
-  if (!base) throw makeError('Sylva AI primary model endpoint is not configured.', 'SYLVA_AI_NOT_CONFIGURED', 503);
-  const model = String(process.env.OLLAMA_MODEL || 'qwen2.5:3b').trim();
+  if (!base) throw makeError('Sylva AI Ollama endpoint is not configured.', 'SYLVA_AI_NOT_CONFIGURED', 503);
+  const selectedModel = String(model || process.env.OLLAMA_MODEL || 'qwen2.5:3b').trim();
   const headers = getOllamaRequestHeaders();
   let response;
   try {
     response = await fetch(base + '/api/chat', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model, messages, stream: false, ...(format ? { format } : {}), options: options || {} }),
+      body: JSON.stringify({
+        model: selectedModel,
+        messages,
+        stream: false,
+        ...(format ? { format } : {}),
+        options: options || {},
+      }),
       signal: AbortSignal.timeout(timeout),
     });
   } catch (cause) {
     throw makeError(
-      cause?.name === 'TimeoutError' ? 'Sylva AI primary model request timed out.' : 'Sylva AI could not reach its primary model endpoint.',
+      cause?.name === 'TimeoutError' ? 'Sylva AI Ollama model request timed out.' : 'Sylva AI could not reach its private Ollama endpoint.',
       cause?.name === 'TimeoutError' ? 'SYLVA_AI_TIMEOUT' : 'SYLVA_AI_UNAVAILABLE',
       503,
       { retryable: true }
@@ -74,15 +87,19 @@ async function requestOllama({ messages, format, options, timeout }) {
   if (!response.ok) throw await readProviderError(response, 'ollama');
   let payload;
   try { payload = await response.json(); } catch {
-    throw makeError('Sylva AI primary model returned an unreadable response.', 'SYLVA_AI_INVALID_RESPONSE', 502);
+    throw makeError('Sylva AI Ollama model returned an unreadable response.', 'SYLVA_AI_INVALID_RESPONSE', 502);
   }
-  return { raw: parseProviderText(payload?.message?.content, 'ollama'), provider: 'ollama', model };
+  return {
+    raw: parseProviderText(payload?.message?.content, 'ollama'),
+    provider: 'ollama',
+    model: selectedModel,
+  };
 }
 
 /**
- * Cloudflare's native Workers AI Run API is used deliberately instead of the
- * OpenAI-compatible /ai/v1/chat/completions route. It accepts Workers AI
- * account tokens on the native endpoint and returns { result: { response } }.
+ * Cloudflare Workers AI native Run API is deliberately used instead of the
+ * OpenAI-compatible route. It accepts Workers AI account tokens and returns
+ * { result: { response } }.
  */
 async function requestCloudflareWorkersAI({ messages, format, options, timeout, config }) {
   const modelPath = config.model.split('/').map((part) => encodeURIComponent(part).replace(/%40/gi, '@')).join('/');
@@ -119,7 +136,7 @@ async function requestCloudflareWorkersAI({ messages, format, options, timeout, 
     });
   } catch (cause) {
     throw makeError(
-      cause?.name === 'TimeoutError' ? 'Sylva AI fallback request timed out.' : 'Sylva AI could not reach Cloudflare Workers AI.',
+      cause?.name === 'TimeoutError' ? 'Sylva AI Cloudflare Workers AI request timed out.' : 'Sylva AI could not reach Cloudflare Workers AI.',
       'SYLVA_AI_FALLBACK_UNAVAILABLE',
       503,
       { retryable: true }
@@ -130,13 +147,13 @@ async function requestCloudflareWorkersAI({ messages, format, options, timeout, 
 
   let payload;
   try { payload = await response.json(); } catch {
-    throw makeError('Sylva AI fallback provider returned an unreadable response.', 'SYLVA_AI_FALLBACK_INVALID_RESPONSE', 502);
+    throw makeError('Sylva AI Cloudflare Workers AI returned an unreadable response.', 'SYLVA_AI_FALLBACK_INVALID_RESPONSE', 502);
   }
 
   if (payload?.success === false || (Array.isArray(payload?.errors) && payload.errors.length)) {
     const providerMessage = payload.errors.map((item) => item?.message).filter(Boolean).join('; ').slice(0, 300);
     throw makeError(
-      'Sylva AI fallback provider rejected the inference request.',
+      'Sylva AI Cloudflare Workers AI rejected the inference request.',
       'SYLVA_AI_FALLBACK_ERROR',
       503,
       { providerStatus: response.status, providerDetail: providerMessage, retryable: false }
@@ -144,65 +161,106 @@ async function requestCloudflareWorkersAI({ messages, format, options, timeout, 
   }
 
   const raw = payload?.result?.response;
-  return { raw: parseProviderText(raw, 'cloudflare-workers-ai'), provider: 'cloudflare-workers-ai', model: config.model };
+  return {
+    raw: parseProviderText(raw, 'cloudflare-workers-ai'),
+    provider: 'cloudflare-workers-ai',
+    model: config.model,
+  };
 }
 
 /**
- * Execute the same prompt and validation against the primary Ollama model first,
- * then Cloudflare Workers AI when enabled. The parser/validator is deliberately
- * shared so fallback output passes exactly the same safety checks.
+ * Provider order:
+ * 1. Private Qwen primary model (OLLAMA_MODEL, normally qwen2.5:3b).
+ * 2. Private Qwen local fallback (OLLAMA_FALLBACK_MODEL, normally qwen2.5:1.5b).
+ * 3. Cloudflare Workers AI (only when explicitly enabled and configured).
+ *
+ * The same prompt and caller-supplied parser/validator are used at every stage.
  */
 async function generateWithSylvaAI({ messages, format, options = {}, parse, timeout = timeoutMs() }) {
   if (typeof parse !== 'function') throw new TypeError('A response parser is required.');
-  const config = getFallbackConfig();
-  const fallbackReady = config.enabled && Boolean(config.accountId && config.apiToken);
-  const primaryBase = String(process.env.OLLAMA_BASE_URL || '').trim();
-  const primaryAvailableForAttempt = Boolean(primaryBase) && Date.now() >= primaryOpenUntil;
-  let primaryError = null;
 
+  const config = getFallbackConfig();
+  const cloudflareReady = config.enabled && Boolean(config.accountId && config.apiToken);
+  const primaryBase = String(process.env.OLLAMA_BASE_URL || '').trim();
+  const primaryModel = String(process.env.OLLAMA_MODEL || 'qwen2.5:3b').trim();
+  const localFallbackModel = getLocalFallbackModel();
+  let primaryError = null;
+  let localFallbackError = null;
+
+  const primaryAvailableForAttempt = Boolean(primaryBase) && Date.now() >= primaryOpenUntil;
   if (primaryAvailableForAttempt) {
     try {
-      const response = await requestOllama({ messages, format, options, timeout });
+      const response = await requestOllama({ messages, format, options, timeout, model: primaryModel });
       const result = await parse(response.raw, { provider: response.provider, model: response.model });
       primaryOpenUntil = 0;
-      return { result, provider: response.provider, model: response.model };
+      return { result, provider: response.provider, model: response.model, fallbackUsed: false };
     } catch (error) {
       primaryError = error;
-      // Only transient provider/network failures should open the circuit.
-      // Parser and content-validation failures must not suppress healthy Qwen calls.
-      if (error?.retryable === true) {
-        primaryOpenUntil = Date.now() + cooldownMs();
-      }
+      // Only transient transport/provider failures open the primary circuit.
+      // Parser/validation errors can still be recovered by the secondary model.
+      if (error?.retryable === true) primaryOpenUntil = Date.now() + cooldownMs();
     }
   } else if (!primaryBase) {
-    primaryError = makeError('Sylva AI primary model endpoint is not configured.', 'SYLVA_AI_NOT_CONFIGURED', 503);
+    primaryError = makeError('Sylva AI private Ollama endpoint is not configured.', 'SYLVA_AI_NOT_CONFIGURED', 503);
   } else {
-    primaryError = makeError('Sylva AI primary model is temporarily cooling down after a connection failure.', 'SYLVA_AI_PRIMARY_COOLDOWN', 503);
+    primaryError = makeError(
+      'Sylva AI primary Qwen model is cooling down after a connection failure.',
+      'SYLVA_AI_PRIMARY_COOLDOWN',
+      503,
+      { retryable: true }
+    );
   }
 
-  if (!fallbackReady) {
+  // The local fallback shares the same private endpoint and Cloudflare Access
+  // service-token headers as the primary model. It does not require a second URL.
+  if (primaryBase && localFallbackModel && localFallbackModel !== primaryModel) {
+    try {
+      const response = await requestOllama({
+        messages, format, options, timeout, model: localFallbackModel,
+      });
+      const result = await parse(response.raw, { provider: response.provider, model: response.model });
+      return { result, provider: response.provider, model: response.model, fallbackUsed: true, fallbackStage: 'ollama-local' };
+    } catch (error) {
+      localFallbackError = error;
+    }
+  } else {
+    localFallbackError = makeError(
+      !primaryBase
+        ? 'Sylva AI local fallback was skipped because the private Ollama endpoint is not configured.'
+        : 'Sylva AI local fallback model is not configured or duplicates the primary model.',
+      'SYLVA_AI_LOCAL_FALLBACK_NOT_CONFIGURED',
+      503
+    );
+  }
+
+  if (!cloudflareReady) {
     if (config.enabled && (!config.accountId || !config.apiToken)) {
       primaryError.fallbackConfiguration = 'Workers AI fallback is enabled but CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN is missing.';
     }
+    primaryError.localFallbackCode = localFallbackError?.code || 'SYLVA_AI_LOCAL_FALLBACK_FAILED';
+    primaryError.localFallbackStatus = localFallbackError?.providerStatus || localFallbackError?.status || 503;
     throw primaryError;
   }
 
   try {
     const response = await requestCloudflareWorkersAI({ messages, format, options, timeout, config });
     const result = await parse(response.raw, { provider: response.provider, model: response.model });
-    return { result, provider: response.provider, model: response.model, fallbackUsed: true };
-  } catch (fallbackError) {
+    return { result, provider: response.provider, model: response.model, fallbackUsed: true, fallbackStage: 'cloudflare-workers-ai' };
+  } catch (cloudflareError) {
     throw makeError(
-      'Sylva AI could not complete the request using either the private Qwen model or its configured fallback. Please try again shortly.',
+      'Sylva AI could not complete the request using either private Qwen model or Cloudflare Workers AI. Please try again shortly.',
       'SYLVA_AI_ALL_PROVIDERS_FAILED',
       503,
       {
         primaryCode: primaryError?.code || 'SYLVA_AI_PRIMARY_FAILED',
-        fallbackCode: fallbackError?.code || 'SYLVA_AI_FALLBACK_FAILED',
         primaryStatus: primaryError?.providerStatus || primaryError?.status || 503,
-        fallbackStatus: fallbackError?.providerStatus || fallbackError?.status || 503,
         primaryRetryable: primaryError?.retryable === true,
-        fallbackRetryable: fallbackError?.retryable === true,
+        localFallbackCode: localFallbackError?.code || 'SYLVA_AI_LOCAL_FALLBACK_FAILED',
+        localFallbackStatus: localFallbackError?.providerStatus || localFallbackError?.status || 503,
+        localFallbackRetryable: localFallbackError?.retryable === true,
+        fallbackCode: cloudflareError?.code || 'SYLVA_AI_FALLBACK_FAILED',
+        fallbackStatus: cloudflareError?.providerStatus || cloudflareError?.status || 503,
+        fallbackRetryable: cloudflareError?.retryable === true,
       }
     );
   }
