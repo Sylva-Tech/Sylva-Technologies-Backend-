@@ -27,7 +27,7 @@ const readProviderError = async (response, provider) => {
       const body = JSON.parse(bodyText);
       detail = body?.error?.message || body?.message || body?.errors?.[0]?.message || '';
     } catch {
-      detail = bodyText.slice(0, 300);
+      detail = bodyText.slice(0, 4000);
     }
   } catch {
     // Do not allow an unreadable provider error body to hide the HTTP status.
