@@ -3,7 +3,7 @@ const { getOllamaRequestHeaders } = require('./ollamaAccess');
 let primaryOpenUntil = 0;
 
 const enabled = (value) => String(value || '').trim().toLowerCase() === 'true';
-const timeoutMs = () => Math.max(5000, Math.min(180000, Number(process.env.OLLAMA_TIMEOUT_MS) || 90000));
+const timeoutMs = () => Math.max(120000, Math.min(300000, Number(process.env.OLLAMA_TIMEOUT_MS) || 120000));
 const cooldownMs = () => Math.max(5000, Math.min(300000, Number(process.env.SYLVA_AI_PRIMARY_COOLDOWN_MS) || 30000));
 
 const makeError = (message, code, status = 503, extra = {}) =>
@@ -57,14 +57,50 @@ const parseProviderText = (raw, provider) => {
   return raw.trim();
 };
 
+function getOllamaEndpoint() {
+  const configured = String(process.env.OLLAMA_BASE_URL || '').trim();
+  if (!configured) throw makeError('Sylva AI Ollama endpoint is not configured.', 'SYLVA_AI_NOT_CONFIGURED', 503);
+  let parsed;
+  try { parsed = new URL(configured); } catch {
+    throw makeError('OLLAMA_BASE_URL must be a valid absolute HTTP(S) URL.', 'SYLVA_AI_INVALID_ENDPOINT', 503);
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw makeError('OLLAMA_BASE_URL must use HTTP or HTTPS.', 'SYLVA_AI_INVALID_ENDPOINT', 503);
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw makeError('OLLAMA_BASE_URL must not contain credentials, query parameters, or fragments; use Cloudflare Access service-token environment variables.', 'SYLVA_AI_INVALID_ENDPOINT', 503);
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+  if (/\/v1$/i.test(parsed.pathname)) {
+    throw makeError('OLLAMA_BASE_URL must point to the Ollama native API root, not an OpenAI-compatible /v1 path.', 'SYLVA_AI_INVALID_ENDPOINT', 503);
+  }
+  if (/\/api\/chat$/i.test(parsed.pathname)) return parsed.toString().replace(/\/$/, '');
+  if (/\/api$/i.test(parsed.pathname)) parsed.pathname += '/chat';
+  else parsed.pathname += '/api/chat';
+  return parsed.toString().replace(/\/$/, '');
+}
+
+function safeOllamaUrlForLog(value) {
+  try {
+    const parsed = new URL(value);
+    parsed.username = parsed.password = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return '[invalid Ollama URL]';
+  }
+}
+
 async function requestOllama({ messages, format, options, timeout, model }) {
-  const base = String(process.env.OLLAMA_BASE_URL || '').trim().replace(/\/$/, '');
-  if (!base) throw makeError('Sylva AI Ollama endpoint is not configured.', 'SYLVA_AI_NOT_CONFIGURED', 503);
+  const url = getOllamaEndpoint();
+  const loggedUrl = safeOllamaUrlForLog(url);
+  const requestTimeout = Math.max(120000, Number(timeout) || timeoutMs());
   const selectedModel = String(model || process.env.OLLAMA_MODEL || 'qwen2.5:3b').trim();
   const headers = getOllamaRequestHeaders();
   let response;
   try {
-    response = await fetch(base + '/api/chat', {
+    response = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -74,17 +110,43 @@ async function requestOllama({ messages, format, options, timeout, model }) {
         ...(format ? { format } : {}),
         options: options || {},
       }),
-      signal: AbortSignal.timeout(timeout),
+      signal: AbortSignal.timeout(requestTimeout),
     });
   } catch (cause) {
+    const timedOut = cause?.name === 'TimeoutError' || cause?.name === 'AbortError';
+    const message = timedOut
+      ? 'Ollama request timed out after ' + requestTimeout + 'ms.'
+      : 'Ollama request to ' + loggedUrl + ' failed: ' + (cause?.message || String(cause));
+    console.error('[Sylva AI][Ollama] transport failure', {
+      url: loggedUrl,
+      model: selectedModel,
+      timeoutMs: requestTimeout,
+      statusCode: null,
+      errorName: cause?.name || 'Error',
+      errorMessage: cause?.message || String(cause),
+      cause: cause?.cause?.message || null,
+    });
     throw makeError(
-      cause?.name === 'TimeoutError' ? 'Sylva AI Ollama model request timed out.' : 'Sylva AI could not reach its private Ollama endpoint.',
-      cause?.name === 'TimeoutError' ? 'SYLVA_AI_TIMEOUT' : 'SYLVA_AI_UNAVAILABLE',
+      timedOut ? 'Sylva AI Ollama model request timed out.' : 'Sylva AI could not reach its private Ollama endpoint.',
+      timedOut ? 'SYLVA_AI_TIMEOUT' : 'SYLVA_AI_UNAVAILABLE',
       503,
-      { retryable: true }
+      { retryable: true, providerUrl: loggedUrl, providerTimeoutMs: requestTimeout, providerMessage: message }
     );
   }
-  if (!response.ok) throw await readProviderError(response, 'ollama');
+  if (!response.ok) {
+    const providerError = await readProviderError(response, 'ollama');
+    console.error('[Sylva AI][Ollama] HTTP failure', {
+      url: loggedUrl,
+      model: selectedModel,
+      timeoutMs: requestTimeout,
+      statusCode: response.status,
+      errorMessage: providerError.message,
+      providerDetail: providerError.providerDetail || '',
+    });
+    providerError.providerUrl = loggedUrl;
+    providerError.providerTimeoutMs = requestTimeout;
+    throw providerError;
+  }
   let payload;
   try { payload = await response.json(); } catch {
     throw makeError('Sylva AI Ollama model returned an unreadable response.', 'SYLVA_AI_INVALID_RESPONSE', 502);
