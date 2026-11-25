@@ -151,7 +151,7 @@ async function requestCloudflareWorkersAI({ messages, format, options, timeout, 
   }
 
   if (payload?.success === false || (Array.isArray(payload?.errors) && payload.errors.length)) {
-    const providerMessage = payload.errors.map((item) => item?.message).filter(Boolean).join('; ').slice(0, 300);
+    const providerMessage = (Array.isArray(payload?.errors) ? payload.errors : []).map((item) => item?.message).filter(Boolean).join('; ').slice(0, 300);
     throw makeError(
       'Sylva AI Cloudflare Workers AI rejected the inference request.',
       'SYLVA_AI_FALLBACK_ERROR',
