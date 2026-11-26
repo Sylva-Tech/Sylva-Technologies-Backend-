@@ -6,7 +6,7 @@ const envKeys = [
   'OLLAMA_BASE_URL', 'OLLAMA_MODEL', 'OLLAMA_FALLBACK_MODEL',
   'OLLAMA_ACCESS_CLIENT_ID', 'OLLAMA_ACCESS_CLIENT_SECRET',
   'SYLVA_AI_FALLBACK_ENABLED', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN',
-  'SYLVA_AI_FALLBACK_MODEL', 'SYLVA_AI_PRIMARY_COOLDOWN_MS', 'SYLVA_AI_FALLBACK_MAX_TOKENS',
+  'SYLVA_AI_FALLBACK_MODEL', 'SYLVA_AI_PRIMARY_COOLDOWN_MS', 'SYLVA_AI_FALLBACK_MAX_TOKENS', 'OLLAMA_TIMEOUT_MS',
 ];
 const snapshot = () => Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 const restore = (values) => envKeys.forEach((key) => values[key] === undefined ? delete process.env[key] : process.env[key] = values[key]);
@@ -39,6 +39,39 @@ const setup = (t) => {
   process.env.CLOUDFLARE_API_TOKEN = 'token-test';
   process.env.SYLVA_AI_FALLBACK_MODEL = '@cf/meta/llama-3.1-8b-instruct';
 };
+
+test('normalizes trailing slashes and enforces a 120-second minimum Ollama timeout', async (t) => {
+  setup(t);
+  process.env.OLLAMA_BASE_URL = 'https://ollama.example.test///';
+  process.env.OLLAMA_TIMEOUT_MS = '30000';
+  const originalTimeout = AbortSignal.timeout;
+  let observedTimeout = 0;
+  AbortSignal.timeout = (ms) => {
+    observedTimeout = ms;
+    return originalTimeout(ms);
+  };
+  t.after(() => { AbortSignal.timeout = originalTimeout; });
+  let requestedUrl = '';
+  global.fetch = async (url) => {
+    requestedUrl = String(url);
+    return ollamaResponse('{"ok":true}');
+  };
+  await generateWithSylvaAI({ messages: [], parse: JSON.parse });
+  assert.equal(requestedUrl, 'https://ollama.example.test/api/chat');
+  assert.equal(observedTimeout, 120000);
+});
+
+test('accepts an OLLAMA_BASE_URL that already ends in /api without duplicating the API path', async (t) => {
+  setup(t);
+  process.env.OLLAMA_BASE_URL = 'https://ollama.example.test/api/';
+  let requestedUrl = '';
+  global.fetch = async (url) => {
+    requestedUrl = String(url);
+    return ollamaResponse('{"ok":true}');
+  };
+  await generateWithSylvaAI({ messages: [], parse: JSON.parse });
+  assert.equal(requestedUrl, 'https://ollama.example.test/api/chat');
+});
 
 test('uses primary Qwen 3B first and does not call either fallback when it succeeds', async (t) => {
   setup(t);

@@ -16,13 +16,13 @@ The same task prompt and caller-supplied parser/validator are used at every stag
 
 ## Render environment variables
 
-Configure the private Ollama endpoint and both local model names:
+Configure the private Ollama endpoint and both local model names. Set the base URL to the tunnel hostname only (no `/v1`); the backend calls Ollama's native `/api/chat` route and normalizes trailing slashes:
 
 - \`OLLAMA_BASE_URL=https://ollama.sylvatechnologies.co.ke\`
 - \`OLLAMA_MODEL=qwen2.5:3b\`
 - \`OLLAMA_FALLBACK_MODEL=qwen2.5:1.5b\`
 - \`OLLAMA_ACCESS_CLIENT_ID\` and \`OLLAMA_ACCESS_CLIENT_SECRET\` (Cloudflare Access service token)
-- \`OLLAMA_TIMEOUT_MS=90000\`
+- \`OLLAMA_TIMEOUT_MS=120000\`
 
 Enable the final Cloudflare fallback only when the Workers AI account and token are ready:
 
@@ -35,7 +35,7 @@ Enable the final Cloudflare fallback only when the Workers AI account and token 
 
 The Workers AI token is separate from the Cloudflare Access service token. Never put either credential in frontend environment variables or commit them to Git. Do not expose either credential in logs or API responses.
 
-For local development, keep \`OLLAMA_BASE_URL=http://127.0.0.1:11434\`. On Render, use the public hostname protected by Cloudflare Access; localhost inside Render points to the Render container, not the developer's computer.
+The backend enforces a minimum 120-second request timeout (configurable up to 300 seconds with `OLLAMA_TIMEOUT_MS`). Failed tunnel requests log the sanitized endpoint URL, model, timeout, HTTP status when available, and provider error detail; Cloudflare Access credentials are never logged.\n\nFor local development, keep \`OLLAMA_BASE_URL=http://127.0.0.1:11434\`. On Render, use the public hostname protected by Cloudflare Access; localhost inside Render points to the Render container, not the developer's computer.
 
 ## Cost and limits
 
