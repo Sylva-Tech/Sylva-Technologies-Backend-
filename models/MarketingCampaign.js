@@ -35,6 +35,7 @@ const marketingCampaignSchema = new mongoose.Schema({
   assets: [{
     kind: { type: String, enum: ['poster', 'video', 'image'], required: true },
     url: { type: String, required: true, maxlength: 2000 },
+    publicId: { type: String, default: '', maxlength: 240 },
     alt: { type: String, default: '', maxlength: 240 },
     status: { type: String, enum: ['draft', 'approved'], default: 'draft' },
   }],
