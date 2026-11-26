@@ -1,6 +1,8 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
+const multer = require('multer');
+const cloudinary = require('../config/cloudinary');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const MarketingCampaign = require('../models/MarketingCampaign');
 const Product = require('../models/Product');
@@ -16,6 +18,22 @@ const campaignLimiter = rateLimit({
 });
 
 const PLATFORMS = ['facebook', 'instagram', 'tiktok', 'whatsapp'];
+const marketingUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, callback) => {
+    const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/webm', 'video/quicktime']);
+    if (!allowed.has(file.mimetype)) return callback(new Error('Upload a JPG, PNG, WEBP, GIF, MP4, WEBM or MOV file.'));
+    callback(null, true);
+  },
+});
+const uploadMarketingAsset = (buffer, resourceType) => new Promise((resolve, reject) => {
+  const stream = cloudinary.uploader.upload_stream({
+    folder: 'sylva/marketing-studio', resource_type: resourceType, type: 'upload',
+    use_filename: false, unique_filename: true,
+  }, (error, result) => error ? reject(error) : resolve(result));
+  stream.end(buffer);
+});
 const videoScriptLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 8, standardHeaders: 'draft-8', legacyHeaders: false, message: { success: false, message: 'Too many video script requests. Please try again later.' } });
 const safeText = (value, max = 5000) => String(value || '').trim().slice(0, max);
 const activity = (action, note, actor) => ({ action, note: safeText(note, 500), actor, at: new Date() });
@@ -251,6 +269,50 @@ router.post('/campaigns/:id/action', async (req, res) => {
   }
 });
 
+
+
+router.delete('/campaigns/drafts', async (req, res) => {
+  try {
+    const result = await MarketingCampaign.deleteMany({ status: 'draft' });
+    res.json({ success: true, deletedCount: result.deletedCount || 0, message: 'Draft campaigns deleted.' });
+  } catch (error) {
+    console.error('Marketing Studio draft cleanup failed:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to delete draft campaigns.' });
+  }
+});
+
+router.delete('/campaigns/:id', async (req, res) => {
+  try {
+    const campaign = await MarketingCampaign.findById(req.params.id).select('_id status');
+    if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found.' });
+    if (campaign.status !== 'draft') return res.status(409).json({ success: false, message: 'Only draft campaigns can be deleted. Other campaign records are retained for audit.' });
+    await MarketingCampaign.deleteOne({ _id: campaign._id, status: 'draft' });
+    res.json({ success: true, message: 'Draft campaign deleted.' });
+  } catch (error) {
+    console.error('Marketing Studio draft deletion failed:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to delete this draft.' });
+  }
+});
+
+router.post('/campaigns/:id/assets', marketingUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'Choose an image or video to upload.' });
+    const campaign = await MarketingCampaign.findById(req.params.id);
+    if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found.' });
+    if (!['draft', 'rejected'].includes(campaign.status)) return res.status(409).json({ success: false, message: 'Media can only be added to a draft or a campaign returned for changes.' });
+    if (campaign.assets.length >= 10) return res.status(409).json({ success: false, message: 'A campaign can contain at most 10 media assets.' });
+    const isVideo = req.file.mimetype.startsWith('video/');
+    const uploaded = await uploadMarketingAsset(req.file.buffer, isVideo ? 'video' : 'image');
+    const asset = { kind: isVideo ? 'video' : 'image', url: uploaded.secure_url, publicId: uploaded.public_id, alt: safeText(req.body?.alt || req.file.originalname, 240), status: 'draft' };
+    campaign.assets.push(asset);
+    campaign.activity.push(activity('asset_uploaded', 'A campaign ' + asset.kind + ' was uploaded.', req.user._id));
+    await campaign.save();
+    res.status(201).json({ success: true, asset: campaign.assets[campaign.assets.length - 1], message: 'Media uploaded to campaign.' });
+  } catch (error) {
+    console.error('Marketing Studio media upload failed:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to upload campaign media.' });
+  }
+});
 
 router.post('/videos/script', videoScriptLimiter, async (req, res) => {
   try {
