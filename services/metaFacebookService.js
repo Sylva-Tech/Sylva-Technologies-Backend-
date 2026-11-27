@@ -92,11 +92,11 @@ async function graphRequest(path, params, accessToken, method = 'GET') {
     const response = await axios({
       method,
       url,
-      params: method === 'GET' ? values : undefined,
-      data: method === 'GET' ? undefined : new URLSearchParams(
+      params: method === 'GET' || method === 'DELETE' ? values : undefined,
+      data: method === 'POST' ? new URLSearchParams(
         Object.entries(values).map(([key, value]) => [key, String(value)])
-      ).toString(),
-      headers: method === 'GET' ? undefined : { 'Content-Type': 'application/x-www-form-urlencoded' },
+      ).toString() : undefined,
+      headers: method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : undefined,
       timeout: 30000,
       maxRedirects: 0,
     });
