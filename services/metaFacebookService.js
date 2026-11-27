@@ -135,6 +135,48 @@ async function exchangeCodeForUserToken(code) {
   return longLived?.access_token || shortLived.access_token;
 }
 
+async function getMetaUserIdentity(userToken) {
+  const response = await graphRequest('me', { fields: 'id,name' }, userToken);
+  if (!response?.id) throw new Error('Meta did not return the authorizing account ID.');
+  return { id: String(response.id), name: String(response.name || '') };
+}
+
+function verifyMetaSignedRequest(signedRequest) {
+  const appSecret = String(process.env.META_APP_SECRET || '').trim();
+  if (!appSecret) {
+    const error = new Error('Meta app secret is not configured.');
+    error.code = 'META_CONFIGURATION_MISSING';
+    throw error;
+  }
+  const parts = String(signedRequest || '').split('.');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    const error = new Error('Invalid Meta signed request.');
+    error.code = 'META_SIGNED_REQUEST_INVALID';
+    throw error;
+  }
+  const [encodedSignature, encodedPayload] = parts;
+  const expected = crypto.createHmac('sha256', appSecret).update(encodedPayload).digest();
+  const actual = Buffer.from(encodedSignature, 'base64url');
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+    const error = new Error('Meta signed request signature did not match.');
+    error.code = 'META_SIGNED_REQUEST_INVALID';
+    throw error;
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')); }
+  catch {
+    const error = new Error('Meta signed request payload is invalid.');
+    error.code = 'META_SIGNED_REQUEST_INVALID';
+    throw error;
+  }
+  if (payload.algorithm !== 'HMAC-SHA256' || !payload.user_id) {
+    const error = new Error('Meta signed request payload is missing the required user identifier.');
+    error.code = 'META_SIGNED_REQUEST_INVALID';
+    throw error;
+  }
+  return payload;
+}
+
 async function getGrantedPermissions(userToken) {
   const response = await graphRequest('me/permissions', {}, userToken);
   return new Set((response?.data || []).filter((item) => item.status === 'granted').map((item) => item.permission));
@@ -243,6 +285,8 @@ module.exports = {
   encryptPageToken,
   decryptPageToken,
   exchangeCodeForUserToken,
+  getMetaUserIdentity,
+  verifyMetaSignedRequest,
   getGrantedPermissions,
   getManagedPages,
   chooseSylvaPage,
