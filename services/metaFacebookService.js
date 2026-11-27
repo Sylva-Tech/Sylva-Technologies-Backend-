@@ -229,6 +229,11 @@ async function getPagePostStatus(connection, postId) {
   return graphRequest(String(postId), { fields: 'id,is_published,permalink_url,scheduled_publish_time' }, token);
 }
 
+async function deleteScheduledPagePost(connection, postId) {
+  const token = decryptPageToken(connection);
+  return graphRequest(String(postId), {}, token, 'DELETE');
+}
+
 module.exports = {
   REQUIRED_PERMISSIONS,
   TARGET_PAGE_NAME,
@@ -243,4 +248,5 @@ module.exports = {
   chooseSylvaPage,
   schedulePagePost,
   getPagePostStatus,
+  deleteScheduledPagePost,
 };
