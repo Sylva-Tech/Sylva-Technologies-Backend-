@@ -6,6 +6,7 @@ const {
   encryptPageToken,
   decryptPageToken,
   chooseSylvaPage,
+  verifyMetaSignedRequest,
 } = require('../services/metaFacebookService');
 
 test('Meta publishing requests only the minimum Page permissions', () => {
@@ -67,5 +68,22 @@ test('Page selection rejects accounts without content publishing task', () => {
       tasks: ['ANALYZE'],
     }]),
     { code: 'META_PAGE_TASK_MISSING' }
+  );
+});
+
+test('Meta data deletion callback verifies the signed request before trusting its user ID', () => {
+  const crypto = require('node:crypto');
+  process.env.META_APP_SECRET = 'test-meta-app-secret';
+  const encodedPayload = Buffer.from(JSON.stringify({
+    algorithm: 'HMAC-SHA256',
+    user_id: '987654321',
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', process.env.META_APP_SECRET)
+    .update(encodedPayload).digest('base64url');
+  const payload = verifyMetaSignedRequest(signature + '.' + encodedPayload);
+  assert.equal(payload.user_id, '987654321');
+  assert.throws(
+    () => verifyMetaSignedRequest(Buffer.from('wrong').toString('base64url') + '.' + encodedPayload),
+    { code: 'META_SIGNED_REQUEST_INVALID' }
   );
 });
