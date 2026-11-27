@@ -87,7 +87,7 @@ function buildAuthorizationUrl(state) {
 async function graphRequest(path, params, accessToken, method = 'GET') {
   const config = getMetaConfig();
   const url = `https://graph.facebook.com/${config.version}/${String(path).replace(/^\/+/, '')}`;
-  const values = { ...(params || {}), access_token: accessToken };
+  const values = Object.fromEntries(Object.entries({ ...(params || {}), access_token: accessToken }).filter(([, value]) => value !== undefined && value !== null));
   try {
     const response = await axios({
       method,
@@ -133,6 +133,11 @@ async function exchangeCodeForUserToken(code) {
     fb_exchange_token: shortLived.access_token,
   }, undefined, 'GET');
   return longLived?.access_token || shortLived.access_token;
+}
+
+async function getGrantedPermissions(userToken) {
+  const response = await graphRequest('me/permissions', {}, userToken);
+  return new Set((response?.data || []).filter((item) => item.status === 'granted').map((item) => item.permission));
 }
 
 async function getManagedPages(userToken) {
@@ -233,6 +238,7 @@ module.exports = {
   encryptPageToken,
   decryptPageToken,
   exchangeCodeForUserToken,
+  getGrantedPermissions,
   getManagedPages,
   chooseSylvaPage,
   schedulePagePost,
