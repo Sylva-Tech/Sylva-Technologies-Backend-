@@ -9,6 +9,7 @@ let running = false;
 function buildDueCampaignFilter(now = new Date()) {
   return {
     status: 'scheduled',
+    facebookScheduled: mongoose.trusted({ $ne: true }),
     scheduledAt: mongoose.trusted({ $lte: now }),
   };
 }
