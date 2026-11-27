@@ -6,7 +6,9 @@ const cloudinary = require('../config/cloudinary');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const MarketingCampaign = require('../models/MarketingCampaign');
 const Product = require('../models/Product');
+const MetaPageConnection = require('../models/MetaPageConnection');
 const { generateMarketingVideoScript } = require('../services/marketingVideoAI');
+const { schedulePagePost, getPagePostStatus, deleteScheduledPagePost } = require('../services/metaFacebookService');
 
 const router = express.Router();
 const campaignLimiter = rateLimit({
@@ -37,6 +39,40 @@ const uploadMarketingAsset = (buffer, resourceType) => new Promise((resolve, rej
 const videoScriptLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 8, standardHeaders: 'draft-8', legacyHeaders: false, message: { success: false, message: 'Too many video script requests. Please try again later.' } });
 const safeText = (value, max = 5000) => String(value || '').trim().slice(0, max);
 const activity = (action, note, actor) => ({ action, note: safeText(note, 500), actor, at: new Date() });
+
+async function syncDueFacebookPosts() {
+  const now = new Date();
+  const connection = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' })
+    .select('+pageTokenCiphertext +pageTokenIv +pageTokenAuthTag');
+  if (!connection) return;
+
+  const due = await MarketingCampaign.find({
+    status: 'scheduled',
+    scheduledAt: mongoose.trusted({ $lte: now }),
+  }).sort({ scheduledAt: 1 }).limit(50);
+
+  for (const campaign of due) {
+    const result = campaign.publishingResults.find((item) =>
+      item.platform === 'facebook' && item.status === 'pending' && item.externalId
+    );
+    if (!result) continue;
+    try {
+      const remote = await getPagePostStatus(connection, result.externalId);
+      if (remote?.is_published === true) {
+        result.status = 'published';
+        result.externalUrl = safeText(remote.permalink_url, 2000);
+        result.publishedAt = new Date();
+        result.message = 'Published on the official Sylva Technologies Facebook Page.';
+        campaign.status = 'published';
+        campaign.publishedAt = result.publishedAt;
+        campaign.activity.push(activity('facebook_published', 'Facebook confirmed that the scheduled Page post is live.', null));
+        await campaign.save();
+      }
+    } catch (error) {
+      console.warn('Facebook scheduled post status check failed:', error.code || error.metaCode || 'META_STATUS_CHECK_FAILED');
+    }
+  }
+}
 
 router.use(protect, adminOnly, campaignLimiter);
 router.use((req, res, next) => {
@@ -80,6 +116,7 @@ router.get('/products', async (req, res) => {
 
 router.get('/campaigns', async (req, res) => {
   try {
+    await syncDueFacebookPosts();
     const filter = {};
     const status = safeText(req.query.status, 40);
     if (status) filter.status = status;
@@ -201,6 +238,7 @@ router.post('/campaigns/:id/approve', async (req, res) => {
     campaign.status = 'approved';
     campaign.approvedAt = new Date();
     campaign.approvedBy = req.user._id;
+    campaign.assets.forEach((asset) => { asset.status = 'approved'; });
     campaign.activity.push(activity('approved', 'Campaign approved by an administrator.', req.user._id));
     await campaign.save();
     res.json({ success: true, campaign });
@@ -236,8 +274,50 @@ router.post('/campaigns/:id/schedule', async (req, res) => {
     }
     campaign.scheduledAt = scheduledAt;
     campaign.timezone = 'Africa/Nairobi';
+
+    if (campaign.platforms.includes('facebook')) {
+      const connection = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' })
+        .select('+pageTokenCiphertext +pageTokenIv +pageTokenAuthTag');
+      if (!connection) {
+        return res.status(409).json({ success: false, code: 'FACEBOOK_NOT_CONNECTED', message: 'Connect the official Sylva Technologies Facebook Page before scheduling this campaign.' });
+      }
+      let scheduledPost;
+      try {
+        scheduledPost = await schedulePagePost(connection, campaign);
+      } catch (error) {
+        console.error('Facebook Page scheduling failed:', error.code || error.metaCode || 'META_SCHEDULE_FAILED');
+        return res.status(502).json({
+          success: false,
+          code: error.code || 'META_SCHEDULE_FAILED',
+          message: error.message || 'Facebook could not schedule this post. No campaign schedule was saved.',
+        });
+      }
+      campaign.publishingResults = campaign.publishingResults.filter((item) => item.platform !== 'facebook');
+      campaign.publishingResults.push({
+        platform: 'facebook',
+        status: 'pending',
+        externalId: scheduledPost.externalId,
+        externalUrl: '',
+        message: 'Scheduled natively by Meta for the official Sylva Technologies Page.',
+      });
+      for (const platform of campaign.platforms.filter((item) => item !== 'facebook')) {
+        campaign.publishingResults = campaign.publishingResults.filter((item) => item.platform !== platform);
+        campaign.publishingResults.push({
+          platform,
+          status: 'skipped',
+          message: 'This platform is not connected to Sylva yet.',
+        });
+      }
+    }
+
     campaign.status = 'scheduled';
-    campaign.activity.push(activity('scheduled', 'Scheduled for ' + scheduledAt.toISOString() + ' (Africa/Nairobi).', req.user._id));
+    campaign.activity.push(activity(
+      'scheduled',
+      campaign.platforms.includes('facebook')
+        ? 'Meta accepted the Facebook Page post schedule for ' + scheduledAt.toISOString() + ' (Africa/Nairobi).'
+        : 'Scheduled for ' + scheduledAt.toISOString() + ' (Africa/Nairobi).',
+      req.user._id
+    ));
     await campaign.save();
     res.json({ success: true, campaign });
   } catch (error) {
@@ -250,6 +330,25 @@ router.post('/campaigns/:id/action', async (req, res) => {
     const campaign = await MarketingCampaign.findById(req.params.id);
     if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found.' });
     const action = safeText(req.body?.action, 30);
+    const pendingFacebookPost = campaign.publishingResults.find((item) =>
+      item.platform === 'facebook' && item.status === 'pending' && item.externalId
+    );
+    if (action === 'pause' && pendingFacebookPost) {
+      return res.status(409).json({ success: false, message: 'This Facebook post is scheduled directly with Meta and cannot be paused here. Cancel it, then create a new schedule when ready.' });
+    }
+    if (action === 'cancel' && pendingFacebookPost) {
+      const connection = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' })
+        .select('+pageTokenCiphertext +pageTokenIv +pageTokenAuthTag');
+      if (!connection) return res.status(409).json({ success: false, message: 'Reconnect Facebook before cancelling its scheduled post.' });
+      try {
+        await deleteScheduledPagePost(connection, pendingFacebookPost.externalId);
+        pendingFacebookPost.status = 'skipped';
+        pendingFacebookPost.message = 'Scheduled Facebook post cancelled in Meta.';
+      } catch (error) {
+        console.error('Facebook scheduled post cancellation failed:', error.code || error.metaCode || 'META_CANCEL_FAILED');
+        return res.status(502).json({ success: false, message: 'Meta could not confirm cancellation. The campaign was not cancelled; check the Page scheduled posts before retrying.' });
+      }
+    }
     if (action === 'pause' && campaign.status === 'scheduled') {
       campaign.status = 'paused';
       campaign.activity.push(activity('paused', 'Scheduled campaign paused.', req.user._id));
