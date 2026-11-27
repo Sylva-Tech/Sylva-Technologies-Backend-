@@ -46,6 +46,7 @@ const marketingCampaignSchema = new mongoose.Schema({
     index: true,
   },
   scheduledAt: { type: Date, default: null, index: true },
+  facebookScheduled: { type: Boolean, default: false, index: true },
   timezone: { type: String, enum: ['Africa/Nairobi'], default: 'Africa/Nairobi' },
   approvedAt: { type: Date, default: null },
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
