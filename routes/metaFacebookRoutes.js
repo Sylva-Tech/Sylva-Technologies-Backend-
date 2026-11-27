@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const User = require('../models/User');
 const MetaPageConnection = require('../models/MetaPageConnection');
+const MarketingCampaign = require('../models/MarketingCampaign');
 const {
   REQUIRED_PERMISSIONS,
   getMetaConfig,
@@ -15,6 +16,7 @@ const {
   getGrantedPermissions,
   getManagedPages,
   chooseSylvaPage,
+  deleteScheduledPagePost,
 } = require('../services/metaFacebookService');
 
 const router = express.Router();
@@ -88,7 +90,7 @@ router.get('/callback', oauthLimiter, async (req, res) => {
       return res.redirect(frontendResult('invalid_state'));
     }
 
-    const admin = await User.findOne({ _id: statePayload.sub, role: 'admin', accountDeleted: { $ne: true } }).select('_id').lean();
+    const admin = await User.findOne({ _id: statePayload.sub, role: 'admin', accountDeleted: false }).select('_id').lean();
     if (!admin) return res.redirect(frontendResult('admin_required'));
 
     const userToken = await exchangeCodeForUserToken(code);
@@ -132,15 +134,49 @@ router.get('/callback', oauthLimiter, async (req, res) => {
 
 router.post('/disconnect', protect, adminOnly, async (req, res) => {
   try {
+    const connection = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' })
+      .select('+pageTokenCiphertext +pageTokenIv +pageTokenAuthTag');
+    if (connection) {
+      const pending = await MarketingCampaign.find({
+        status: 'scheduled',
+        facebookScheduled: true,
+      }).limit(100);
+      for (const campaign of pending) {
+        const result = campaign.publishingResults.find((item) =>
+          item.platform === 'facebook' && item.status === 'pending' && item.externalId
+        );
+        if (!result) continue;
+        try {
+          await deleteScheduledPagePost(connection, result.externalId);
+        } catch (error) {
+          console.error('Facebook disconnect could not cancel a scheduled post:', error.code || error.metaCode || 'META_CANCEL_FAILED');
+          return res.status(409).json({
+            success: false,
+            message: 'Facebook could not confirm cancellation of every scheduled post. The connection was kept active; review the scheduled posts and cancel them before disconnecting.',
+          });
+        }
+        result.status = 'skipped';
+        result.message = 'Scheduled Facebook post cancelled during Page disconnect.';
+        campaign.status = 'cancelled';
+        campaign.facebookScheduled = false;
+        campaign.activity.push({
+          action: 'facebook_schedule_cancelled',
+          note: 'The scheduled Facebook post was cancelled before disconnecting the Page.',
+          actor: req.user._id,
+          at: new Date(),
+        });
+        await campaign.save();
+      }
+    }
     await MetaPageConnection.deleteOne({ key: 'sylva-facebook-page' });
     res.set('Cache-Control', 'no-store, private');
     res.json({
       success: true,
-      message: 'The Facebook Page token stored by Sylva has been deleted. You can also remove Sylva from Facebook Business Integrations to revoke its access at Meta.',
+      message: 'The Sylva Facebook Page connection and locally stored Page token have been deleted. Remove Sylva from Facebook Business Integrations as well if you want to revoke the app permission at Meta.',
       revokeUrl: 'https://www.facebook.com/settings?tab=business_tools',
     });
   } catch (error) {
-    console.error('Meta Facebook disconnect failed:', error.message);
+    console.error('Meta Facebook disconnect failed:', error.code || error.message);
     res.status(500).json({ success: false, message: 'Unable to disconnect Facebook.' });
   }
 });
