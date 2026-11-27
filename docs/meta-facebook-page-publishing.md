@@ -39,7 +39,7 @@ For safety, Facebook schedules are accepted only between 10 minutes and 75 days 
 
 ## Data deletion
 
-Meta's signed `signed_request` is verified using the Meta app secret. Sylva removes the matching Page connection and token, attempts to cancel pending Facebook schedules, and stores a confirmation code plus a SHA-256 hash of the Meta user ID (not the raw ID). The status endpoint returns the deletion confirmation.
+Meta's signed `signed_request` is verified using the Meta app secret. Sylva removes the matching Page connection and token, attempts to cancel pending Facebook schedules, and stores a confirmation code plus a keyed HMAC-SHA-256 hash of the Meta user ID (not the raw ID). The status endpoint returns the deletion confirmation.
 
 ## Test checklist (Meta development mode)
 
