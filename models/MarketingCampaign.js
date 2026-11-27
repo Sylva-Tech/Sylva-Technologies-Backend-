@@ -55,6 +55,7 @@ const marketingCampaignSchema = new mongoose.Schema({
     platform: { type: String, enum: ['facebook', 'instagram', 'tiktok', 'whatsapp'] },
     status: { type: String, enum: ['pending', 'published', 'failed', 'skipped'] },
     externalId: { type: String, default: '' },
+    externalUrl: { type: String, default: '', maxlength: 2000 },
     message: { type: String, default: '', maxlength: 500 },
     publishedAt: { type: Date, default: null },
   }],
