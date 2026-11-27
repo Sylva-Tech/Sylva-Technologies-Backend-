@@ -6,6 +6,7 @@ const { protect, adminOnly } = require('../middleware/authMiddleware');
 const User = require('../models/User');
 const MetaPageConnection = require('../models/MetaPageConnection');
 const MarketingCampaign = require('../models/MarketingCampaign');
+const MetaDataDeletionRequest = require('../models/MetaDataDeletionRequest');
 const {
   REQUIRED_PERMISSIONS,
   getMetaConfig,
@@ -13,6 +14,8 @@ const {
   buildAuthorizationUrl,
   encryptPageToken,
   exchangeCodeForUserToken,
+  getMetaUserIdentity,
+  verifyMetaSignedRequest,
   getGrantedPermissions,
   getManagedPages,
   chooseSylvaPage,
@@ -94,6 +97,7 @@ router.get('/callback', oauthLimiter, async (req, res) => {
     if (!admin) return res.redirect(frontendResult('admin_required'));
 
     const userToken = await exchangeCodeForUserToken(code);
+    const metaUser = await getMetaUserIdentity(userToken);
     const granted = await getGrantedPermissions(userToken);
     const missing = REQUIRED_PERMISSIONS.filter((permission) => !granted.has(permission));
     if (missing.length) {
@@ -111,6 +115,7 @@ router.get('/callback', oauthLimiter, async (req, res) => {
           key: 'sylva-facebook-page',
           pageId: String(page.id),
           pageName: String(page.name),
+          metaUserId: metaUser.id,
           ...encrypted,
           grantedPermissions: REQUIRED_PERMISSIONS,
           connectedBy: admin._id,
@@ -129,6 +134,88 @@ router.get('/callback', oauthLimiter, async (req, res) => {
       'META_PAGE_AMBIGUOUS', 'META_PAGE_NOT_FOUND', 'META_PAGE_TASK_MISSING', 'META_PAGE_TOKEN_MISSING', 'META_PERMISSIONS_MISSING',
     ]);
     return res.redirect(frontendResult(known.has(error.code) ? error.code.toLowerCase() : 'connection_failed'));
+  }
+});
+
+router.post('/data-deletion', oauthLimiter, async (req, res) => {
+  try {
+    const payload = verifyMetaSignedRequest(req.body?.signed_request);
+    const metaUserId = String(payload.user_id);
+    const connection = await MetaPageConnection.findOne({ metaUserId })
+      .select('+pageTokenCiphertext +pageTokenIv +pageTokenAuthTag');
+
+    if (connection) {
+      const pending = await MarketingCampaign.find({
+        status: 'scheduled',
+        facebookScheduled: true,
+      }).limit(100);
+      for (const campaign of pending) {
+        const result = campaign.publishingResults.find((item) =>
+          item.platform === 'facebook' && item.status === 'pending' && item.externalId
+        );
+        if (result) {
+          try {
+            await deleteScheduledPagePost(connection, result.externalId);
+            result.status = 'skipped';
+            result.message = 'Scheduled Facebook post cancelled following a Meta data deletion request.';
+          } catch (error) {
+            console.warn('Meta data deletion could not cancel a scheduled Page post:', error.code || error.metaCode || 'META_CANCEL_FAILED');
+            result.status = 'failed';
+            result.message = 'Meta data deletion was processed; verify this scheduled Page post directly in Meta Business Suite.';
+          }
+          campaign.status = 'cancelled';
+          campaign.facebookScheduled = false;
+          campaign.activity.push({
+            action: 'meta_data_deletion',
+            note: 'Facebook connection removed following a Meta data deletion request.',
+            at: new Date(),
+          });
+          await campaign.save();
+        }
+      }
+      await MetaPageConnection.deleteOne({ _id: connection._id });
+    }
+
+    const confirmationCode = crypto.randomBytes(24).toString('hex');
+    await MetaDataDeletionRequest.create({
+      confirmationCode,
+      metaUserIdHash: crypto.createHash('sha256').update(metaUserId).digest('hex'),
+      status: 'completed',
+      completedAt: new Date(),
+    });
+    const statusBase = String(
+      process.env.META_DATA_DELETION_STATUS_URL ||
+      'https://api.sylvatechnologies.co.ke/api/meta/facebook/data-deletion'
+    ).replace(/\/+$/, '');
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      url: statusBase + '/' + confirmationCode,
+      confirmation_code: confirmationCode,
+    });
+  } catch (error) {
+    console.error('Meta data deletion callback failed:', error.code || error.message);
+    return res.status(error.code === 'META_SIGNED_REQUEST_INVALID' ? 400 : 500)
+      .json({ success: false, message: 'Unable to verify or process this Meta data deletion request.' });
+  }
+});
+
+router.get('/data-deletion/:confirmationCode', async (req, res) => {
+  try {
+    const code = String(req.params.confirmationCode || '');
+    if (!/^[a-f0-9]{48}$/i.test(code)) return res.status(404).json({ success: false, message: 'Deletion request not found.' });
+    const record = await MetaDataDeletionRequest.findOne({ confirmationCode: code })
+      .select('confirmationCode status completedAt').lean();
+    if (!record) return res.status(404).json({ success: false, message: 'Deletion request not found.' });
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      confirmation_code: record.confirmationCode,
+      status: record.status,
+      completed_at: record.completedAt,
+      message: 'The Sylva Facebook connection data associated with this request has been deleted from Sylva systems.',
+    });
+  } catch (error) {
+    console.error('Meta data deletion status lookup failed:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to check deletion request status.' });
   }
 });
 
