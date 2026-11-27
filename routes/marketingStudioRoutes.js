@@ -274,6 +274,7 @@ router.post('/campaigns/:id/schedule', async (req, res) => {
     }
     campaign.scheduledAt = scheduledAt;
     campaign.timezone = 'Africa/Nairobi';
+    let scheduledFacebookPostId = '';
 
     if (campaign.platforms.includes('facebook')) {
       const connection = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' })
@@ -293,6 +294,7 @@ router.post('/campaigns/:id/schedule', async (req, res) => {
         });
       }
       campaign.publishingResults = campaign.publishingResults.filter((item) => item.platform !== 'facebook');
+      scheduledFacebookPostId = scheduledPost.externalId;
       campaign.publishingResults.push({
         platform: 'facebook',
         status: 'pending',
@@ -319,7 +321,20 @@ router.post('/campaigns/:id/schedule', async (req, res) => {
         : 'Scheduled for ' + scheduledAt.toISOString() + ' (Africa/Nairobi).',
       req.user._id
     ));
-    await campaign.save();
+    try {
+      await campaign.save();
+    } catch (saveError) {
+      if (scheduledFacebookPostId) {
+        try {
+          const connection = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' })
+            .select('+pageTokenCiphertext +pageTokenIv +pageTokenAuthTag');
+          if (connection) await deleteScheduledPagePost(connection, scheduledFacebookPostId);
+        } catch (rollbackError) {
+          console.error('Facebook schedule rollback failed after campaign save error:', rollbackError.code || rollbackError.metaCode || 'META_ROLLBACK_FAILED');
+        }
+      }
+      throw saveError;
+    }
     res.json({ success: true, campaign });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Unable to schedule campaign.' });
