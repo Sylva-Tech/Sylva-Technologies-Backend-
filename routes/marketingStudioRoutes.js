@@ -310,6 +310,7 @@ router.post('/campaigns/:id/schedule', async (req, res) => {
       }
     }
 
+    campaign.facebookScheduled = campaign.platforms.includes('facebook');
     campaign.status = 'scheduled';
     campaign.activity.push(activity(
       'scheduled',
