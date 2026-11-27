@@ -12,6 +12,7 @@ const {
   buildAuthorizationUrl,
   encryptPageToken,
   exchangeCodeForUserToken,
+  getGrantedPermissions,
   getManagedPages,
   chooseSylvaPage,
 } = require('../services/metaFacebookService');
@@ -91,6 +92,13 @@ router.get('/callback', oauthLimiter, async (req, res) => {
     if (!admin) return res.redirect(frontendResult('admin_required'));
 
     const userToken = await exchangeCodeForUserToken(code);
+    const granted = await getGrantedPermissions(userToken);
+    const missing = REQUIRED_PERMISSIONS.filter((permission) => !granted.has(permission));
+    if (missing.length) {
+      const error = new Error('Meta did not grant all required Page publishing permissions. Reconnect and approve the requested permissions.');
+      error.code = 'META_PERMISSIONS_MISSING';
+      throw error;
+    }
     const pages = await getManagedPages(userToken);
     const page = chooseSylvaPage(pages);
     const encrypted = encryptPageToken(page.access_token);
@@ -116,7 +124,7 @@ router.get('/callback', oauthLimiter, async (req, res) => {
     console.error('Meta Facebook OAuth callback failed:', error.code || error.message);
     const known = new Set([
       'META_CONFIGURATION_MISSING', 'META_CONFIGURATION_INVALID', 'META_ENCRYPTION_KEY_MISSING',
-      'META_PAGE_AMBIGUOUS', 'META_PAGE_NOT_FOUND', 'META_PAGE_TASK_MISSING', 'META_PAGE_TOKEN_MISSING',
+      'META_PAGE_AMBIGUOUS', 'META_PAGE_NOT_FOUND', 'META_PAGE_TASK_MISSING', 'META_PAGE_TOKEN_MISSING', 'META_PERMISSIONS_MISSING',
     ]);
     return res.redirect(frontendResult(known.has(error.code) ? error.code.toLowerCase() : 'connection_failed'));
   }
