@@ -148,7 +148,7 @@ router.post('/data-deletion', oauthLimiter, async (req, res) => {
       const pending = await MarketingCampaign.find({
         status: 'scheduled',
         facebookScheduled: true,
-      }).limit(100);
+      });
       for (const campaign of pending) {
         const result = campaign.publishingResults.find((item) =>
           item.platform === 'facebook' && item.status === 'pending' && item.externalId
@@ -179,7 +179,7 @@ router.post('/data-deletion', oauthLimiter, async (req, res) => {
     const confirmationCode = crypto.randomBytes(24).toString('hex');
     await MetaDataDeletionRequest.create({
       confirmationCode,
-      metaUserIdHash: crypto.createHash('sha256').update(metaUserId).digest('hex'),
+      metaUserIdHash: crypto.createHmac('sha256', process.env.META_APP_SECRET).update(metaUserId).digest('hex'),
       status: 'completed',
       completedAt: new Date(),
     });
@@ -227,7 +227,7 @@ router.post('/disconnect', protect, adminOnly, async (req, res) => {
       const pending = await MarketingCampaign.find({
         status: 'scheduled',
         facebookScheduled: true,
-      }).limit(100);
+      });
       for (const campaign of pending) {
         const result = campaign.publishingResults.find((item) =>
           item.platform === 'facebook' && item.status === 'pending' && item.externalId
