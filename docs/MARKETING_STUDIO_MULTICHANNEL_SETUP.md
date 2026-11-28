@@ -1,6 +1,8 @@
 # Sylva Marketing Studio — multichannel setup
 
-This feature branch adds the Marketing Studio channel-readiness endpoint and the first WhatsApp customer-inbox slice. It does **not** mean Instagram or TikTok are authorised or that all channels can publish.
+The main purpose of Sylva Marketing Studio is **customer reach**: prepare product campaigns once, adapt the message for each social platform, and distribute those campaigns across Sylva's official channels to help more customers discover products. The Studio must show each platform's real publishing status and must never report a post as published until the platform confirms it.
+
+The current branch reuses the existing Facebook Page OAuth connection to discover a linked Instagram Professional account. It also adds a controlled Instagram image-publishing action for approved campaigns. This is not the same as full Instagram Reels/Stories/DM support, and it requires the Instagram permissions and account link to be present.
 
 ## WhatsApp Cloud API
 
@@ -28,16 +30,25 @@ All inbox management endpoints require an authenticated Sylva administrator. Out
 
 ## Instagram
 
-Use the existing Meta app rather than creating another app by default. The Instagram account must be Professional and linked to the relevant Facebook Page. Configure the appropriate Instagram Graph API and Instagram messaging permissions, complete Meta app review/advanced access where required, and implement the account-specific OAuth and webhook subscriptions before enabling publishing or DMs. The readiness endpoint does not mark Instagram publishing as active.
+Use the existing Sylva Meta app and the official Sylva Technologies Facebook Page connection. The Instagram account must be Professional and linked to that Page. The Page OAuth flow requests optional `instagram_basic`, `instagram_content_publish`, `instagram_manage_messages`, and `pages_manage_metadata` permissions. Meta may require app review/advanced access before real customer accounts can use these permissions.
+
+When the linked Instagram account ID and `instagram_content_publish` permission are both present, the channel status reports `publishing_ready`. An administrator can publish an approved campaign using:
+
+`POST /api/marketing-studio/campaigns/:id/publish/instagram`
+
+The first publishing slice supports a single image post, using an approved campaign image or the product catalogue image. The image must be publicly reachable over HTTPS. It creates a media container and then publishes it through the Instagram Graph API; the returned Instagram media ID is stored in the campaign's publishing results. Reels, Stories, carousel publishing, scheduled Instagram delivery, and Instagram DMs/webhooks are not implemented yet. The admin must review the post and caption before approving and publishing.
+
+Instagram messaging additionally requires the appropriate messaging permission, Page messaging task, Meta webhook subscriptions, and business/app requirements. Do not treat account discovery or publishing permission as proof that DMs are enabled.
 
 ## TikTok
 
-Create/use a TikTok developer app and request the Content Posting API scopes required by the intended workflow. Complete TikTok app review and direct-posting approval. The creative editor can render a split-screen vertical product video and mix an audio file supplied by the administrator locally in the browser. The audio uploader does not grant music rights; use audio Sylva owns or is licensed to use. TikTok OAuth, upload/publish APIs, and posting status callbacks remain separate implementation work.
+Create/use a TikTok developer app and request the Content Posting API scopes required by the intended workflow. Complete TikTok app review and direct-posting approval. The creative editor can render a split-screen vertical product video and mix an audio file supplied by the administrator locally in the browser. The audio uploader does not grant music rights; use audio Sylva owns or is licensed to use. TikTok OAuth, upload/publish APIs, and posting status callbacks remain separate implementation work. TikTok's official Direct Post API requires a creator-info query and explicit consent; unaudited clients are restricted to private visibility until TikTok audits the app.
 
 ## Safety defaults
 
 - No paid advertising is launched.
-- No scheduled post is automatically sent to a new platform.
+- Facebook uses the existing native Page scheduling workflow. Instagram image publishing is an explicit administrator action after approval; it is not auto-scheduled.
+- TikTok direct publishing is not enabled until its app review and creator-consent flow are implemented.
 - No credentials or access tokens are returned by the channel-readiness endpoint.
 - Webhook processing is signature-verified.
 - WhatsApp free-form replies are limited to the active 24-hour customer-service window.
