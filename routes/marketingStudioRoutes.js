@@ -98,11 +98,11 @@ router.get('/overview', async (req, res) => {
 
 router.get('/channels', async (req, res) => {
   try {
-    const facebook = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' }).select('pageId pageName updatedAt').lean();
+    const facebook = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' }).select('pageId pageName updatedAt instagramBusinessAccountId instagramUsername grantedPermissions').lean();
     const configured = (keys) => keys.every((key) => String(process.env[key] || '').trim().length > 0);
     const channels = {
       facebook: { status: facebook ? 'connected' : 'not_connected', accountName: facebook?.pageName || 'Sylva Technologies', detail: facebook ? 'Official Page connection is saved.' : 'Connect the existing Meta Page integration.' },
-      instagram: { status: configured(['META_APP_ID', 'META_APP_SECRET', 'META_REDIRECT_URI']) ? 'setup_required' : 'not_configured', detail: 'Requires an Instagram Professional account linked to a Facebook Page and approved Instagram permissions.' },
+      instagram: { status: facebook?.instagramBusinessAccountId ? 'account_linked' : (facebook ? 'permission_required' : 'not_connected'), accountName: facebook?.instagramUsername ? '@' + facebook.instagramUsername : '', detail: facebook?.instagramBusinessAccountId ? 'Instagram Professional account detected on the connected Sylva Page. Publishing and messaging still require approved Meta permissions.' : 'Connect or refresh the official Meta Page and grant optional Instagram permissions for account discovery.' },
       whatsapp: {
         status: configured(['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_VERIFY_TOKEN']) ? 'api_connected' : (String(process.env.WHATSAPP_NUMBER || '').trim() ? 'optional_contact' : 'optional'),
         accountName: String(process.env.WHATSAPP_NUMBER || '').trim() ? 'Existing Sylva order contact' : 'Optional channel',
