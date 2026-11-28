@@ -342,6 +342,9 @@ router.post('/campaigns/:id/schedule', async (req, res) => {
     const campaign = await MarketingCampaign.findById(req.params.id);
     if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found.' });
     if (campaign.status !== 'approved') return res.status(409).json({ success: false, message: 'Approve the campaign before scheduling it.' });
+    if (!campaign.platforms.includes('facebook')) {
+      return res.status(409).json({ success: false, code: 'CHANNEL_SCHEDULING_UNAVAILABLE', message: 'Automatic scheduling is currently available for Facebook. Publish approved Instagram posts or Reels directly; other platform scheduling is still being completed.' });
+    }
     const scheduledAt = new Date(req.body?.scheduledAt);
     if (!req.body?.scheduledAt || Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) {
       return res.status(400).json({ success: false, message: 'Choose a valid future publishing date and time.' });
