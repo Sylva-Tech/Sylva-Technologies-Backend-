@@ -9,6 +9,8 @@ const metaPageConnectionSchema = new mongoose.Schema({
   pageTokenIv: { type: String, required: true, select: false },
   pageTokenAuthTag: { type: String, required: true, select: false },
   grantedPermissions: { type: [String], default: [] },
+  instagramBusinessAccountId: { type: String, default: '', trim: true, maxlength: 100 },
+  instagramUsername: { type: String, default: '', trim: true, maxlength: 100 },
   connectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   connectedAt: { type: Date, default: Date.now },
   lastVerifiedAt: { type: Date, default: Date.now },
