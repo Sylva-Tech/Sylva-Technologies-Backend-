@@ -8,7 +8,7 @@ const MarketingCampaign = require('../models/MarketingCampaign');
 const Product = require('../models/Product');
 const MetaPageConnection = require('../models/MetaPageConnection');
 const { generateMarketingVideoScript } = require('../services/marketingVideoAI');
-const { schedulePagePost, getPagePostStatus, deleteScheduledPagePost } = require('../services/metaFacebookService');
+const { schedulePagePost, publishInstagramImage, getPagePostStatus, deleteScheduledPagePost } = require('../services/metaFacebookService');
 
 const router = express.Router();
 const campaignLimiter = rateLimit({
@@ -112,7 +112,7 @@ router.get('/channels', async (req, res) => {
       },
       tiktok: { status: configured(['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET']) ? 'configured' : 'not_configured', detail: 'Requires TikTok developer app approval and Content Posting API scopes.' },
     };
-    res.json({ success: true, channels, capabilities: { inboundMessaging: configured(['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_VERIFY_TOKEN']), automatedReplies: false, publishing: { facebook: Boolean(facebook), instagram: false, whatsapp: false, tiktok: false } } });
+    res.json({ success: true, channels, capabilities: { inboundMessaging: configured(['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_VERIFY_TOKEN']), automatedReplies: false, publishing: { facebook: Boolean(facebook), instagram: Boolean(facebook?.instagramBusinessAccountId && facebook.grantedPermissions?.includes('instagram_content_publish')), whatsapp: false, tiktok: false } } });
   } catch (error) {
     console.error('Marketing Studio channel status failed:', error.message);
     res.status(500).json({ success: false, message: 'Unable to load channel connection status.' });
@@ -283,6 +283,53 @@ router.post('/campaigns/:id/reject', async (req, res) => {
     res.json({ success: true, campaign, message: 'Campaign returned for changes.' });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Unable to return campaign for changes.' });
+  }
+});
+
+
+router.post('/campaigns/:id/publish/instagram', async (req, res) => {
+  try {
+    const campaign = await MarketingCampaign.findById(req.params.id);
+    if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found.' });
+    if (!['approved', 'scheduled'].includes(campaign.status)) {
+      return res.status(409).json({ success: false, message: 'Approve this campaign before publishing it to Instagram.' });
+    }
+    if (!campaign.platforms.includes('instagram')) {
+      return res.status(422).json({ success: false, message: 'Instagram is not selected for this campaign.' });
+    }
+    const previous = campaign.publishingResults.find((item) => item.platform === 'instagram');
+    if (previous?.status === 'published') {
+      return res.status(409).json({ success: false, message: 'This campaign is already published to Instagram.', publishingResult: previous });
+    }
+    const connection = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' })
+      .select('+pageTokenCiphertext +pageTokenIv +pageTokenAuthTag');
+    if (!connection) return res.status(409).json({ success: false, code: 'META_PAGE_NOT_CONNECTED', message: 'Connect the official Sylva Facebook Page through Meta first.' });
+
+    const result = await publishInstagramImage(connection, campaign);
+    campaign.publishingResults = campaign.publishingResults.filter((item) => item.platform !== 'instagram');
+    campaign.publishingResults.push({
+      platform: 'instagram',
+      status: 'published',
+      externalId: result.externalId,
+      externalUrl: result.externalUrl,
+      publishedAt: new Date(),
+      message: 'Published to the linked Instagram Professional account.',
+    });
+    campaign.activity.push(activity('instagram_published', 'Product campaign published to Instagram to extend Sylva customer reach.', req.user._id));
+    if (campaign.platforms.length === 1) {
+      campaign.status = 'published';
+      campaign.publishedAt = new Date();
+    }
+    await campaign.save();
+    res.json({ success: true, campaign, publishingResult: result, message: 'Campaign published to Instagram.' });
+  } catch (error) {
+    console.error('Instagram campaign publishing failed:', error.code || error.metaCode || 'INSTAGRAM_PUBLISH_FAILED');
+    const known = new Set(['INSTAGRAM_ACCOUNT_NOT_LINKED', 'INSTAGRAM_PERMISSION_MISSING', 'INSTAGRAM_IMAGE_REQUIRED']);
+    res.status(error.code === 'INSTAGRAM_PERMISSION_MISSING' || error.code === 'INSTAGRAM_ACCOUNT_NOT_LINKED' ? 409 : 502).json({
+      success: false,
+      code: error.code || 'INSTAGRAM_PUBLISH_FAILED',
+      message: known.has(error.code) ? error.message : 'Instagram could not confirm publication. Check the Instagram account before retrying.',
+    });
   }
 });
 
