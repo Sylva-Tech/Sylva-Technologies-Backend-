@@ -7,8 +7,9 @@ const { protect, adminOnly } = require('../middleware/authMiddleware');
 const MarketingCampaign = require('../models/MarketingCampaign');
 const Product = require('../models/Product');
 const MetaPageConnection = require('../models/MetaPageConnection');
+const TikTokConnection = require('../models/TikTokConnection');
 const { generateMarketingVideoScript } = require('../services/marketingVideoAI');
-const { schedulePagePost, getPagePostStatus, deleteScheduledPagePost } = require('../services/metaFacebookService');
+const { schedulePagePost, publishInstagramMedia, getPagePostStatus, deleteScheduledPagePost } = require('../services/metaFacebookService');
 
 const router = express.Router();
 const campaignLimiter = rateLimit({
@@ -93,6 +94,32 @@ router.get('/overview', async (req, res) => {
   } catch (error) {
     console.error('Marketing Studio overview failed:', error.message);
     res.status(500).json({ success: false, message: 'Unable to load Marketing Studio overview.' });
+  }
+});
+
+router.get('/channels', async (req, res) => {
+  try {
+    const [facebook, tiktok] = await Promise.all([
+      MetaPageConnection.findOne({ key: 'sylva-facebook-page' }).select('pageId pageName updatedAt instagramBusinessAccountId instagramUsername grantedPermissions').lean(),
+      TikTokConnection.findOne({ key: 'sylva-tiktok-account' }).select('displayName grantedScopes accessTokenExpiresAt refreshTokenExpiresAt').lean(),
+    ]);
+    const configured = (keys) => keys.every((key) => String(process.env[key] || '').trim().length > 0);
+    const channels = {
+      facebook: { status: facebook ? 'connected' : 'not_connected', accountName: facebook?.pageName || 'Sylva Technologies', detail: facebook ? 'Official Page connection is saved.' : 'Connect the existing Meta Page integration.' },
+      instagram: { status: facebook?.instagramBusinessAccountId && facebook.grantedPermissions?.includes('instagram_basic') && facebook.grantedPermissions?.includes('instagram_content_publish') ? 'publishing_ready' : (facebook?.instagramBusinessAccountId ? 'account_linked' : (facebook ? 'permission_required' : 'not_connected')), accountName: facebook?.instagramUsername ? '@' + facebook.instagramUsername : '', detail: facebook?.instagramBusinessAccountId ? 'Instagram Professional account detected on the connected Sylva Page. Publishing and messaging still require approved Meta permissions.' : 'Connect or refresh the official Meta Page and grant optional Instagram permissions for account discovery.' },
+      whatsapp: {
+        status: configured(['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_VERIFY_TOKEN']) ? 'api_connected' : (String(process.env.WHATSAPP_NUMBER || '').trim() ? 'optional_contact' : 'optional'),
+        accountName: String(process.env.WHATSAPP_NUMBER || '').trim() ? 'Existing Sylva order contact' : 'Optional channel',
+        detail: configured(['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_VERIFY_TOKEN'])
+          ? 'WhatsApp Cloud API is configured for the shared customer inbox.'
+          : 'Optional: keep using the existing WhatsApp order contact. No second account or Marketing Studio connection is required.',
+      },
+      tiktok: { status: tiktok ? (tiktok.grantedScopes?.includes('video.publish') && tiktok.accessTokenExpiresAt > new Date() ? 'account_connected' : 'permission_or_token_check') : (configured(['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET', 'TIKTOK_REDIRECT_URI', 'TIKTOK_TOKEN_ENCRYPTION_KEY']) ? 'ready_to_connect' : 'not_configured'), accountName: tiktok?.displayName || '', detail: tiktok ? 'TikTok account connected. Direct publishing remains disabled until the creator-consent workflow and app audit are completed.' : 'Connect Sylva TikTok using the registered Login Kit app. Direct publishing still requires Content Posting API approval and audit.' },
+    };
+    res.json({ success: true, channels, capabilities: { inboundMessaging: configured(['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_VERIFY_TOKEN']), automatedReplies: false, publishing: { facebook: Boolean(facebook), instagram: Boolean(facebook?.instagramBusinessAccountId && facebook.grantedPermissions?.includes('instagram_content_publish')), whatsapp: false, tiktok: false } } });
+  } catch (error) {
+    console.error('Marketing Studio channel status failed:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to load channel connection status.' });
   }
 });
 
@@ -263,11 +290,61 @@ router.post('/campaigns/:id/reject', async (req, res) => {
   }
 });
 
+
+router.post('/campaigns/:id/publish/instagram', async (req, res) => {
+  try {
+    const campaign = await MarketingCampaign.findById(req.params.id);
+    if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found.' });
+    if (!['approved', 'scheduled'].includes(campaign.status)) {
+      return res.status(409).json({ success: false, message: 'Approve this campaign before publishing it to Instagram.' });
+    }
+    if (!campaign.platforms.includes('instagram')) {
+      return res.status(422).json({ success: false, message: 'Instagram is not selected for this campaign.' });
+    }
+    const previous = campaign.publishingResults.find((item) => item.platform === 'instagram');
+    if (previous?.status === 'published') {
+      return res.status(409).json({ success: false, message: 'This campaign is already published to Instagram.', publishingResult: previous });
+    }
+    const connection = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' })
+      .select('+pageTokenCiphertext +pageTokenIv +pageTokenAuthTag');
+    if (!connection) return res.status(409).json({ success: false, code: 'META_PAGE_NOT_CONNECTED', message: 'Connect the official Sylva Facebook Page through Meta first.' });
+
+    const result = await publishInstagramMedia(connection, campaign);
+    campaign.publishingResults = campaign.publishingResults.filter((item) => item.platform !== 'instagram');
+    campaign.publishingResults.push({
+      platform: 'instagram',
+      status: 'published',
+      externalId: result.externalId,
+      externalUrl: result.externalUrl,
+      publishedAt: new Date(),
+      message: 'Published to the linked Instagram Professional account.',
+    });
+    campaign.activity.push(activity('instagram_published', 'Product campaign published to Instagram to extend Sylva customer reach.', req.user._id));
+    if (campaign.platforms.length === 1) {
+      campaign.status = 'published';
+      campaign.publishedAt = new Date();
+    }
+    await campaign.save();
+    res.json({ success: true, campaign, publishingResult: result, message: 'Campaign published to Instagram.' });
+  } catch (error) {
+    console.error('Instagram campaign publishing failed:', error.code || error.metaCode || 'INSTAGRAM_PUBLISH_FAILED');
+    const known = new Set(['INSTAGRAM_ACCOUNT_NOT_LINKED', 'INSTAGRAM_PERMISSION_MISSING', 'INSTAGRAM_MEDIA_REQUIRED']);
+    res.status(error.code === 'INSTAGRAM_PERMISSION_MISSING' || error.code === 'INSTAGRAM_ACCOUNT_NOT_LINKED' ? 409 : 502).json({
+      success: false,
+      code: error.code || 'INSTAGRAM_PUBLISH_FAILED',
+      message: known.has(error.code) ? error.message : 'Instagram could not confirm publication. Check the Instagram account before retrying.',
+    });
+  }
+});
+
 router.post('/campaigns/:id/schedule', async (req, res) => {
   try {
     const campaign = await MarketingCampaign.findById(req.params.id);
     if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found.' });
     if (campaign.status !== 'approved') return res.status(409).json({ success: false, message: 'Approve the campaign before scheduling it.' });
+    if (!campaign.platforms.includes('facebook')) {
+      return res.status(409).json({ success: false, code: 'CHANNEL_SCHEDULING_UNAVAILABLE', message: 'Automatic scheduling is currently available for Facebook. Publish approved Instagram posts or Reels directly; other platform scheduling is still being completed.' });
+    }
     const scheduledAt = new Date(req.body?.scheduledAt);
     if (!req.body?.scheduledAt || Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) {
       return res.status(400).json({ success: false, message: 'Choose a valid future publishing date and time.' });
@@ -303,11 +380,15 @@ router.post('/campaigns/:id/schedule', async (req, res) => {
         message: 'Scheduled natively by Meta for the official Sylva Technologies Page.',
       });
       for (const platform of campaign.platforms.filter((item) => item !== 'facebook')) {
+        const existingResult = campaign.publishingResults.find((item) => item.platform === platform);
+        if (existingResult?.status === 'published') continue;
         campaign.publishingResults = campaign.publishingResults.filter((item) => item.platform !== platform);
         campaign.publishingResults.push({
           platform,
           status: 'skipped',
-          message: 'This platform is not connected to Sylva yet.',
+          message: platform === 'instagram'
+            ? 'Instagram publishing is available separately after approval and account permission checks.'
+            : 'This platform is not connected for direct publishing yet.',
         });
       }
     }
@@ -456,7 +537,7 @@ router.delete('/campaigns/:id', async (req, res) => {
     if (campaign.status === 'published' && !externalFacebookPost) {
       return res.status(409).json({
         success: false,
-        message: 'This campaign is marked as published but has no Facebook post ID to remove. The record was kept so no live post is accidentally orphaned.',
+        message: 'This campaign is marked as published but has no removable Facebook Page post ID. The record was kept so live posts on other platforms are not accidentally orphaned.',
       });
     }
     if (nonFacebookLiveResult) {

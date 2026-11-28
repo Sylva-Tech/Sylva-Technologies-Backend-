@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const axios = require('axios');
 
 const REQUIRED_PERMISSIONS = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'];
+const OPTIONAL_PERMISSIONS = ['instagram_basic', 'instagram_content_publish', 'instagram_manage_messages', 'pages_manage_metadata'];
 const TARGET_PAGE_NAME = 'Sylva Technologies';
 const TARGET_PAGE_ID = '1436924676168084';
 
@@ -81,7 +82,7 @@ function buildAuthorizationUrl(state) {
   url.searchParams.set('redirect_uri', config.redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('state', state);
-  url.searchParams.set('scope', REQUIRED_PERMISSIONS.join(','));
+  url.searchParams.set('scope', [...REQUIRED_PERMISSIONS, ...OPTIONAL_PERMISSIONS].join(','));
   return url.toString();
 }
 
@@ -184,26 +185,41 @@ async function getGrantedPermissions(userToken) {
 }
 
 async function getManagedPages(userToken) {
+  // Keep core Facebook Page discovery independent from optional Instagram scopes.
   const response = await graphRequest('me/accounts', {
     fields: 'id,name,access_token,tasks',
     limit: 100,
   }, userToken);
   const pages = Array.isArray(response?.data) ? response.data : [];
-  if (pages.some((page) => String(page.id) === TARGET_PAGE_ID)) return pages;
+  let target = pages.find((page) => String(page.id) === TARGET_PAGE_ID);
 
-  // Some New Pages Experience accounts have full Page access but Meta returns
-  // an empty /me/accounts collection. Resolve only Sylva's known official Page
-  // directly, then verify publishing capability with the returned Page token.
-  const page = await graphRequest(TARGET_PAGE_ID, {
-    fields: 'id,name,access_token',
-  }, userToken);
-  if (String(page?.id || '') !== TARGET_PAGE_ID ||
-      String(page?.name || '').trim().toLowerCase() !== TARGET_PAGE_NAME.toLowerCase() ||
-      !page?.access_token) {
-    return pages;
+  if (!target) {
+    // Some New Pages Experience accounts have full Page access but Meta returns
+    // an empty /me/accounts collection. Resolve only Sylva's known official Page.
+    const page = await graphRequest(TARGET_PAGE_ID, {
+      fields: 'id,name,access_token',
+    }, userToken);
+    if (String(page?.id || '') === TARGET_PAGE_ID &&
+        String(page?.name || '').trim().toLowerCase() === TARGET_PAGE_NAME.toLowerCase() &&
+        page?.access_token) {
+      const capability = await graphRequest(TARGET_PAGE_ID, { fields: 'can_post' }, page.access_token);
+      target = { ...page, can_post: capability?.can_post === true };
+      pages.push(target);
+    }
   }
-  const capability = await graphRequest(TARGET_PAGE_ID, { fields: 'can_post' }, page.access_token);
-  return [...pages, { ...page, can_post: capability?.can_post === true }];
+
+  if (target) {
+    try {
+      const instagram = await graphRequest(TARGET_PAGE_ID, {
+        fields: 'instagram_business_account{id,username}',
+      }, userToken);
+      target.instagram_business_account = instagram?.instagram_business_account || null;
+    } catch (error) {
+      // An optional Instagram permission/account must never prevent Facebook Page connection.
+      console.warn('Optional Instagram account discovery was unavailable:', error.code || error.metaCode || 'INSTAGRAM_DISCOVERY_UNAVAILABLE');
+    }
+  }
+  return pages;
 }
 
 function chooseSylvaPage(pages) {
@@ -290,6 +306,89 @@ async function schedulePagePost(connection, campaign) {
   return { externalId: String(externalId), mediaId: response?.id ? String(response.id) : '', scheduledAt };
 }
 
+
+
+async function publishInstagramMedia(connection, campaign) {
+  const instagramId = String(connection.instagramBusinessAccountId || '').trim();
+  if (!instagramId) {
+    const error = new Error('No Instagram Professional account is linked to the Sylva Facebook Page. Connect the account and refresh permissions.');
+    error.code = 'INSTAGRAM_ACCOUNT_NOT_LINKED';
+    throw error;
+  }
+  const granted = new Set(Array.isArray(connection.grantedPermissions) ? connection.grantedPermissions : []);
+  if (!granted.has('instagram_basic') || !granted.has('instagram_content_publish')) {
+    const error = new Error('Meta has not granted the Instagram account and publishing permissions. Reconnect and approve instagram_basic and instagram_content_publish.');
+    error.code = 'INSTAGRAM_PERMISSION_MISSING';
+    throw error;
+  }
+
+  const asset = Array.isArray(campaign.assets)
+    ? campaign.assets.find((item) => item.status === 'approved' && ['image', 'poster', 'video'].includes(item.kind) && item.url)
+    : null;
+  const mediaUrl = String(asset?.url || campaign.product?.image || '').trim();
+  if (!mediaUrl || !/^https:\/\//i.test(mediaUrl)) {
+    const error = new Error('Instagram publishing requires an approved public HTTPS image or video. Upload and approve a campaign asset first.');
+    error.code = 'INSTAGRAM_MEDIA_REQUIRED';
+    throw error;
+  }
+  const isVideo = asset?.kind === 'video';
+  const platformContent = campaign.content?.instagram || {};
+  const caption = [
+    platformContent.caption || campaign.content?.body || campaign.content?.headline || campaign.name,
+    ...(Array.isArray(platformContent.hashtags) ? platformContent.hashtags : []),
+    platformContent.callToAction || '',
+    campaign.product?.productUrl || '',
+  ].filter(Boolean).join('\n\n').slice(0, 2200);
+  const token = decryptPageToken(connection);
+  const containerParams = isVideo
+    ? { media_type: 'REELS', video_url: mediaUrl, caption, share_to_feed: true }
+    : { image_url: mediaUrl, caption };
+  const container = await graphRequest(`${instagramId}/media`, containerParams, token, 'POST');
+  if (!container?.id) {
+    const error = new Error('Meta did not return an Instagram media container ID.');
+    error.code = 'INSTAGRAM_CONTAINER_FAILED';
+    throw error;
+  }
+
+  if (isVideo) {
+    let ready = false;
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      const status = await graphRequest(String(container.id), { fields: 'status_code,status' }, token);
+      const code = String(status?.status_code || '').toUpperCase();
+      if (code === 'FINISHED') { ready = true; break; }
+      if (code === 'ERROR' || code === 'EXPIRED') {
+        const error = new Error('Instagram could not process the Reel video. Check the video format and try again.');
+        error.code = 'INSTAGRAM_VIDEO_PROCESSING_FAILED';
+        throw error;
+      }
+    }
+    if (!ready) {
+      const error = new Error('Instagram is still processing the Reel. Check the account before retrying to avoid duplicate posts.');
+      error.code = 'INSTAGRAM_VIDEO_PROCESSING_PENDING';
+      throw error;
+    }
+  }
+
+  const published = await graphRequest(`${instagramId}/media_publish`, {
+    creation_id: String(container.id),
+  }, token, 'POST');
+  if (!published?.id) {
+    const error = new Error('Meta did not confirm the Instagram publication. Check Instagram before retrying.');
+    error.code = 'INSTAGRAM_PUBLISH_UNCONFIRMED';
+    throw error;
+  }
+
+  let permalink = '';
+  try {
+    const media = await graphRequest(String(published.id), { fields: 'id,permalink,media_type,timestamp' }, token);
+    permalink = String(media?.permalink || '');
+  } catch (error) {
+    console.warn('Instagram permalink lookup failed after confirmed publish:', error.code || error.metaCode || 'INSTAGRAM_MEDIA_LOOKUP_FAILED');
+  }
+  return { externalId: String(published.id), externalUrl: permalink, mediaType: isVideo ? 'REELS' : 'IMAGE' };
+}
+
 async function getPagePostStatus(connection, postId) {
   const token = decryptPageToken(connection);
   return graphRequest(String(postId), { fields: 'id,is_published,permalink_url,scheduled_publish_time' }, token);
@@ -302,6 +401,7 @@ async function deleteScheduledPagePost(connection, postId) {
 
 module.exports = {
   REQUIRED_PERMISSIONS,
+  OPTIONAL_PERMISSIONS,
   TARGET_PAGE_NAME,
   getMetaConfig,
   createOAuthStateSecret,
@@ -315,6 +415,7 @@ module.exports = {
   getManagedPages,
   chooseSylvaPage,
   schedulePagePost,
+  publishInstagramMedia,
   getPagePostStatus,
   deleteScheduledPagePost,
 };
