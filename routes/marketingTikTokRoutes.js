@@ -12,6 +12,7 @@ const {
   encryptTokens,
   exchangeCode,
   getUserProfile,
+  refreshTokens,
 } = require('../services/tiktokMarketingService');
 
 const router = express.Router();
@@ -107,8 +108,28 @@ router.get('/connect-url', oauthLimiter, async (req, res) => {
 
 router.get('/status', async (req, res) => {
   try {
-    const connection = await TikTokConnection.findOne({ key: 'sylva-tiktok-account' })
-      .select('displayName avatarUrl grantedScopes accessTokenExpiresAt refreshTokenExpiresAt connectedAt').lean();
+    let connection = await TikTokConnection.findOne({ key: 'sylva-tiktok-account' })
+      .select('+accessTokenCiphertext +accessTokenIv +accessTokenAuthTag +refreshTokenCiphertext +refreshTokenIv +refreshTokenAuthTag');
+    if (connection && connection.accessTokenExpiresAt <= new Date(Date.now() + 5 * 60 * 1000) &&
+        connection.refreshTokenExpiresAt > new Date()) {
+      try {
+        const refreshed = await refreshTokens(connection);
+        const encrypted = encryptTokens(refreshed);
+        connection.accessTokenCiphertext = encrypted.accessToken.Ciphertext;
+        connection.accessTokenIv = encrypted.accessToken.Iv;
+        connection.accessTokenAuthTag = encrypted.accessToken.AuthTag;
+        connection.refreshTokenCiphertext = encrypted.refreshToken.Ciphertext;
+        connection.refreshTokenIv = encrypted.refreshToken.Iv;
+        connection.refreshTokenAuthTag = encrypted.refreshToken.AuthTag;
+        connection.accessTokenExpiresAt = new Date(Date.now() + Math.max(0, Number(refreshed.expires_in) || 0) * 1000);
+        connection.refreshTokenExpiresAt = new Date(Date.now() + Math.max(0, Number(refreshed.refresh_expires_in) || 0) * 1000);
+        connection.lastRefreshedAt = new Date();
+        if (refreshed.scope) connection.grantedScopes = String(refreshed.scope).split(',').map((scope) => scope.trim()).filter(Boolean);
+        await connection.save();
+      } catch (refreshError) {
+        console.warn('TikTok access-token refresh failed:', refreshError.code || refreshError.message);
+      }
+    }
     const connected = Boolean(connection);
     const publishScopeGranted = Boolean(connection?.grantedScopes?.includes('video.publish'));
     const accessTokenValid = Boolean(connection?.accessTokenExpiresAt && new Date(connection.accessTokenExpiresAt) > new Date());
