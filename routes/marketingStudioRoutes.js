@@ -168,10 +168,21 @@ router.post('/campaigns', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Choose at least one supported platform.' });
     }
 
+    const campaignType = req.body?.campaignType === 'page' ? 'page' : 'product';
     let productSnapshot = {};
+    let destination = { label: '', url: '' };
     const productId = req.body?.productId;
-    if (!productId) return res.status(400).json({ success: false, message: 'Select a catalogue product for this campaign.' });
-    if (productId) {
+    if (campaignType === 'product' && !productId) return res.status(400).json({ success: false, message: 'Select a catalogue product for this campaign.' });
+    if (campaignType === 'page') {
+      const rawUrl = safeText(req.body?.destination?.url, 500);
+      let parsed;
+      try { parsed = new URL(rawUrl || 'https://www.sylvatechnologies.co.ke/'); } catch { return res.status(400).json({ success: false, message: 'Enter a valid Sylva website destination URL.' }); }
+      if (parsed.protocol !== 'https:' || !['sylvatechnologies.co.ke', 'www.sylvatechnologies.co.ke'].includes(parsed.hostname)) {
+        return res.status(400).json({ success: false, message: 'Page promotion links must point to the official Sylva Technologies website.' });
+      }
+      destination = { label: safeText(req.body?.destination?.label || 'Sylva website page', 100), url: parsed.toString() };
+    }
+    if (campaignType === 'product' && productId) {
       if (!mongoose.isValidObjectId(productId)) return res.status(400).json({ success: false, message: 'Invalid product selected.' });
       const product = await Product.findOne({ _id: productId, isActive: true, approvalStatus: 'approved', stock: mongoose.trusted({ $gt: 0 }) })
         .select('name sku price stock images slug').lean();
@@ -199,7 +210,9 @@ router.post('/campaigns', async (req, res) => {
 
     const campaign = await MarketingCampaign.create({
       name,
-      objective: ['product_awareness', 'sales', 'promotion', 'engagement'].includes(req.body?.objective) ? req.body.objective : 'sales',
+      campaignType,
+      destination,
+      objective: ['product_awareness', 'sales', 'promotion', 'engagement', 'seller_acquisition', 'traffic'].includes(req.body?.objective) ? req.body.objective : (campaignType === 'page' ? 'seller_acquisition' : 'sales'),
       product: productSnapshot,
       platforms,
       content,
@@ -586,7 +599,8 @@ router.post('/campaigns/:id/assets', marketingUpload.single('file'), async (req,
     if (campaign.assets.length >= 10) return res.status(409).json({ success: false, message: 'A campaign can contain at most 10 media assets.' });
     const isVideo = req.file.mimetype.startsWith('video/');
     const uploaded = await uploadMarketingAsset(req.file.buffer, isVideo ? 'video' : 'image');
-    const asset = { kind: isVideo ? 'video' : 'image', url: uploaded.secure_url, publicId: uploaded.public_id, alt: safeText(req.body?.alt || req.file.originalname, 240), status: 'draft' };
+    const requestedKind = safeText(req.body?.kind, 20);
+    const asset = { kind: isVideo ? 'video' : (requestedKind === 'poster' ? 'poster' : 'image'), url: uploaded.secure_url, publicId: uploaded.public_id, alt: safeText(req.body?.alt || req.file.originalname, 240), status: 'draft' };
     campaign.assets.push(asset);
     campaign.activity.push(activity('asset_uploaded', 'A campaign ' + asset.kind + ' was uploaded.', req.user._id));
     await campaign.save();
