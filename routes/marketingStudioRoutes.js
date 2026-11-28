@@ -8,7 +8,7 @@ const MarketingCampaign = require('../models/MarketingCampaign');
 const Product = require('../models/Product');
 const MetaPageConnection = require('../models/MetaPageConnection');
 const { generateMarketingVideoScript } = require('../services/marketingVideoAI');
-const { schedulePagePost, publishInstagramImage, getPagePostStatus, deleteScheduledPagePost } = require('../services/metaFacebookService');
+const { schedulePagePost, publishInstagramMedia, getPagePostStatus, deleteScheduledPagePost } = require('../services/metaFacebookService');
 
 const router = express.Router();
 const campaignLimiter = rateLimit({
@@ -305,7 +305,7 @@ router.post('/campaigns/:id/publish/instagram', async (req, res) => {
       .select('+pageTokenCiphertext +pageTokenIv +pageTokenAuthTag');
     if (!connection) return res.status(409).json({ success: false, code: 'META_PAGE_NOT_CONNECTED', message: 'Connect the official Sylva Facebook Page through Meta first.' });
 
-    const result = await publishInstagramImage(connection, campaign);
+    const result = await publishInstagramMedia(connection, campaign);
     campaign.publishingResults = campaign.publishingResults.filter((item) => item.platform !== 'instagram');
     campaign.publishingResults.push({
       platform: 'instagram',
@@ -324,7 +324,7 @@ router.post('/campaigns/:id/publish/instagram', async (req, res) => {
     res.json({ success: true, campaign, publishingResult: result, message: 'Campaign published to Instagram.' });
   } catch (error) {
     console.error('Instagram campaign publishing failed:', error.code || error.metaCode || 'INSTAGRAM_PUBLISH_FAILED');
-    const known = new Set(['INSTAGRAM_ACCOUNT_NOT_LINKED', 'INSTAGRAM_PERMISSION_MISSING', 'INSTAGRAM_IMAGE_REQUIRED']);
+    const known = new Set(['INSTAGRAM_ACCOUNT_NOT_LINKED', 'INSTAGRAM_PERMISSION_MISSING', 'INSTAGRAM_MEDIA_REQUIRED']);
     res.status(error.code === 'INSTAGRAM_PERMISSION_MISSING' || error.code === 'INSTAGRAM_ACCOUNT_NOT_LINKED' ? 409 : 502).json({
       success: false,
       code: error.code || 'INSTAGRAM_PUBLISH_FAILED',
