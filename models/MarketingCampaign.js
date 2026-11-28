@@ -8,7 +8,12 @@ const platformContentSchema = new mongoose.Schema({
 
 const marketingCampaignSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true, maxlength: 120 },
-  objective: { type: String, enum: ['product_awareness', 'sales', 'promotion', 'engagement'], default: 'sales' },
+  campaignType: { type: String, enum: ['product', 'page'], default: 'product', index: true },
+  destination: {
+    label: { type: String, default: '', maxlength: 100 },
+    url: { type: String, default: '', maxlength: 500 },
+  },
+  objective: { type: String, enum: ['product_awareness', 'sales', 'promotion', 'engagement', 'seller_acquisition', 'traffic'], default: 'sales' },
   product: {
     productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', default: null },
     name: { type: String, default: '' },

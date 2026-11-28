@@ -265,7 +265,7 @@ async function schedulePagePost(connection, campaign) {
     platformContent.caption || campaign.content?.body || campaign.content?.headline || campaign.name,
     ...(Array.isArray(platformContent.hashtags) ? platformContent.hashtags : []),
     platformContent.callToAction || '',
-    (asset || campaign.product?.image) && campaign.product?.productUrl ? campaign.product.productUrl : '',
+    (asset || campaign.product?.image) && campaign.product?.productUrl ? campaign.product.productUrl : (campaign.destination?.url || ''),
   ].filter(Boolean);
   const message = captionParts.join('\n\n').slice(0, 5000);
   let path = `${connection.pageId}/feed`;
@@ -337,7 +337,7 @@ async function publishInstagramMedia(connection, campaign) {
     platformContent.caption || campaign.content?.body || campaign.content?.headline || campaign.name,
     ...(Array.isArray(platformContent.hashtags) ? platformContent.hashtags : []),
     platformContent.callToAction || '',
-    campaign.product?.productUrl || '',
+    campaign.product?.productUrl || campaign.destination?.url || '',
   ].filter(Boolean).join('\n\n').slice(0, 2200);
   const token = decryptPageToken(connection);
   const containerParams = isVideo
