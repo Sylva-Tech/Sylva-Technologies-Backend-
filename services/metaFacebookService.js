@@ -3,6 +3,7 @@ const axios = require('axios');
 
 const REQUIRED_PERMISSIONS = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'];
 const TARGET_PAGE_NAME = 'Sylva Technologies';
+const TARGET_PAGE_ID = '1436924676168084';
 
 function getMetaConfig() {
   const appId = String(process.env.META_APP_ID || '').trim();
@@ -187,7 +188,22 @@ async function getManagedPages(userToken) {
     fields: 'id,name,access_token,tasks',
     limit: 100,
   }, userToken);
-  return Array.isArray(response?.data) ? response.data : [];
+  const pages = Array.isArray(response?.data) ? response.data : [];
+  if (pages.some((page) => String(page.id) === TARGET_PAGE_ID)) return pages;
+
+  // Some New Pages Experience accounts have full Page access but Meta returns
+  // an empty /me/accounts collection. Resolve only Sylva's known official Page
+  // directly, then verify publishing capability with the returned Page token.
+  const page = await graphRequest(TARGET_PAGE_ID, {
+    fields: 'id,name,access_token',
+  }, userToken);
+  if (String(page?.id || '') !== TARGET_PAGE_ID ||
+      String(page?.name || '').trim().toLowerCase() !== TARGET_PAGE_NAME.toLowerCase() ||
+      !page?.access_token) {
+    return pages;
+  }
+  const capability = await graphRequest(TARGET_PAGE_ID, { fields: 'can_post' }, page.access_token);
+  return [...pages, { ...page, can_post: capability?.can_post === true }];
 }
 
 function chooseSylvaPage(pages) {
@@ -203,7 +219,7 @@ function chooseSylvaPage(pages) {
   }
   const page = matches[0];
   const tasks = Array.isArray(page.tasks) ? page.tasks.map((task) => String(task).toUpperCase()) : [];
-  if (!tasks.includes('CREATE_CONTENT') && !tasks.includes('MANAGE')) {
+  if (!tasks.includes('CREATE_CONTENT') && !tasks.includes('MANAGE') && page.can_post !== true) {
     const error = new Error('The Facebook account does not have permission to publish content on the Sylva Technologies Page.');
     error.code = 'META_PAGE_TASK_MISSING';
     throw error;
