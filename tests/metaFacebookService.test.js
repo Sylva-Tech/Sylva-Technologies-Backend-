@@ -47,6 +47,16 @@ test('only the exact Sylva Technologies Page is selected', () => {
   assert.equal(page.id, '123456789');
 });
 
+test('Page selection accepts Meta can_post confirmation when /me/accounts omits task details', () => {
+  const page = chooseSylvaPage([{
+    id: '1436924676168084',
+    name: 'Sylva Technologies',
+    access_token: 'page-token',
+    can_post: true,
+  }]);
+  assert.equal(page.can_post, true);
+});
+
 test('Page selection rejects a similarly named Page', () => {
   assert.throws(
     () => chooseSylvaPage([{
