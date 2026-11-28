@@ -269,6 +269,13 @@ async function schedulePagePost(connection, campaign) {
     path = `${connection.pageId}/photos`;
     params.url = asset.url;
     params.caption = message;
+  } else if (campaign.product?.image) {
+    // Catalogue product images are the default creative when no custom asset
+    // has been uploaded. Publish through /photos so the Page post contains
+    // the actual product photo rather than only a link preview.
+    path = `${connection.pageId}/photos`;
+    params.url = campaign.product.image;
+    params.caption = message;
   } else if (campaign.product?.productUrl) {
     params.link = campaign.product.productUrl;
   }
