@@ -249,7 +249,7 @@ async function schedulePagePost(connection, campaign) {
     platformContent.caption || campaign.content?.body || campaign.content?.headline || campaign.name,
     ...(Array.isArray(platformContent.hashtags) ? platformContent.hashtags : []),
     platformContent.callToAction || '',
-    asset && campaign.product?.productUrl ? campaign.product.productUrl : '',
+    (asset || campaign.product?.image) && campaign.product?.productUrl ? campaign.product.productUrl : '',
   ].filter(Boolean);
   const message = captionParts.join('\n\n').slice(0, 5000);
   let path = `${connection.pageId}/feed`;
@@ -268,6 +268,13 @@ async function schedulePagePost(connection, campaign) {
   } else if (asset) {
     path = `${connection.pageId}/photos`;
     params.url = asset.url;
+    params.caption = message;
+  } else if (campaign.product?.image) {
+    // Catalogue product images are the default creative when no custom asset
+    // has been uploaded. Publish through /photos so the Page post contains
+    // the actual product photo rather than only a link preview.
+    path = `${connection.pageId}/photos`;
+    params.url = campaign.product.image;
     params.caption = message;
   } else if (campaign.product?.productUrl) {
     params.link = campaign.product.productUrl;
