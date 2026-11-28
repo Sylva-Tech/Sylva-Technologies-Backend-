@@ -316,8 +316,8 @@ async function publishInstagramMedia(connection, campaign) {
     throw error;
   }
   const granted = new Set(Array.isArray(connection.grantedPermissions) ? connection.grantedPermissions : []);
-  if (!granted.has('instagram_content_publish')) {
-    const error = new Error('Meta has not granted Instagram content publishing permission. Reconnect and approve instagram_content_publish.');
+  if (!granted.has('instagram_basic') || !granted.has('instagram_content_publish')) {
+    const error = new Error('Meta has not granted the Instagram account and publishing permissions. Reconnect and approve instagram_basic and instagram_content_publish.');
     error.code = 'INSTAGRAM_PERMISSION_MISSING';
     throw error;
   }
