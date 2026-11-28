@@ -36,7 +36,7 @@ When the linked Instagram account ID and `instagram_content_publish` permission 
 
 `POST /api/marketing-studio/campaigns/:id/publish/instagram`
 
-The first publishing slice supports a single image post, using an approved campaign image or the product catalogue image. The image must be publicly reachable over HTTPS. It creates a media container and then publishes it through the Instagram Graph API; the returned Instagram media ID is stored in the campaign's publishing results. Reels, Stories, carousel publishing, scheduled Instagram delivery, and Instagram DMs/webhooks are not implemented yet. The admin must review the post and caption before approving and publishing.
+The current publishing slice supports a single image post or a Reel, using an approved campaign image/video asset or the product catalogue image for image posts. The image must be publicly reachable over HTTPS. It creates a media container and then publishes it through the Instagram Graph API; the returned Instagram media ID is stored in the campaign's publishing results. Reels, Stories, carousel publishing, scheduled Instagram delivery, and Instagram DMs/webhooks are not implemented yet. The admin must review the post and caption before approving and publishing.
 
 Instagram messaging additionally requires the appropriate messaging permission, Page messaging task, Meta webhook subscriptions, and business/app requirements. Do not treat account discovery or publishing permission as proof that DMs are enabled.
 
