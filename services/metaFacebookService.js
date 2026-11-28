@@ -249,7 +249,7 @@ async function schedulePagePost(connection, campaign) {
     platformContent.caption || campaign.content?.body || campaign.content?.headline || campaign.name,
     ...(Array.isArray(platformContent.hashtags) ? platformContent.hashtags : []),
     platformContent.callToAction || '',
-    asset && campaign.product?.productUrl ? campaign.product.productUrl : '',
+    (asset || campaign.product?.image) && campaign.product?.productUrl ? campaign.product.productUrl : '',
   ].filter(Boolean);
   const message = captionParts.join('\n\n').slice(0, 5000);
   let path = `${connection.pageId}/feed`;
