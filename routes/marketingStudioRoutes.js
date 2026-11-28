@@ -103,10 +103,16 @@ router.get('/channels', async (req, res) => {
     const channels = {
       facebook: { status: facebook ? 'connected' : 'not_connected', accountName: facebook?.pageName || 'Sylva Technologies', detail: facebook ? 'Official Page connection is saved.' : 'Connect the existing Meta Page integration.' },
       instagram: { status: configured(['META_APP_ID', 'META_APP_SECRET', 'META_REDIRECT_URI']) ? 'setup_required' : 'not_configured', detail: 'Requires an Instagram Professional account linked to a Facebook Page and approved Instagram permissions.' },
-      whatsapp: { status: configured(['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_VERIFY_TOKEN']) ? 'configured' : 'not_configured', detail: 'Requires WhatsApp Cloud API credentials, webhook verification and approved message templates.' },
+      whatsapp: {
+        status: configured(['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_VERIFY_TOKEN']) ? 'api_connected' : (String(process.env.WHATSAPP_NUMBER || '').trim() ? 'optional_contact' : 'optional'),
+        accountName: String(process.env.WHATSAPP_NUMBER || '').trim() ? 'Existing Sylva order contact' : 'Optional channel',
+        detail: configured(['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_VERIFY_TOKEN'])
+          ? 'WhatsApp Cloud API is configured for the shared customer inbox.'
+          : 'Optional: keep using the existing WhatsApp order contact. No second account or Marketing Studio connection is required.',
+      },
       tiktok: { status: configured(['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET']) ? 'configured' : 'not_configured', detail: 'Requires TikTok developer app approval and Content Posting API scopes.' },
     };
-    res.json({ success: true, channels, capabilities: { inboundMessaging: false, automatedReplies: false, publishing: { facebook: Boolean(facebook), instagram: false, whatsapp: false, tiktok: false } } });
+    res.json({ success: true, channels, capabilities: { inboundMessaging: configured(['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_VERIFY_TOKEN']), automatedReplies: false, publishing: { facebook: Boolean(facebook), instagram: false, whatsapp: false, tiktok: false } } });
   } catch (error) {
     console.error('Marketing Studio channel status failed:', error.message);
     res.status(500).json({ success: false, message: 'Unable to load channel connection status.' });
