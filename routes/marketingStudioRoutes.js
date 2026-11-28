@@ -377,11 +377,15 @@ router.post('/campaigns/:id/schedule', async (req, res) => {
         message: 'Scheduled natively by Meta for the official Sylva Technologies Page.',
       });
       for (const platform of campaign.platforms.filter((item) => item !== 'facebook')) {
+        const existingResult = campaign.publishingResults.find((item) => item.platform === platform);
+        if (existingResult?.status === 'published') continue;
         campaign.publishingResults = campaign.publishingResults.filter((item) => item.platform !== platform);
         campaign.publishingResults.push({
           platform,
           status: 'skipped',
-          message: 'This platform is not connected to Sylva yet.',
+          message: platform === 'instagram'
+            ? 'Instagram publishing is available separately after approval and account permission checks.'
+            : 'This platform is not connected for direct publishing yet.',
         });
       }
     }
@@ -530,7 +534,7 @@ router.delete('/campaigns/:id', async (req, res) => {
     if (campaign.status === 'published' && !externalFacebookPost) {
       return res.status(409).json({
         success: false,
-        message: 'This campaign is marked as published but has no Facebook post ID to remove. The record was kept so no live post is accidentally orphaned.',
+        message: 'This campaign is marked as published but has no removable Facebook Page post ID. The record was kept so live posts on other platforms are not accidentally orphaned.',
       });
     }
     if (nonFacebookLiveResult) {
