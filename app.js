@@ -32,6 +32,7 @@ const aliexpressFulfillmentRoutes = require('./routes/aliexpressFulfillmentRoute
 const catalogueAIRoutes = require('./routes/catalogueAIRoutes');
 const marketingStudioRoutes = require('./routes/marketingStudioRoutes');
 const metaFacebookRoutes = require('./routes/metaFacebookRoutes');
+const marketingInboxRoutes = require('./routes/marketingInboxRoutes');
 const {
   cloudflareOriginGuard,
   financialRateLimit,
@@ -217,7 +218,7 @@ app.use(
     strict: true,
     verify: (req, res, buffer) => {
       // Provider callbacks and signed inbound email events need the exact request bytes.
-      if (['/api/support-inbox/inbound/resend', '/api/mailbox/events/resend'].includes(req.originalUrl.split('?')[0])) {
+      if (['/api/support-inbox/inbound/resend', '/api/mailbox/events/resend', '/api/marketing-inbox/webhook'].includes(req.originalUrl.split('?')[0])) {
         req.rawBody = Buffer.from(buffer);
       }
     },
@@ -384,6 +385,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/catalogue-ai', catalogueAIRoutes);
 app.use('/api/marketing-studio', marketingStudioRoutes);
+app.use('/api/marketing-inbox', marketingInboxRoutes);
 app.use('/api/meta/facebook', metaFacebookRoutes);
 
 app.use('/api/categories', categoryRoutes);
