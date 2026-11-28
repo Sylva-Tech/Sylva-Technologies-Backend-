@@ -33,6 +33,7 @@ const catalogueAIRoutes = require('./routes/catalogueAIRoutes');
 const marketingStudioRoutes = require('./routes/marketingStudioRoutes');
 const metaFacebookRoutes = require('./routes/metaFacebookRoutes');
 const marketingInboxRoutes = require('./routes/marketingInboxRoutes');
+const marketingTikTokRoutes = require('./routes/marketingTikTokRoutes');
 const {
   cloudflareOriginGuard,
   financialRateLimit,
@@ -386,6 +387,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/catalogue-ai', catalogueAIRoutes);
 app.use('/api/marketing-studio', marketingStudioRoutes);
 app.use('/api/marketing-inbox', marketingInboxRoutes);
+app.use('/api/marketing-tiktok', marketingTikTokRoutes);
 app.use('/api/meta/facebook', metaFacebookRoutes);
 
 app.use('/api/categories', categoryRoutes);
