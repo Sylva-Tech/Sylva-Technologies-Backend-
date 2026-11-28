@@ -308,7 +308,7 @@ async function publishInstagramMedia(connection, campaign) {
   }
 
   const asset = Array.isArray(campaign.assets)
-    ? campaign.assets.find((item) => item.status === 'approved' && ['image', 'video'].includes(item.kind) && item.url)
+    ? campaign.assets.find((item) => item.status === 'approved' && ['image', 'poster', 'video'].includes(item.kind) && item.url)
     : null;
   const mediaUrl = String(asset?.url || campaign.product?.image || '').trim();
   if (!mediaUrl || !/^https:\/\//i.test(mediaUrl)) {
