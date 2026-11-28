@@ -47,8 +47,7 @@ router.post('/webhook', async (req, res) => {
             { platform: 'whatsapp', externalContactId: phone },
             {
               $set: { displayName: contacts.get(phone) || '', status: 'unread', lastMessageAt: new Date(), lastInboundAt: new Date() },
-              $push: { messages: { externalId, direction: 'inbound', type: clean(message.type, 40) || 'text', text, status: 'received', at: new Date(Number(message.timestamp || 0) * 1000) || new Date() } },
-              $setOnInsert: { platform: 'whatsapp', externalContactId: phone },
+              $push: { messages: { externalId, direction: 'inbound', type: clean(message.type, 40) || 'text', text, status: 'received', at: Number(message.timestamp) > 0 ? new Date(Number(message.timestamp) * 1000) : new Date() } },
             },
             { upsert: true, new: true, setDefaultsOnInsert: true }
           );
