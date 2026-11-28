@@ -42,7 +42,18 @@ Instagram messaging additionally requires the appropriate messaging permission, 
 
 ## TikTok
 
-Create/use a TikTok developer app and request the Content Posting API scopes required by the intended workflow. Complete TikTok app review and direct-posting approval. The creative editor can render a split-screen vertical product video and mix an audio file supplied by the administrator locally in the browser. The audio uploader does not grant music rights; use audio Sylva owns or is licensed to use. TikTok OAuth, upload/publish APIs, and posting status callbacks remain separate implementation work. TikTok's official Direct Post API requires a creator-info query and explicit consent; unaudited clients are restricted to private visibility until TikTok audits the app.
+Configure these Render backend environment variables (never expose them to the browser or commit their values):
+
+- `TIKTOK_CLIENT_KEY`
+- `TIKTOK_CLIENT_SECRET`
+- `TIKTOK_REDIRECT_URI=https://api.sylvatechnologies.co.ke/api/marketing-tiktok/callback`
+- `TIKTOK_TOKEN_ENCRYPTION_KEY`: unique 32-byte key; generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+
+Register the exact HTTPS redirect URI above in TikTok Developer Portal under Login Kit. The backend requests `user.info.basic` and `video.publish`. The admin connects through the Marketing Studio TikTok card. OAuth state is signed, tokens are encrypted at rest, and the backend refreshes expiring access tokens when the admin channel status is checked.
+
+The current TikTok integration covers account connection and secure token storage only. Direct publishing remains deliberately disabled until the creator-info/consent flow, upload and status workflows are implemented and TikTok has audited the app. TikTok's official Direct Post API requires a creator-info query and explicit consent; unaudited clients are restricted to private visibility until TikTok audits the app.
+
+The creative editor can render a split-screen vertical product video and mix an audio file supplied by the administrator locally in the browser. The audio uploader does not grant music rights; use audio Sylva owns or is licensed to use.
 
 ## Safety defaults
 
