@@ -9,6 +9,7 @@ const MarketingCampaign = require('../models/MarketingCampaign');
 const MetaDataDeletionRequest = require('../models/MetaDataDeletionRequest');
 const {
   REQUIRED_PERMISSIONS,
+  OPTIONAL_PERMISSIONS,
   getMetaConfig,
   createOAuthStateSecret,
   buildAuthorizationUrl,
@@ -68,7 +69,7 @@ router.post('/connect-url', protect, adminOnly, oauthLimiter, async (req, res) =
     });
     const authorizationUrl = buildAuthorizationUrl(state);
     res.set('Cache-Control', 'no-store, private');
-    res.json({ success: true, authorizationUrl, redirectUri: config.redirectUri, permissions: REQUIRED_PERMISSIONS });
+    res.json({ success: true, authorizationUrl, redirectUri: config.redirectUri, permissions: [...REQUIRED_PERMISSIONS, ...OPTIONAL_PERMISSIONS] });
   } catch (error) {
     res.status(503).json({ success: false, message: error.message || 'Facebook connection is not configured.' });
   }
@@ -117,7 +118,9 @@ router.get('/callback', oauthLimiter, async (req, res) => {
           pageName: String(page.name),
           metaUserId: metaUser.id,
           ...encrypted,
-          grantedPermissions: REQUIRED_PERMISSIONS,
+          grantedPermissions: [...granted],
+          instagramBusinessAccountId: String(page.instagram_business_account?.id || ''),
+          instagramUsername: String(page.instagram_business_account?.username || ''),
           connectedBy: admin._id,
           connectedAt: new Date(),
           lastVerifiedAt: new Date(),
