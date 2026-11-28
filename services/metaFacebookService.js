@@ -185,26 +185,41 @@ async function getGrantedPermissions(userToken) {
 }
 
 async function getManagedPages(userToken) {
+  // Keep core Facebook Page discovery independent from optional Instagram scopes.
   const response = await graphRequest('me/accounts', {
-    fields: 'id,name,access_token,tasks,instagram_business_account{id,username}',
+    fields: 'id,name,access_token,tasks',
     limit: 100,
   }, userToken);
   const pages = Array.isArray(response?.data) ? response.data : [];
-  if (pages.some((page) => String(page.id) === TARGET_PAGE_ID)) return pages;
+  let target = pages.find((page) => String(page.id) === TARGET_PAGE_ID);
 
-  // Some New Pages Experience accounts have full Page access but Meta returns
-  // an empty /me/accounts collection. Resolve only Sylva's known official Page
-  // directly, then verify publishing capability with the returned Page token.
-  const page = await graphRequest(TARGET_PAGE_ID, {
-    fields: 'id,name,access_token,instagram_business_account{id,username}',
-  }, userToken);
-  if (String(page?.id || '') !== TARGET_PAGE_ID ||
-      String(page?.name || '').trim().toLowerCase() !== TARGET_PAGE_NAME.toLowerCase() ||
-      !page?.access_token) {
-    return pages;
+  if (!target) {
+    // Some New Pages Experience accounts have full Page access but Meta returns
+    // an empty /me/accounts collection. Resolve only Sylva's known official Page.
+    const page = await graphRequest(TARGET_PAGE_ID, {
+      fields: 'id,name,access_token',
+    }, userToken);
+    if (String(page?.id || '') === TARGET_PAGE_ID &&
+        String(page?.name || '').trim().toLowerCase() === TARGET_PAGE_NAME.toLowerCase() &&
+        page?.access_token) {
+      const capability = await graphRequest(TARGET_PAGE_ID, { fields: 'can_post' }, page.access_token);
+      target = { ...page, can_post: capability?.can_post === true };
+      pages.push(target);
+    }
   }
-  const capability = await graphRequest(TARGET_PAGE_ID, { fields: 'can_post' }, page.access_token);
-  return [...pages, { ...page, can_post: capability?.can_post === true }];
+
+  if (target) {
+    try {
+      const instagram = await graphRequest(TARGET_PAGE_ID, {
+        fields: 'instagram_business_account{id,username}',
+      }, userToken);
+      target.instagram_business_account = instagram?.instagram_business_account || null;
+    } catch (error) {
+      // An optional Instagram permission/account must never prevent Facebook Page connection.
+      console.warn('Optional Instagram account discovery was unavailable:', error.code || error.metaCode || 'INSTAGRAM_DISCOVERY_UNAVAILABLE');
+    }
+  }
+  return pages;
 }
 
 function chooseSylvaPage(pages) {
