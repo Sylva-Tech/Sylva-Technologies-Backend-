@@ -244,13 +244,14 @@ async function schedulePagePost(connection, campaign) {
   }
 
   const platformContent = campaign.content?.facebook || {};
+  const asset = Array.isArray(campaign.assets) ? campaign.assets.find((item) => item.status === 'approved' && item.url) : null;
   const captionParts = [
     platformContent.caption || campaign.content?.body || campaign.content?.headline || campaign.name,
     ...(Array.isArray(platformContent.hashtags) ? platformContent.hashtags : []),
     platformContent.callToAction || '',
+    asset && campaign.product?.productUrl ? campaign.product.productUrl : '',
   ].filter(Boolean);
   const message = captionParts.join('\n\n').slice(0, 5000);
-  const asset = Array.isArray(campaign.assets) ? campaign.assets.find((item) => item.status === 'approved' && item.url) : null;
   let path = `${connection.pageId}/feed`;
   const params = {
     message,

@@ -386,6 +386,52 @@ router.post('/campaigns/:id/action', async (req, res) => {
 
 
 
+router.post('/campaigns/:id/duplicate', async (req, res) => {
+  try {
+    const source = await MarketingCampaign.findById(req.params.id);
+    if (!source) return res.status(404).json({ success: false, message: 'Campaign not found.' });
+    const purpose = safeText(req.body?.purpose, 20);
+    if (purpose && !['campaign', 'paid_ad'].includes(purpose)) {
+      return res.status(400).json({ success: false, message: 'Choose a valid campaign copy type.' });
+    }
+
+    const duplicate = await MarketingCampaign.create({
+      name: ('Copy of ' + source.name).slice(0, 120),
+      objective: source.objective,
+      product: source.product?.toObject ? source.product.toObject() : source.product,
+      platforms: [...source.platforms],
+      content: source.content?.toObject ? source.content.toObject() : source.content,
+      assets: source.assets.map((asset) => ({
+        kind: asset.kind,
+        url: asset.url,
+        publicId: asset.publicId,
+        alt: asset.alt,
+        status: 'draft',
+      })),
+      status: 'draft',
+      createdBy: req.user._id,
+      activity: [activity(
+        purpose === 'paid_ad' ? 'ad_draft_prepared' : 'campaign_duplicated',
+        purpose === 'paid_ad'
+          ? 'Prepared as a draft for paid-ad planning. No paid advertisement has been created or launched.'
+          : 'Copied from campaign ' + String(source._id) + ' for editing as a new campaign.',
+        req.user._id
+      )],
+    });
+    res.status(201).json({
+      success: true,
+      campaign: duplicate,
+      paidAdCreated: false,
+      message: purpose === 'paid_ad'
+        ? 'Ad planning draft created. Complete paid-ad setup separately in Meta Ads Manager; no ad has been launched.'
+        : 'Campaign copy created as a new draft.',
+    });
+  } catch (error) {
+    console.error('Marketing Studio campaign duplication failed:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to create a campaign copy.' });
+  }
+});
+
 router.delete('/campaigns/drafts', async (req, res) => {
   try {
     const result = await MarketingCampaign.deleteMany({ status: 'draft' });
@@ -398,14 +444,55 @@ router.delete('/campaigns/drafts', async (req, res) => {
 
 router.delete('/campaigns/:id', async (req, res) => {
   try {
-    const campaign = await MarketingCampaign.findById(req.params.id).select('_id status');
+    const campaign = await MarketingCampaign.findById(req.params.id);
     if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found.' });
-    if (campaign.status !== 'draft') return res.status(409).json({ success: false, message: 'Only draft campaigns can be deleted. Other campaign records are retained for audit.' });
-    await MarketingCampaign.deleteOne({ _id: campaign._id, status: 'draft' });
-    res.json({ success: true, message: 'Draft campaign deleted.' });
+
+    const externalFacebookPost = campaign.publishingResults.find((item) =>
+      item.platform === 'facebook' && item.externalId && ['pending', 'published'].includes(item.status)
+    );
+    const nonFacebookLiveResult = campaign.publishingResults.find((item) =>
+      item.platform !== 'facebook' && ['pending', 'published'].includes(item.status)
+    );
+    if (campaign.status === 'published' && !externalFacebookPost) {
+      return res.status(409).json({
+        success: false,
+        message: 'This campaign is marked as published but has no Facebook post ID to remove. The record was kept so no live post is accidentally orphaned.',
+      });
+    }
+    if (nonFacebookLiveResult) {
+      return res.status(409).json({
+        success: false,
+        message: 'A non-Facebook platform still has a live or pending result. Remove it from that platform before deleting this campaign.',
+      });
+    }
+
+    if (externalFacebookPost) {
+      const connection = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' })
+        .select('+pageTokenCiphertext +pageTokenIv +pageTokenAuthTag');
+      if (!connection) {
+        return res.status(409).json({ success: false, message: 'Reconnect the Sylva Technologies Facebook Page before deleting its scheduled or published post.' });
+      }
+      try {
+        await deleteScheduledPagePost(connection, externalFacebookPost.externalId);
+      } catch (error) {
+        console.error('Marketing Studio Facebook post deletion failed:', error.code || error.metaCode || 'META_POST_DELETE_FAILED');
+        return res.status(502).json({
+          success: false,
+          message: 'Facebook could not confirm removal of the Page post. The campaign was kept in Sylva; check the Page post in Meta before retrying.',
+        });
+      }
+    }
+
+    await MarketingCampaign.deleteOne({ _id: campaign._id });
+    res.json({
+      success: true,
+      message: externalFacebookPost
+        ? 'Facebook Page post removed and campaign deleted.'
+        : 'Campaign deleted.',
+    });
   } catch (error) {
-    console.error('Marketing Studio draft deletion failed:', error.message);
-    res.status(500).json({ success: false, message: 'Unable to delete this draft.' });
+    console.error('Marketing Studio campaign deletion failed:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to delete this campaign.' });
   }
 });
 
