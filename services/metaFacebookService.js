@@ -291,6 +291,68 @@ async function schedulePagePost(connection, campaign) {
   return { externalId: String(externalId), mediaId: response?.id ? String(response.id) : '', scheduledAt };
 }
 
+
+async function publishInstagramImage(connection, campaign) {
+  const instagramId = String(connection.instagramBusinessAccountId || '').trim();
+  if (!instagramId) {
+    const error = new Error('No Instagram Professional account is linked to the Sylva Facebook Page. Connect the account and refresh permissions.');
+    error.code = 'INSTAGRAM_ACCOUNT_NOT_LINKED';
+    throw error;
+  }
+  const granted = new Set(Array.isArray(connection.grantedPermissions) ? connection.grantedPermissions : []);
+  if (!granted.has('instagram_content_publish')) {
+    const error = new Error('Meta has not granted Instagram content publishing permission. Reconnect and approve instagram_content_publish.');
+    error.code = 'INSTAGRAM_PERMISSION_MISSING';
+    throw error;
+  }
+
+  const asset = Array.isArray(campaign.assets)
+    ? campaign.assets.find((item) => item.status === 'approved' && item.kind === 'image' && item.url)
+    : null;
+  const imageUrl = String(asset?.url || campaign.product?.image || '').trim();
+  if (!imageUrl || !/^https:\/\//i.test(imageUrl)) {
+    const error = new Error('Instagram image publishing requires an approved public HTTPS image. Upload and approve an image asset first.');
+    error.code = 'INSTAGRAM_IMAGE_REQUIRED';
+    throw error;
+  }
+
+  const platformContent = campaign.content?.instagram || {};
+  const caption = [
+    platformContent.caption || campaign.content?.body || campaign.content?.headline || campaign.name,
+    ...(Array.isArray(platformContent.hashtags) ? platformContent.hashtags : []),
+    platformContent.callToAction || '',
+    campaign.product?.productUrl || '',
+  ].filter(Boolean).join('\n\n').slice(0, 2200);
+  const token = decryptPageToken(connection);
+  const container = await graphRequest(`${instagramId}/media`, {
+    image_url: imageUrl,
+    caption,
+  }, token, 'POST');
+  if (!container?.id) {
+    const error = new Error('Meta did not return an Instagram media container ID.');
+    error.code = 'INSTAGRAM_CONTAINER_FAILED';
+    throw error;
+  }
+
+  const published = await graphRequest(`${instagramId}/media_publish`, {
+    creation_id: String(container.id),
+  }, token, 'POST');
+  if (!published?.id) {
+    const error = new Error('Meta did not confirm the Instagram publication. Check Instagram before retrying.');
+    error.code = 'INSTAGRAM_PUBLISH_UNCONFIRMED';
+    throw error;
+  }
+
+  let permalink = '';
+  try {
+    const media = await graphRequest(String(published.id), { fields: 'id,permalink,media_type,timestamp' }, token);
+    permalink = String(media?.permalink || '');
+  } catch (error) {
+    console.warn('Instagram permalink lookup failed after confirmed publish:', error.code || error.metaCode || 'INSTAGRAM_MEDIA_LOOKUP_FAILED');
+  }
+  return { externalId: String(published.id), externalUrl: permalink, mediaType: 'IMAGE' };
+}
+
 async function getPagePostStatus(connection, postId) {
   const token = decryptPageToken(connection);
   return graphRequest(String(postId), { fields: 'id,is_published,permalink_url,scheduled_publish_time' }, token);
@@ -317,6 +379,7 @@ module.exports = {
   getManagedPages,
   chooseSylvaPage,
   schedulePagePost,
+  publishInstagramImage,
   getPagePostStatus,
   deleteScheduledPagePost,
 };
