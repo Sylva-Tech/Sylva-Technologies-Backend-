@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const axios = require('axios');
 
 const REQUIRED_PERMISSIONS = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'];
+const OPTIONAL_PERMISSIONS = ['instagram_basic', 'instagram_content_publish', 'instagram_manage_messages', 'pages_manage_metadata'];
 const TARGET_PAGE_NAME = 'Sylva Technologies';
 const TARGET_PAGE_ID = '1436924676168084';
 
@@ -81,7 +82,7 @@ function buildAuthorizationUrl(state) {
   url.searchParams.set('redirect_uri', config.redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('state', state);
-  url.searchParams.set('scope', REQUIRED_PERMISSIONS.join(','));
+  url.searchParams.set('scope', [...REQUIRED_PERMISSIONS, ...OPTIONAL_PERMISSIONS].join(','));
   return url.toString();
 }
 
@@ -185,7 +186,7 @@ async function getGrantedPermissions(userToken) {
 
 async function getManagedPages(userToken) {
   const response = await graphRequest('me/accounts', {
-    fields: 'id,name,access_token,tasks',
+    fields: 'id,name,access_token,tasks,instagram_business_account{id,username}',
     limit: 100,
   }, userToken);
   const pages = Array.isArray(response?.data) ? response.data : [];
@@ -195,7 +196,7 @@ async function getManagedPages(userToken) {
   // an empty /me/accounts collection. Resolve only Sylva's known official Page
   // directly, then verify publishing capability with the returned Page token.
   const page = await graphRequest(TARGET_PAGE_ID, {
-    fields: 'id,name,access_token',
+    fields: 'id,name,access_token,instagram_business_account{id,username}',
   }, userToken);
   if (String(page?.id || '') !== TARGET_PAGE_ID ||
       String(page?.name || '').trim().toLowerCase() !== TARGET_PAGE_NAME.toLowerCase() ||
@@ -302,6 +303,7 @@ async function deleteScheduledPagePost(connection, postId) {
 
 module.exports = {
   REQUIRED_PERMISSIONS,
+  OPTIONAL_PERMISSIONS,
   TARGET_PAGE_NAME,
   getMetaConfig,
   createOAuthStateSecret,
