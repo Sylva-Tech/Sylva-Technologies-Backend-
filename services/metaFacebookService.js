@@ -292,7 +292,8 @@ async function schedulePagePost(connection, campaign) {
 }
 
 
-async function publishInstagramImage(connection, campaign) {
+
+async function publishInstagramMedia(connection, campaign) {
   const instagramId = String(connection.instagramBusinessAccountId || '').trim();
   if (!instagramId) {
     const error = new Error('No Instagram Professional account is linked to the Sylva Facebook Page. Connect the account and refresh permissions.');
@@ -307,15 +308,15 @@ async function publishInstagramImage(connection, campaign) {
   }
 
   const asset = Array.isArray(campaign.assets)
-    ? campaign.assets.find((item) => item.status === 'approved' && item.kind === 'image' && item.url)
+    ? campaign.assets.find((item) => item.status === 'approved' && ['image', 'video'].includes(item.kind) && item.url)
     : null;
-  const imageUrl = String(asset?.url || campaign.product?.image || '').trim();
-  if (!imageUrl || !/^https:\/\//i.test(imageUrl)) {
-    const error = new Error('Instagram image publishing requires an approved public HTTPS image. Upload and approve an image asset first.');
-    error.code = 'INSTAGRAM_IMAGE_REQUIRED';
+  const mediaUrl = String(asset?.url || campaign.product?.image || '').trim();
+  if (!mediaUrl || !/^https:\/\//i.test(mediaUrl)) {
+    const error = new Error('Instagram publishing requires an approved public HTTPS image or video. Upload and approve a campaign asset first.');
+    error.code = 'INSTAGRAM_MEDIA_REQUIRED';
     throw error;
   }
-
+  const isVideo = asset?.kind === 'video';
   const platformContent = campaign.content?.instagram || {};
   const caption = [
     platformContent.caption || campaign.content?.body || campaign.content?.headline || campaign.name,
@@ -324,14 +325,34 @@ async function publishInstagramImage(connection, campaign) {
     campaign.product?.productUrl || '',
   ].filter(Boolean).join('\n\n').slice(0, 2200);
   const token = decryptPageToken(connection);
-  const container = await graphRequest(`${instagramId}/media`, {
-    image_url: imageUrl,
-    caption,
-  }, token, 'POST');
+  const containerParams = isVideo
+    ? { media_type: 'REELS', video_url: mediaUrl, caption, share_to_feed: true }
+    : { image_url: mediaUrl, caption };
+  const container = await graphRequest(`${instagramId}/media`, containerParams, token, 'POST');
   if (!container?.id) {
     const error = new Error('Meta did not return an Instagram media container ID.');
     error.code = 'INSTAGRAM_CONTAINER_FAILED';
     throw error;
+  }
+
+  if (isVideo) {
+    let ready = false;
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      const status = await graphRequest(String(container.id), { fields: 'status_code,status' }, token);
+      const code = String(status?.status_code || '').toUpperCase();
+      if (code === 'FINISHED') { ready = true; break; }
+      if (code === 'ERROR' || code === 'EXPIRED') {
+        const error = new Error('Instagram could not process the Reel video. Check the video format and try again.');
+        error.code = 'INSTAGRAM_VIDEO_PROCESSING_FAILED';
+        throw error;
+      }
+    }
+    if (!ready) {
+      const error = new Error('Instagram is still processing the Reel. Check the account before retrying to avoid duplicate posts.');
+      error.code = 'INSTAGRAM_VIDEO_PROCESSING_PENDING';
+      throw error;
+    }
   }
 
   const published = await graphRequest(`${instagramId}/media_publish`, {
@@ -350,7 +371,7 @@ async function publishInstagramImage(connection, campaign) {
   } catch (error) {
     console.warn('Instagram permalink lookup failed after confirmed publish:', error.code || error.metaCode || 'INSTAGRAM_MEDIA_LOOKUP_FAILED');
   }
-  return { externalId: String(published.id), externalUrl: permalink, mediaType: 'IMAGE' };
+  return { externalId: String(published.id), externalUrl: permalink, mediaType: isVideo ? 'REELS' : 'IMAGE' };
 }
 
 async function getPagePostStatus(connection, postId) {
@@ -379,7 +400,7 @@ module.exports = {
   getManagedPages,
   chooseSylvaPage,
   schedulePagePost,
-  publishInstagramImage,
+  publishInstagramMedia,
   getPagePostStatus,
   deleteScheduledPagePost,
 };
