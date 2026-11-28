@@ -7,6 +7,7 @@ const { protect, adminOnly } = require('../middleware/authMiddleware');
 const MarketingCampaign = require('../models/MarketingCampaign');
 const Product = require('../models/Product');
 const MetaPageConnection = require('../models/MetaPageConnection');
+const TikTokConnection = require('../models/TikTokConnection');
 const { generateMarketingVideoScript } = require('../services/marketingVideoAI');
 const { schedulePagePost, publishInstagramMedia, getPagePostStatus, deleteScheduledPagePost } = require('../services/metaFacebookService');
 
@@ -98,7 +99,10 @@ router.get('/overview', async (req, res) => {
 
 router.get('/channels', async (req, res) => {
   try {
-    const facebook = await MetaPageConnection.findOne({ key: 'sylva-facebook-page' }).select('pageId pageName updatedAt instagramBusinessAccountId instagramUsername grantedPermissions').lean();
+    const [facebook, tiktok] = await Promise.all([
+      MetaPageConnection.findOne({ key: 'sylva-facebook-page' }).select('pageId pageName updatedAt instagramBusinessAccountId instagramUsername grantedPermissions').lean(),
+      TikTokConnection.findOne({ key: 'sylva-tiktok-account' }).select('displayName grantedScopes accessTokenExpiresAt refreshTokenExpiresAt').lean(),
+    ]);
     const configured = (keys) => keys.every((key) => String(process.env[key] || '').trim().length > 0);
     const channels = {
       facebook: { status: facebook ? 'connected' : 'not_connected', accountName: facebook?.pageName || 'Sylva Technologies', detail: facebook ? 'Official Page connection is saved.' : 'Connect the existing Meta Page integration.' },
@@ -110,7 +114,7 @@ router.get('/channels', async (req, res) => {
           ? 'WhatsApp Cloud API is configured for the shared customer inbox.'
           : 'Optional: keep using the existing WhatsApp order contact. No second account or Marketing Studio connection is required.',
       },
-      tiktok: { status: configured(['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET']) ? 'configured' : 'not_configured', detail: 'Requires TikTok developer app approval and Content Posting API scopes.' },
+      tiktok: { status: tiktok ? (tiktok.grantedScopes?.includes('video.publish') && tiktok.accessTokenExpiresAt > new Date() ? 'account_connected' : 'permission_or_token_check') : (configured(['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET', 'TIKTOK_REDIRECT_URI', 'TIKTOK_TOKEN_ENCRYPTION_KEY']) ? 'ready_to_connect' : 'not_configured'), accountName: tiktok?.displayName || '', detail: tiktok ? 'TikTok account connected. Direct publishing remains disabled until the creator-consent workflow and app audit are completed.' : 'Connect Sylva TikTok using the registered Login Kit app. Direct publishing still requires Content Posting API approval and audit.' },
     };
     res.json({ success: true, channels, capabilities: { inboundMessaging: configured(['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_VERIFY_TOKEN']), automatedReplies: false, publishing: { facebook: Boolean(facebook), instagram: Boolean(facebook?.instagramBusinessAccountId && facebook.grantedPermissions?.includes('instagram_content_publish')), whatsapp: false, tiktok: false } } });
   } catch (error) {
